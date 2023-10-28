@@ -7,15 +7,12 @@ use App\Http\Resources\Products\ProductResource;
 use App\Models\Products\Product;
 use Illuminate\Http\Request;
 
-class ProductController extends Controller
-{
-    public function index()
-    {
+class ProductController extends Controller {
+    public function index() {
         return ProductResource::collection(Product::all());
     }
 
-    public function store(Request $request)
-    {
+    public function store(Request $request) {
         $request->validate([
             'name' => ['required'],
             'slug' => ['required'],
@@ -33,13 +30,11 @@ class ProductController extends Controller
         return new ProductResource(Product::create($request->validated()));
     }
 
-    public function show(Product $product)
-    {
+    public function show(Product $product) {
         return new ProductResource($product);
     }
 
-    public function update(Request $request, Product $product)
-    {
+    public function update(Request $request, Product $product) {
         $request->validate([
             'name' => ['required'],
             'slug' => ['required'],
@@ -59,8 +54,7 @@ class ProductController extends Controller
         return new ProductResource($product);
     }
 
-    public function destroy(Product $product)
-    {
+    public function destroy(Product $product) {
         $product->delete();
 
         return response()->json();
