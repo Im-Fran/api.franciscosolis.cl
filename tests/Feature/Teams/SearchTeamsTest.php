@@ -3,16 +3,20 @@
 namespace Tests\Feature\Teams;
 
 use App\Models\Teams\Team;
+use App\Models\User;
 use Database\Seeders\UserSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
+/**
+ * @small
+ */
 class SearchTeamsTest extends TestCase {
     use RefreshDatabase;
 
-    public function test_public_team_will_not_leak_information() {
+    public function test_public_team_view_will_not_show_private_data() {
         $this->seed([
-            UserSeeder::class, // No need for teams seeder because user creates teams.
+            UserSeeder::class, // No need for team seeder because user creates teams.
         ]);
 
         $response = $this->get(route('teams.index'));
@@ -25,13 +29,9 @@ class SearchTeamsTest extends TestCase {
     }
 
     public function test_show_team() {
-        $this->seed([
-            UserSeeder::class, // No need for teams seeder because user creates teams.
-        ]);
-
-        $team = Team::inRandomOrder()
-            ->withCount('members')
-            ->first();
+        $team = Team::factory()
+            ->for(User::factory()->create())
+            ->create();
 
         $response = $this->get(route('teams.show', [
             'team' => $team->id,
@@ -39,6 +39,6 @@ class SearchTeamsTest extends TestCase {
         ]));
 
         $response->assertStatus(200);
-        $response->assertJsonCount($team->members_count, 'data.members');
+        $response->assertJsonCount($team->members()->count(), 'data.members');
     }
 }

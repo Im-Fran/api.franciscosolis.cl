@@ -6,8 +6,6 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
 class TeamFactory extends Factory {
-
-
     /*
     Emails format example:
     [
@@ -29,14 +27,14 @@ class TeamFactory extends Factory {
 
     // Now write the same links from the format example above
     private array $links = [
-        ["icon" => "fab fa-twitter", "label" => "Twitter", "value" => "https://twitter.com/"],
-        ["icon" => "fab fa-facebook", "label" => "Facebook", "value" => "https://facebook.com/"],
-        ["icon" => "fab fa-instagram", "label" => "Instagram", "value" => "https://instagram.com/"],
-        ["icon" => "fab fa-linkedin", "label" => "LinkedIn", "value" => "https://linkedin.com/"],
-        ["icon" => "fab fa-github", "label" => "GitHub", "value" => "https://github.com/"],
-        ["icon" => "fab fa-gitlab", "label" => "GitLab", "value" => "https://gitlab.com/"],
-        ["icon" => "fab fa-bitbucket", "label" => "BitBucket", "value" => "https://bitbucket.org/"],
-        ["icon" => "fab fa-stack-overflow", "label" => "StackOverflow", "value" => "https://stackoverflow.com/"],
+        ['icon' => 'fab fa-twitter', 'label' => 'Twitter', 'value' => 'https://twitter.com/'],
+        ['icon' => 'fab fa-facebook', 'label' => 'Facebook', 'value' => 'https://facebook.com/'],
+        ['icon' => 'fab fa-instagram', 'label' => 'Instagram', 'value' => 'https://instagram.com/'],
+        ['icon' => 'fab fa-linkedin', 'label' => 'LinkedIn', 'value' => 'https://linkedin.com/'],
+        ['icon' => 'fab fa-github', 'label' => 'GitHub', 'value' => 'https://github.com/'],
+        ['icon' => 'fab fa-gitlab', 'label' => 'GitLab', 'value' => 'https://gitlab.com/'],
+        ['icon' => 'fab fa-bitbucket', 'label' => 'BitBucket', 'value' => 'https://bitbucket.org/'],
+        ['icon' => 'fab fa-stack-overflow', 'label' => 'StackOverflow', 'value' => 'https://stackoverflow.com/'],
     ];
 
     public function definition(): array {

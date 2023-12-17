@@ -8,12 +8,10 @@ use Illuminate\Support\Collection;
 
 /** @mixin JsonResource */
 trait ResourceFilterable {
-
     /**
-     * Set the fields to display
+     * Set the fields to display.
      *
-     * @param array<string, mixed>  $attributes
-     * @return array
+     * @param array<string, mixed> $attributes
      */
     protected function fields(array $attributes): array {
         return collect($attributes)
@@ -22,9 +20,9 @@ trait ResourceFilterable {
                     return collect([$key => $value]);
                 }
 
-                /** @var Collection $carry */
+                /* @var Collection $carry */
 
-                if($value instanceof MergeValue) {
+                if ($value instanceof MergeValue) {
                     return $carry->merge($value->data);
                 }
 

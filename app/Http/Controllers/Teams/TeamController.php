@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Teams;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Teams\CreateTeamRequest;
 use App\Http\Resources\TeamResource;
 use App\Models\Teams\Team;
 use Spatie\QueryBuilder\QueryBuilder;
@@ -31,7 +32,10 @@ class TeamController extends Controller {
         return new TeamResource($team);
     }
 
-    public function store() {
-
+    // Creates a new team.
+    public function store(CreateTeamRequest $request) {
+        return new TeamResource(Team::create(array_merge($request->validated(), [
+            'user_id' => auth()->id(),
+        ])));
     }
 }

@@ -11,10 +11,10 @@ use Spatie\Sluggable\HasSlug;
 use Spatie\Sluggable\SlugOptions;
 
 class Product extends Model implements Ownable {
-    use SoftDeletes,
+    use HasFactory,
         HasOwner,
         HasSlug,
-        HasFactory;
+        SoftDeletes;
 
     protected $fillable = [
         'name',

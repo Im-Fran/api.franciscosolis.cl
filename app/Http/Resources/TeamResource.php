@@ -12,7 +12,7 @@ class TeamResource extends JsonResource {
     use ResourceFilterable;
 
     public function toArray(Request $request): array {
-        if($this->members()->whereId(auth()->id())->exists()) {
+        if ($this->members()->whereId(auth()->id())->exists()) {
             return parent::toArray($request);
         }
 
@@ -30,5 +30,4 @@ class TeamResource extends JsonResource {
             'updated_at' => $this->updated_at,
         ]);
     }
-
 }

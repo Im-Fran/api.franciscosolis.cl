@@ -8,7 +8,6 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 /** @mixin Searchable */
 class SearchResource extends JsonResource {
-
     public function toArray(Request $request): array {
         return $this->search_response;
     }

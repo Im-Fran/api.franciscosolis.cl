@@ -14,11 +14,23 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\Sluggable\HasSlug;
 use Spatie\Sluggable\SlugOptions;
 
+/**
+ * Documentation of Team Model:
+ *
+ * Columns:
+ * - `user_id`: ID of the user who owns the team
+ * - `name`: Name of the team
+ * - `slug`: Slug of the team. Used for SEO.
+ * - `bio`: Bio of the team.
+ * - `website`: Website of the team.
+ * - `links`: Links of the team.
+ * - `emails`: Emails of the team, for example, billing, support, etc.
+ */
 class Team extends Model implements CanBeOwner {
-    use HasUlids,
-        SoftDeletes,
+    use HasFactory,
         HasSlug,
-        HasFactory;
+        HasUlids,
+        SoftDeletes;
 
     protected $fillable = [
         'user_id',
@@ -34,6 +46,12 @@ class Team extends Model implements CanBeOwner {
         'links' => AsCollection::class,
         'emails' => AsCollection::class,
     ];
+
+    protected static function booted(): void {
+        static::created(function ($team) {
+            $team->members()->attach(auth()->id());
+        });
+    }
 
     /* Stubs */
     public function getSlugOptions(): SlugOptions {
