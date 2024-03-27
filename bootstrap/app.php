@@ -8,6 +8,7 @@ use App\Http\Middleware\Networking\CloudflareConnectingIpMiddleware;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Middleware\HandleCors;
 use Sentry\Laravel\Integration;
 
 return Application::configure(basePath: dirname(__DIR__))
@@ -19,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->statefulApi();
 
         $middleware->use([
+            HandleCors::class,
             HandleLocaleMiddleware::class,
             JsonFormatter::class,
             JsonPrettyPrint::class,
@@ -26,6 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         $middleware->priority([
+            HandleCors::class,
             CloudflareConnectingIpMiddleware::class,
             HandleLocaleMiddleware::class,
             JsonFormatter::class,
