@@ -1,6 +1,6 @@
 [submodule "apps/landing"]
 	path = apps/landing
-	url = git@github.com:Im-Fran/landing.franciscosolis.git
+	url = https://github.com/Im-Fran/landing.franciscosolis.git
 [submodule "apps/api"]
 	path = apps/api
-	url = git@github.com:Im-Fran/api.franciscosolis.git
+	url = https://github.com/Im-Fran/api.franciscosolis.git
