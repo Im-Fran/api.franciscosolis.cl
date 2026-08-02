@@ -1,0 +1,14 @@
+{
+  "name": "franciscosolis-api",
+  "license": "GPL-3.0-only",
+  "packageManager": "pnpm@11.17.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Im-Fran/api.franciscosolis.cl.git"
+  },
+  "scripts": {
+    "dev": "pnpm run -r --parallel --aggregate-output dev",
+    "deploy": "pnpm run -r deploy",
+    "cf-typegen": "pnpm run -r cf-typegen"
+  }
+}
