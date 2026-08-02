@@ -92,6 +92,10 @@ If you already cloned without `--recurse-submodules`:
 git submodule update --init --recursive
 ```
 
+Both submodules (`apps/api`, `apps/landing`) are pinned via HTTPS URLs in `.gitmodules`
+(not SSH), so Cloudflare's build environment can clone them without extra credentials.
+Both the root repo and each submodule use `dev` as their default branch.
+
 ### 2. Install dependencies
 
 ```bash
@@ -188,7 +192,7 @@ pnpm run cf-typegen
 ## 📄 License
 
 This project is licensed under the **GNU General Public License v3.0** — see the
-[LICENSE](LICENSE) file for details.
+[LICENSE](https://github.com/Im-Fran/api.franciscosolis.cl/blob/dev/LICENSE) file for details.
 
 ---
 
