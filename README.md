@@ -14,10 +14,10 @@
 
 This repository holds the backend that powers **franciscosolis.cl**: a public-facing API
 worker (`apps/api`) that fronts a set of internal Cloudflare Workers, starting with the
-landing site's own API (`apps/landing`, pulled in as a git submodule). The two workers talk
-to each other directly through Cloudflare **service bindings** — no HTTP round-trip over the
-public internet — and the root API transparently proxies and merges the OpenAPI specs of
-every internal module it exposes.
+landing site's own API (`apps/landing`). The two workers talk to each other directly
+through Cloudflare **service bindings** — no HTTP round-trip over the public internet —
+and the root API transparently proxies and merges the OpenAPI specs of every internal
+module it exposes.
 
 Both workers are built with **Hono** on the edge, validate input/output with **valibot**,
 and auto-generate an OpenAPI 3 document via `hono-openapi`. The `api` worker's `/openapi.json`
@@ -72,29 +72,18 @@ pnpm `catalog` so both workers stay on the same Hono/valibot/wrangler versions.
 
 - **Node.js** (any version compatible with `wrangler` and `@cloudflare/workers-types`)
 - **pnpm** `11.17.0` (declared in `package.json` as `packageManager`)
-- **Git**, with submodule support (`apps/landing` is a git submodule)
 - A **Cloudflare account** with Workers access for `dev`/`deploy`
 
 ---
 
 ## 🚀 Getting Started
 
-### 1. Clone the repository (with submodules)
+### 1. Clone the repository
 
 ```bash
-git clone --recurse-submodules git@github.com:Im-Fran/api.franciscosolis.cl.git
+git clone git@github.com:Im-Fran/api.franciscosolis.cl.git
 cd api.franciscosolis.cl
 ```
-
-If you already cloned without `--recurse-submodules`:
-
-```bash
-git submodule update --init --recursive
-```
-
-Both submodules (`apps/api`, `apps/landing`) are pinned via HTTPS URLs in `.gitmodules`
-(not SSH), so Cloudflare's build environment can clone them without extra credentials.
-Both the root repo and each submodule use `dev` as their default branch.
 
 ### 2. Install dependencies
 
@@ -182,7 +171,7 @@ pnpm run cf-typegen
 
 ## 🤝 Contributing
 
-1. Fork the repo (and its `apps/landing` submodule if you need to change it)
+1. Fork the repo
 2. Create a branch: `git checkout -b feat/your-feature`
 3. Commit: `git commit -m "feat: add your feature"`
 4. Push and open a PR

@@ -9,17 +9,16 @@ language) into files, commits, or code in this repo.
 
 ## Repo purpose
 
-Root pnpm monorepo for the public REST API behind **franciscosolis.cl**. It doesn't
-contain business logic itself — it wires together two Cloudflare Workers:
+Single pnpm monorepo for the public REST API behind **franciscosolis.cl**. It wires
+together two Cloudflare Workers, both living directly in this repo:
 
-- `apps/api` (git submodule) — public gateway Worker, deployed to `api.franciscosolis.cl`.
-- `apps/landing` (git submodule) — internal Worker with the landing page's GitHub stats,
-  only reachable from `apps/api` via a Cloudflare service binding, never public directly.
+- `apps/api` — public gateway Worker, deployed to `api.franciscosolis.cl`.
+- `apps/landing` — internal Worker with the landing page's GitHub stats, only reachable
+  from `apps/api` via a Cloudflare service binding, never public directly.
 
-Each submodule is its own git repo with its own `CLAUDE.md`, `README.md`, and history.
-When working on the actual implementation of a Worker, read/edit inside `apps/api` or
-`apps/landing` — this root repo only owns workspace wiring (pnpm workspace/catalog, root
-scripts, submodule pointers).
+Each app keeps its own `CLAUDE.md` and `README.md`. When working on the actual
+implementation of a Worker, read/edit inside `apps/api` or `apps/landing` — the root repo
+only owns workspace-wide wiring (pnpm workspace/catalog, root scripts).
 
 ## Stack
 
@@ -52,15 +51,6 @@ Individual apps can also be run from their own directory (`cd apps/api && pnpm r
   each internal module's `/openapi.json` over its service binding and merges paths/
   components under a prefix (e.g. `/landing/*`). An unreachable module is silently
   skipped rather than breaking the whole document. See `apps/api/src/openapi.ts`.
-- **Submodules use HTTPS, not SSH**, in `.gitmodules`, so Cloudflare's build environment
-  can clone them without extra credentials. Do not switch these back to SSH URLs.
-- All three repos (root + both submodules) use `dev` as their default/main branch — never
-  target `main`/`master`.
-
-## Working with submodules
-
-- Changes to `apps/api` or `apps/landing` source must be committed inside those
-  submodules first (their own git repo), then the root repo's submodule pointer is
-  updated separately if needed.
+- This repo uses `dev` as its default/main branch — never target `main`/`master`.
 - `apps/landing/.dev.vars` holds the `GH_TOKEN` secret for local dev and must never be
   committed (already gitignored).

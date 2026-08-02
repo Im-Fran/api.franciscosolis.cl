@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "api",
+  "main": "src/index.ts",
+  "preview_urls": true,
+  "workers_dev": true,
+  "cache": {
+    "enabled": true
+  },
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "placement": {
+    "mode": "smart"
+  },
+  "routes": [
+    {
+      "pattern": "api.franciscosolis.cl",
+      "zone_name": "franciscosolis.cl",
+      "custom_domain": true
+    }
+  ],
+  "services": [
+    {
+      "binding": "LANDING",
+      "service": "landing"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.25,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    }
+  }
+}

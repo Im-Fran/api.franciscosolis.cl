@@ -1,0 +1,22 @@
+{
+  "name": "api",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0 --port 8787 --inspector-port 9229",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "@hono/standard-validator": "catalog:",
+    "@valibot/to-json-schema": "catalog:",
+    "axios": "catalog:",
+    "hono": "catalog:",
+    "hono-openapi": "catalog:",
+    "valibot": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260730.1",
+    "wrangler": "catalog:"
+  }
+}
