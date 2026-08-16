@@ -1,0 +1,59 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "auth",
+  "main": "src/index.ts",
+  "preview_urls": true,
+  "workers_dev": true,
+  "cache": {
+    "enabled": true
+  },
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "placement": {
+    "mode": "smart"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "franciscosolis_auth",
+      "database_id": "426c094a-a532-4e05-8df0-ad850e34992a",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "hola@mail.franciscosolis.cl"
+      ]
+    }
+  ],
+  "vars": {
+    // Public base URL this Worker is reachable at. It is NOT derived from the incoming
+    // request because the Worker is only reachable through the `api` gateway's service
+    // binding, where the request URL is an internal one. Magic links and the Google
+    // redirect_uri are built from this value.
+    "AUTH_PUBLIC_URL": "https://api.franciscosolis.cl/auth",
+    // `iss` claim of every issued access token, and the issuer of the OIDC discovery doc.
+    "AUTH_ISSUER": "https://api.franciscosolis.cl/auth",
+    "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+    "MAIL_FROM_NAME": "FranciscoSolis",
+    // Sign-up is invitation-only. These addresses are the escape hatch: they may sign in
+    // without an invitation and are granted the `admin` role the first time they do.
+    "BOOTSTRAP_ADMIN_EMAILS": "f.solism@icloud.com"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.25,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    }
+  }
+}

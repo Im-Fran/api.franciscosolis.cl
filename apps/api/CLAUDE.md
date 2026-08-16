@@ -15,8 +15,8 @@ endpoint — it forwards requests to internal Workers over Cloudflare service bi
 merges their OpenAPI specs into one combined document. It lives at `apps/api` inside the
 `api.franciscosolis.cl` monorepo.
 
-Currently the only internal component wired up is `landing` (the sibling `apps/landing`
-Worker in the parent monorepo).
+Two internal components are wired up: `landing` (the sibling `apps/landing` Worker) and
+`auth` (`apps/auth`, centralized authentication), both in the parent monorepo.
 
 ## Stack
 
@@ -39,16 +39,23 @@ There is no separate `build` script — Wrangler bundles as part of `dev`/`deplo
 ## Source layout
 
 - `src/index.ts` — Hono app: CORS, charset middleware, `onError`, status route (`GET /`),
-  the `/landing/*` proxy, and the `/openapi.json` route.
+  the `/landing/*` and `/auth/*` proxies, and the `/openapi.json` route.
 - `src/openapi.ts` — `mergeRemoteSpecs`: fetches each internal module's `/openapi.json`
   over its service binding and merges it under a route prefix.
 - `src/env.ts` — `Env` type declaring the Cloudflare bindings (`LANDING` service binding).
 
 ## Architecture notes (non-obvious)
 
-- **Proxy pattern**: `ALL /landing/*` forwards the request to the `LANDING` binding's
-  `Fetcher`, stripping the `/landing` prefix before forwarding. Follow this exact pattern
+- **Proxy pattern**: `ALL /<module>/*` forwards the request to the module binding's
+  `Fetcher`, stripping the `/<module>` prefix before forwarding. Follow this pattern
   (strip prefix, forward via binding `.fetch()`) when adding a new proxied module.
+- **The `/auth/*` proxy forwards the whole Request**, unlike `/landing/*` which rebuilds a
+  couple of headers: the auth module needs `CF-Connecting-IP` and `User-Agent` for its audit
+  trail and the body for its POSTs. It also pins `redirect: 'manual'`, otherwise the 302s
+  that carry an authorization code would be followed inside the Worker instead of reaching
+  the browser. Keep both when touching that route.
+- **CORS allows write verbs for auth**: sign-in, token exchange and the admin API are
+  POST/PATCH/DELETE. The origin allowlist is unchanged and stays locked down.
 - **OpenAPI merge is best-effort**: if an internal module's `/openapi.json` fetch fails,
   `mergeRemoteSpecs` skips it silently instead of throwing — the combined spec should
   never 500 just because one internal Worker is down.

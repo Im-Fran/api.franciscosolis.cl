@@ -25,6 +25,10 @@
     {
       "binding": "LANDING",
       "service": "landing"
+    },
+    {
+      "binding": "AUTH",
+      "service": "auth"
     }
   ],
   "observability": {

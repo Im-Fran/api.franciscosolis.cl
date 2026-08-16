@@ -1,0 +1,17 @@
+# Ed25519 private key in JWK format, used to sign access tokens.
+# Generate one with `pnpm run keys:generate` and paste the printed private JWK here (single line).
+JWT_PRIVATE_KEY={"kty":"OKP","crv":"Ed25519","alg":"EdDSA","kid":"","x":"","d":""}
+
+# Optional: JSON array of previously used PUBLIC JWKs, kept in the JWKS while old access
+# tokens are still valid after a key rotation. Leave unset if you have never rotated.
+JWT_RETIRED_PUBLIC_KEYS=[]
+
+# Google OAuth 2.0 client (https://console.cloud.google.com/apis/credentials).
+# The authorized redirect URI must be <AUTH_PUBLIC_URL>/oauth/google/callback.
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# Local overrides for the vars declared in wrangler.jsonc, so magic links and the Google
+# redirect_uri point at the local gateway instead of production.
+AUTH_PUBLIC_URL=http://localhost:8787/auth
+AUTH_ISSUER=http://localhost:8787/auth
