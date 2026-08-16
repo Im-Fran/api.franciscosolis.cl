@@ -40,6 +40,19 @@ export default {
       return new Response('upstream exploded', { status: 500 })
     }
 
+    // The binding itself rejecting, rather than answering with an error status: this is the path
+    // that reaches the gateway's onError instead of being proxied back verbatim.
+    if (url.pathname === '/throw') {
+      throw new Error('stub blew up')
+    }
+
+    // Lets a test choose the upstream Content-Type, to pin down which values the charset
+    // middleware rewrites and which it leaves alone.
+    if (url.pathname === '/content-type') {
+      const value = url.searchParams.get('value')
+      return new Response('{}', { headers: value === null ? {} : { 'Content-Type': value } })
+    }
+
     return Response.json({
       module: '${module}',
       method: request.method,
@@ -47,7 +60,7 @@ export default {
       search: url.search,
       body: request.body ? await request.text() : null,
       headers: Object.fromEntries(request.headers),
-    })
+    }, { headers: { 'X-Stub-Module': '${module}' } })
   },
 }
 `
