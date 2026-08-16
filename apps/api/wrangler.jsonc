@@ -29,6 +29,10 @@
     {
       "binding": "AUTH",
       "service": "auth"
+    },
+    {
+      "binding": "CMS",
+      "service": "cms"
     }
   ],
   "observability": {

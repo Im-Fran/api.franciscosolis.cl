@@ -1,0 +1,68 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cms",
+  "main": "src/index.ts",
+  "preview_urls": true,
+  "workers_dev": true,
+  "cache": {
+    "enabled": true
+  },
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "placement": {
+    "mode": "smart"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "franciscosolis_cms",
+      // Replace with the id printed by `wrangler d1 create franciscosolis_cms`. Until then only
+      // `--local` development works; a remote deploy will fail to bind the database.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      // Cloudflare rejects a send from any address not listed here, so this is the outer bound
+      // of what the CMS can ever send as, regardless of what an editor puts in the request.
+      "allowed_sender_addresses": [
+        "hola@mail.franciscosolis.cl",
+        "no-reply@mail.franciscosolis.cl"
+      ]
+    }
+  ],
+  "vars": {
+    // JWKS of the auth Worker. Tokens are verified offline against these keys: the CMS never
+    // calls auth, and deliberately has no service binding back into it.
+    "AUTH_JWKS_URL": "https://api.franciscosolis.cl/auth/.well-known/jwks.json",
+    // Expected `iss` claim. Must match `AUTH_ISSUER` in apps/auth/wrangler.jsonc exactly.
+    "AUTH_ISSUER": "https://api.franciscosolis.cl/auth",
+    // Comma-separated client application ids (the `aud` claim) whose tokens may reach the CMS.
+    // A token minted for the public website is not accepted here.
+    "CMS_ALLOWED_AUDIENCES": "franciscosolis-cms",
+    // Comma-separated email domains allowed into the CMS. This is the access gate: an account
+    // outside these domains is refused even with a perfectly valid access token.
+    "CMS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+    // Default sender for outgoing mail. Must be one of `allowed_sender_addresses` above.
+    "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+    "MAIL_FROM_NAME": "Francisco Solis",
+    // Senders an editor may pick per message. Subset of `allowed_sender_addresses`.
+    "MAIL_ALLOWED_SENDERS": "hola@mail.franciscosolis.cl,no-reply@mail.franciscosolis.cl"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.25,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "cms",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0 --port 8790 --inspector-port 9232",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply franciscosolis_cms --local",
+    "db:migrate:remote": "wrangler d1 migrations apply franciscosolis_cms --remote"
+  },
+  "dependencies": {
+    "@hono/standard-validator": "catalog:",
+    "@valibot/to-json-schema": "catalog:",
+    "axios": "catalog:",
+    "drizzle-orm": "catalog:",
+    "hono": "catalog:",
+    "hono-openapi": "catalog:",
+    "valibot": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260730.1",
+    "drizzle-kit": "catalog:",
+    "wrangler": "catalog:"
+  }
+}

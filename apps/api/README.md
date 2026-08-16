@@ -14,14 +14,15 @@
 
 `api` is the root Worker of the [`api.franciscosolis.cl`](https://github.com/Im-Fran/api.franciscosolis.cl) monorepo. It's deployed on the `api.franciscosolis.cl` domain and acts as the **public gateway/entrypoint**: it doesn't implement any business logic of its own beyond a status endpoint, and instead forwards requests to the monorepo's internal Workers through [Cloudflare Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/), merging their OpenAPI specs into a single document.
 
-It's built with [Hono](https://hono.dev/) on [Cloudflare Workers](https://workers.cloudflare.com/), using `wrangler` for both local development and deployment. Two internal components are registered — `landing` (the landing site's Worker, at `apps/landing`) and `auth` (centralized authentication, at `apps/auth`) — and the code is designed so that adding a new internal module is a matter of a few lines.
+It's built with [Hono](https://hono.dev/) on [Cloudflare Workers](https://workers.cloudflare.com/), using `wrangler` for both local development and deployment. Three internal components are registered — `landing` (the landing site's Worker, at `apps/landing`), `auth` (centralized authentication, at `apps/auth`) and `cms` (content management, at `apps/cms`) — and the code is designed so that adding a new internal module is a matter of a few lines.
 
 ## ✨ Features
 
 - **Status endpoint (`GET /`)** — Returns a JSON payload with a greeting message and the list of available modules (`modules`).
 - **Proxy to the `landing` Worker (`ALL /landing/*`)** — Forwards any HTTP method under `/landing/*` to the `landing` Worker through the `LANDING` binding, stripping the `/landing` prefix from the path before forwarding.
 - **Proxy to the `auth` Worker (`ALL /auth/*`)** — Forwards the complete request (method, headers and body) to the `auth` Worker through the `AUTH` binding. Unlike the `landing` proxy it preserves every header, because the auth module records `CF-Connecting-IP` and `User-Agent` in its audit trail, and it forwards with `redirect: 'manual'` so the 302s carrying an authorization code reach the browser instead of being followed inside the Worker.
-- **Aggregated OpenAPI (`GET /openapi.json`)** — Generates this API's own OpenAPI spec with `hono-openapi` and merges it (`mergeRemoteSpecs`) with the spec exposed by each internal component (`landing` under `/landing`, `auth` under `/auth`). If an internal component doesn't respond, it's silently skipped from the merged spec instead of breaking the rest.
+- **Proxy to the `cms` Worker (`ALL /cms/*`)** — Forwards the complete request to the `cms` Worker through the `CMS` binding. Like the `auth` proxy it preserves every header, because the CMS validates the `Authorization` token itself and records `CF-Connecting-IP` in its audit trail.
+- **Aggregated OpenAPI (`GET /openapi.json`)** — Generates this API's own OpenAPI spec with `hono-openapi` and merges it (`mergeRemoteSpecs`) with the spec exposed by each internal component (`landing` under `/landing`, `auth` under `/auth`, `cms` under `/cms`). If an internal component doesn't respond, it's silently skipped from the merged spec instead of breaking the rest.
 - **Locked-down CORS** — Only allows `GET`, `POST`, `PATCH`, `DELETE` and `OPTIONS` from `localhost:5173`, `*.franciscosolis.workers.dev`, and `*.franciscosolis.cl`; any other origin gets the response meant for `https://franciscosolis.cl`. The write verbs exist for the auth module's sign-in, token exchange and admin API.
 - **Centralized error handling** — `app.onError` translates `HTTPException` (or any error) into a `{ code, error }` JSON body with the matching HTTP status.
 - **JSON charset fix** — Middleware that forces `charset=UTF-8` on `application/json` responses, since Hono's `c.json()` doesn't include it by default (see the `ponytail` comment in `src/index.ts`).
@@ -72,7 +73,7 @@ pnpm dev
 
 This runs `wrangler dev --ip 0.0.0.0 --port 8787 --inspector-port 9229`. The API is available at [http://localhost:8787](http://localhost:8787) (debug inspector on port `9229`).
 
-> From the monorepo root, `pnpm dev` runs the `dev` script of **all** workspace apps (`apps/*`) in parallel, including `landing` and `auth`, which is needed so the `/landing/*` and `/auth/*` proxies have something to forward to locally.
+> From the monorepo root, `pnpm dev` runs the `dev` script of **all** workspace apps (`apps/*`) in parallel, including `landing`, `auth` and `cms`, which is needed so the `/landing/*`, `/auth/*` and `/cms/*` proxies have something to forward to locally.
 
 There's no separate `build` command: Wrangler compiles and bundles the Worker as part of `dev`/`deploy`.
 
@@ -99,7 +100,7 @@ Runs `wrangler deploy --minify`, publishing the `api` Worker on the route config
 - Observability enabled (logs and traces with a `head_sampling_rate` of `0.25`)
 - Workers cache enabled
 
-The service bindings (`services: [{ binding: "LANDING", service: "landing" }, { binding: "AUTH", service: "auth" }]`) connect this Worker to the `landing` and `auth` Workers deployed in the same Cloudflare account — the `/landing/*` and `/auth/*` proxies and the OpenAPI merge depend on those Workers being deployed and reachable under exactly those names.
+The service bindings (`services: [{ binding: "LANDING", service: "landing" }, { binding: "AUTH", service: "auth" }, { binding: "CMS", service: "cms" }]`) connect this Worker to the `landing`, `auth` and `cms` Workers deployed in the same Cloudflare account — the `/landing/*`, `/auth/*` and `/cms/*` proxies and the OpenAPI merge depend on those Workers being deployed and reachable under exactly those names.
 
 ## ⚙️ Configuration — Routing to a New Internal Module
 
