@@ -161,6 +161,8 @@ describe('GET /oauth/google/callback', () => {
     const response = await callback({ state, code: 'google-auth-code' })
 
     expect(response.status).toBe(302)
+    // The Location header carries a single-use code, so no shared cache may keep this response.
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
     const target = new URL(response.headers.get('Location') as string)
     expect(target.origin + target.pathname).toBe(SEED.webRedirectUri)
     expect(target.searchParams.get('state')).toBe('client-state')
@@ -289,6 +291,23 @@ describe('GET /oauth/google/callback', () => {
     const target = new URL(response.headers.get('Location') as string)
     expect(target.searchParams.get('error')).toBe('server_error')
     expect(target.searchParams.get('error_description')).toContain('Malformed auth code.')
+  })
+
+  it('surfaces a transport failure as a 500 instead of laundering it into an error redirect', async () => {
+    const { state } = await startFlow({ state: 'client-state' })
+    // Only the JWKS route is declared, so the call to Google's token endpoint rejects with a
+    // transport error rather than an OAuthException — the branch that re-raises instead of
+    // redirecting. An infrastructure outage must not reach the client dressed as `server_error`.
+    const jwks = await googleJwks()
+    stubFetch({ [GOOGLE_JWKS_URI]: () => Response.json(jwks) })
+
+    const response = await callback({ state, code: 'c' })
+    const body = await response.json<Record<string, unknown>>()
+
+    expect(response.status).toBe(500)
+    expect(response.headers.get('Location')).toBeNull()
+    expect(Object.keys(body).sort()).toEqual(['code', 'error'])
+    expect(body.code).toBe(500)
   })
 
   it('rejects an ID token whose nonce belongs to another attempt', async () => {

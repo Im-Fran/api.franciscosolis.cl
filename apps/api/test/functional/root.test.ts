@@ -17,15 +17,20 @@ describe('GET /', () => {
     })
   })
 
-  it('sends the non-ASCII greeting as UTF-8 bytes', async () => {
+  it('sends the non-ASCII greeting as UTF-8 bytes, not Latin-1 ones', async () => {
     const response = await gateway('/')
-    const bytes = new Uint8Array(await response.arrayBuffer())
+    const buffer = new Uint8Array(await response.arrayBuffer())
+    const bytes = Array.from(buffer)
 
-    // `¡` is C2 A1 in UTF-8 and a single 0xA1 byte in Latin-1; the declared charset is what stops a
-    // client from picking the wrong one.
     expect(response.headers.get('Content-Type')).toBe('application/json; charset=UTF-8')
-    expect(Array.from(bytes.slice(0, 2))).not.toEqual([0xa1, 0x48])
-    expect(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes)).toContain('¡Hello, API!')
+
+    // `¡` is the two bytes C2 A1 in UTF-8 and the single byte A1 in Latin-1, so the pair sitting in
+    // front of the greeting — and the absence of any lone A1 — is what tells the two encodings
+    // apart on the wire. The charset asserted above is what stops the client from guessing.
+    const greeting = bytes.indexOf(0x48) // the 'H' of "Hello"
+    expect(bytes.slice(greeting - 2, greeting)).toEqual([0xc2, 0xa1])
+    expect(bytes.filter((byte, index) => byte === 0xa1 && bytes[index - 1] !== 0xc2)).toEqual([])
+    expect(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(buffer)).toContain('¡Hello, API!')
   })
 
   it('advertises exactly the modules that are actually proxied', async () => {

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { echoOf, gateway } from '../helpers/gateway'
+import { BASE_URL, echoOf, fetcher, gateway, gatewayWithBindings } from '../helpers/gateway'
+import type { Env } from '@/env'
 import type { ModuleName } from '../stubs'
 
 const MODULES: ModuleName[] = ['landing', 'auth', 'cms']
+
+/** The binding name each proxied prefix forwards to. */
+const BINDING_OF: Record<ModuleName, keyof Env> = { landing: 'LANDING', auth: 'AUTH', cms: 'CMS' }
 
 /** Headers a real caller sends that are not Content-Type or Authorization. */
 const EXTRA_HEADERS = {
@@ -24,6 +28,9 @@ describe.each(MODULES)('/%s/* proxy', (module) => {
       expect(echoed.pathname).toBe('/stats/github')
     })
 
+    // The handler spells this as `replace(...) || '/'`, but the `|| '/'` half is unreachable: the
+    // WHATWG URL setter normalizes an assigned empty pathname to '/' on its own. What is pinned
+    // here is the observable outcome, not that particular fallback.
     it('rewrites the bare prefix to the module root', async () => {
       const echoed = await echoOf(await gateway(path('')))
 
@@ -52,6 +59,32 @@ describe.each(MODULES)('/%s/* proxy', (module) => {
       const echoed = await echoOf(await gateway(path('/.well-known/jwks.json')))
 
       expect(echoed.pathname).toBe('/.well-known/jwks.json')
+    })
+  })
+
+  /**
+   * Only the path prefix may be rewritten. The modules build absolute URLs out of the request they
+   * receive — `auth` derives its OAuth `redirect_uri` allowlist and its JWT issuer from it — so a
+   * proxy that quietly changed the scheme, host or port would break sign-in everywhere while still
+   * forwarding the right path.
+   */
+  describe('forwarded origin', () => {
+    it('hands the module the caller origin, not an internal one', async () => {
+      const echoed = await echoOf(await gateway(path('/thing')))
+
+      expect(echoed.origin).toBe(BASE_URL)
+    })
+
+    it('rebuilds the URL as the caller one with only the prefix removed', async () => {
+      const echoed = await echoOf(await gateway(path('/oauth/authorize?client_id=web&scope=openid')))
+
+      expect(echoed.url).toBe(`${BASE_URL}/oauth/authorize?client_id=web&scope=openid`)
+    })
+
+    it('keeps the origin on the bare prefix too', async () => {
+      const echoed = await echoOf(await gateway(path('')))
+
+      expect(echoed.url).toBe(`${BASE_URL}/`)
     })
   })
 
@@ -84,13 +117,22 @@ describe.each(MODULES)('/%s/* proxy', (module) => {
   })
 
   describe('method and body', () => {
+    // The stub reports the method it saw as a header as well as in the echoed body, because a HEAD
+    // is answered with no body — the header is the only way to see that HEAD arrived as HEAD and
+    // was not quietly turned into a GET on the way.
     it.each(['GET', 'HEAD', 'DELETE'])('forwards a %s unchanged', async (method) => {
       const response = await gateway(path('/thing'), { method })
 
       expect(response.headers.get('X-Stub-Module')).toBe(module)
-      if (method !== 'HEAD') {
-        expect((await echoOf(response)).method).toBe(method)
-      }
+      expect(response.headers.get('X-Stub-Method')).toBe(method)
+    })
+
+    it('answers a HEAD with the headers of the GET and an empty body', async () => {
+      const head = await gateway(path('/thing'), { method: 'HEAD' })
+
+      expect(head.status).toBe(200)
+      expect(head.headers.get('Content-Type')).toBe('application/json; charset=UTF-8')
+      await expect(head.text()).resolves.toBe('')
     })
 
     it.each(['POST', 'PATCH', 'PUT', 'DELETE'])('forwards the body of a %s', async (method) => {
@@ -215,7 +257,37 @@ describe('header forwarding differs per module', () => {
   })
 })
 
+/**
+ * `/auth/*` is the only proxy that pins `redirect: 'manual'` on the Request it forwards, so that a
+ * 302 carrying an authorization code reaches the browser instead of being followed inside the
+ * Worker. An inbound Request already defaults to `manual` in production, which makes the pin
+ * invisible to a plain end-to-end 302 assertion — the redirect mode has to be read off the Request
+ * the binding actually received, from a caller whose own Request says `follow`.
+ */
 describe('/auth/* redirect handling', () => {
+  const redirectModeSeenBy = async (module: ModuleName) => {
+    let seen: Request['redirect'] | undefined
+    await gatewayWithBindings(
+      {
+        [BINDING_OF[module]]: fetcher((request) => {
+          seen = request.redirect
+          return new Response(null, { status: 204 })
+        }),
+      },
+      `/${module}/probe`,
+      { redirect: 'follow' },
+    )
+    return seen
+  }
+
+  it('pins redirect: manual on the request handed to auth', async () => {
+    await expect(redirectModeSeenBy('auth')).resolves.toBe('manual')
+  })
+
+  it.each(['landing', 'cms'] as const)('leaves the redirect mode alone for %s', async (module) => {
+    await expect(redirectModeSeenBy(module)).resolves.toBe('follow')
+  })
+
   it('hands back the 302 that carries the authorization code, with the code intact', async () => {
     const response = await gateway('/auth/redirect', { redirect: 'manual' })
 
@@ -223,5 +295,29 @@ describe('/auth/* redirect handling', () => {
     expect(response.headers.get('Location')).toBe('https://example.test/callback?code=abc')
     // Following it inside the Worker would have swallowed the 302 and returned the target's body.
     await expect(response.text()).resolves.toBe('')
+  })
+
+  it('does not follow the redirect even when the module answers a 302 to a reachable target', async () => {
+    let followed = false
+    const response = await gatewayWithBindings(
+      {
+        AUTH: fetcher((request) => {
+          if (new URL(request.url).pathname === '/callback') {
+            followed = true
+            return new Response('landed on the target', { status: 200 })
+          }
+          return new Response(null, {
+            status: 302,
+            headers: { Location: `${BASE_URL}/callback?code=one-time` },
+          })
+        }),
+      },
+      '/auth/oauth/authorize',
+      { redirect: 'follow' },
+    )
+
+    expect(followed).toBe(false)
+    expect(response.status).toBe(302)
+    expect(response.headers.get('Location')).toBe(`${BASE_URL}/callback?code=one-time`)
   })
 })

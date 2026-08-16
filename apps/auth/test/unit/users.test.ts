@@ -114,17 +114,53 @@ describe('getUserAuthorization', () => {
     await expect(getUserAuthorization(db(), user.id, SEED.webAppId)).resolves.toEqual({ roles: [], permissions: [] })
   })
 
-  it('merges global and scoped roles, sorted and without duplicates', async () => {
+  it('merges global and scoped roles, sorted, granting a shared permission exactly once', async () => {
     const user = await createUser()
-    const scoped = await createRole({ slug: 'auditor', applicationId: SEED.webAppId, permissions: ['audit:read', 'users:read'] })
-    await grant(user.id, SEED.userRoleId)
+    // Both roles carry `users:read`, so the union has to collapse it; each also carries one
+    // permission of its own, so a union that dropped either role would be visible too.
+    const global = await createRole({ slug: 'global-auditor', permissions: ['users:read', 'audit:read'] })
+    const scoped = await createRole({
+      slug: 'web-auditor',
+      applicationId: SEED.webAppId,
+      permissions: ['users:read', 'roles:read'],
+    })
+    await grant(user.id, global.id)
     await grant(user.id, scoped.id)
 
     const authorization = await getUserAuthorization(db(), user.id, SEED.webAppId)
 
-    expect(authorization.roles).toEqual(['auditor', 'user'])
-    // `users:read` comes from the scoped role only once, even though two roles are in scope.
-    expect(authorization.permissions).toEqual(['audit:read', 'users:read'])
+    expect(authorization.roles).toEqual(['global-auditor', 'web-auditor'])
+    expect(authorization.permissions).toEqual(['audit:read', 'roles:read', 'users:read'])
+    expect(authorization.permissions.filter((slug) => slug === 'users:read')).toHaveLength(1)
+  })
+
+  it('lists a slug once when a global and a scoped role happen to share it', async () => {
+    const user = await createUser()
+    // The schema allows this: the unique indexes on `roles.slug` are partial, one per scope.
+    const global = await createRole({ slug: 'ambiguous', applicationId: null, permissions: ['audit:read'] })
+    const scoped = await createRole({ slug: 'ambiguous', applicationId: SEED.webAppId, permissions: ['audit:read'] })
+    await grant(user.id, global.id)
+    await grant(user.id, scoped.id)
+
+    const authorization = await getUserAuthorization(db(), user.id, SEED.webAppId)
+
+    expect(authorization.roles).toEqual(['ambiguous'])
+    expect(authorization.permissions).toEqual(['audit:read'])
+  })
+
+  it('keeps a permission the user still holds through a second role after one is revoked', async () => {
+    const user = await createUser()
+    const first = await createRole({ slug: 'overlap-a', permissions: ['users:read'] })
+    const second = await createRole({ slug: 'overlap-b', permissions: ['users:read'] })
+    await grant(user.id, first.id)
+    await grant(user.id, second.id)
+
+    await db().delete(userRoles).where(and(eq(userRoles.userId, user.id), eq(userRoles.roleId, first.id)))
+
+    await expect(getUserAuthorization(db(), user.id, SEED.webAppId)).resolves.toEqual({
+      roles: ['overlap-b'],
+      permissions: ['users:read'],
+    })
   })
 
   it('drops a permission as soon as the role granting it is revoked', async () => {

@@ -197,6 +197,21 @@ describe('GET /me/sessions', () => {
     expect(body.data.find((row) => row.id === another.id)?.current).toBe(false)
   })
 
+  it('orders the sessions by last activity, most recent first', async () => {
+    const { token, user, session } = await signIn()
+    const stale = await createSessionRow({ userId: user.id, lastSeenAt: new Date('2026-01-01T00:00:00.000Z') })
+    const recent = await createSessionRow({ userId: user.id, lastSeenAt: new Date('2026-03-01T00:00:00.000Z') })
+    await db()
+      .update(sessions)
+      .set({ lastSeenAt: new Date('2026-02-01T00:00:00.000Z') })
+      .where(eq(sessions.id, session.id))
+
+    const body = await (await call('/me/sessions', token)).json<{ data: { id: string }[] }>()
+
+    // Compared in order, deliberately unsorted: the ordering is what this endpoint documents.
+    expect(body.data.map((row) => row.id)).toEqual([recent.id, session.id, stale.id])
+  })
+
   it('hides revoked sessions and other users\' sessions', async () => {
     const { token, user, session } = await signIn()
     await createSessionRow({ userId: user.id, revokedAt: new Date() })
@@ -321,8 +336,24 @@ describe('disabled accounts', () => {
 describe('permissions on /me', () => {
   it('needs no permission at all, only a live session', async () => {
     const { token } = await signIn()
-    await grant((await signIn()).user.id, SEED.adminRoleId)
 
-    expect((await call('/me', token)).status).toBe(200)
+    const response = await call('/me', token)
+
+    expect(response.status).toBe(200)
+    // A caller holding nothing still gets their profile; only the admin API is permission-gated.
+    await expect(response.json()).resolves.toMatchObject({ data: { roles: [], permissions: [] } })
+  })
+
+  it('reports the roles of the caller, never of another user who happens to be an admin', async () => {
+    const plain = await signIn()
+    const elevated = await signIn()
+    await grant(elevated.user.id, SEED.adminRoleId)
+
+    await expect((await call('/me', plain.token)).json()).resolves.toMatchObject({
+      data: { user: { id: plain.user.id }, roles: [] },
+    })
+    await expect((await call('/me', elevated.token)).json()).resolves.toMatchObject({
+      data: { user: { id: elevated.user.id }, roles: ['admin'] },
+    })
   })
 })

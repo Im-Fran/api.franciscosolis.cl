@@ -2,7 +2,7 @@ import { SELF, env } from 'cloudflare:test'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { EMAIL_LIMITS } from '@/lib/config'
 import type { EmailMessage, EmailSender } from '@/env'
-import { clearDatabase, countRows, readAuditLog, seedTemplate } from '../helpers/db'
+import { clearDatabase, countRows, readAuditLog, seedMessage, seedTemplate } from '../helpers/db'
 import { asEditor } from '../helpers/tokens'
 
 type LoggedMessage = {
@@ -184,6 +184,48 @@ describe('POST /admin/emails — the ceilings in EMAIL_LIMITS', () => {
 
     expect((await call('POST', '/admin/emails', { to: ['a@example.com'], subject: 'S', text: tooLong })).status).toBe(400)
     expect((await call('POST', '/admin/emails', { to: ['a@example.com'], subject: 'S', html: tooLong })).status).toBe(400)
+  })
+
+  it('holds a single recipient to 320 characters', async () => {
+    // The address has to stay syntactically valid to reach the length check at all — `v.email()`
+    // runs first in the pipe, so a shapeless string would be refused for the wrong reason.
+    const atLimit = `${'a'.repeat(308)}@example.com`
+    const overLimit = `${'a'.repeat(309)}@example.com`
+
+    expect(atLimit).toHaveLength(320)
+    expect(overLimit).toHaveLength(321)
+    expect((await call('POST', '/admin/emails', { to: [atLimit], subject: 'S', text: 'T' })).status).toBe(202)
+    expect((await call('POST', '/admin/emails', { to: [overLimit], subject: 'S', text: 'T' })).status).toBe(400)
+  })
+
+  it('refuses a reply_to that is not an address', async () => {
+    for (const replyTo of ['not-an-email', 'fran@', '@franciscosolis.cl', 'fran@ franciscosolis.cl']) {
+      const response = await call('POST', '/admin/emails', {
+        to: ['a@example.com'],
+        subject: 'S',
+        text: 'T',
+        reply_to: replyTo,
+      })
+      expect(response.status, replyTo).toBe(400)
+    }
+
+    expect(sent).toHaveLength(0)
+    expect(await countRows('email_messages')).toBe(0)
+  })
+
+  it('carries a valid reply_to through to the binding and the log', async () => {
+    const message = await dataOf<LoggedMessage>(
+      await call('POST', '/admin/emails', {
+        to: ['a@example.com'],
+        subject: 'S',
+        text: 'T',
+        reply_to: '  Fran@Example.com  ',
+      }),
+    )
+
+    // Trimmed but not lowercased: the local part of an address is case-sensitive per RFC 5321.
+    expect(message.reply_to).toBe('Fran@Example.com')
+    expect(sent[0]?.replyTo).toBe('Fran@Example.com')
   })
 
   it('logs nothing when a ceiling is hit', async () => {
@@ -445,13 +487,42 @@ describe('POST /admin/emails — the audit trail', () => {
 
 describe('GET /admin/emails', () => {
   it('lists the log newest first', async () => {
+    // `created_at` is unix seconds, so three messages sent inside one test all land in the same
+    // second and cannot tell an ordered listing from an unordered one. Seeded seconds apart
+    // instead, which is what actually pins `orderBy(desc(createdAt))`.
+    const now = Math.floor(Date.now() / 1000)
+    for (const [index, subject] of ['oldest', 'middle', 'newest'].entries()) {
+      await seedMessage({ subject, createdAt: new Date((now - 30 + index * 10) * 1000) })
+    }
+
+    const messages = await dataOf<LoggedMessage[]>(await call('GET', '/admin/emails'))
+
+    expect(messages.map((message) => message.subject)).toEqual(['newest', 'middle', 'oldest'])
+  })
+
+  it('pages through that order rather than restarting it', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    for (const [index, subject] of ['oldest', 'middle', 'newest'].entries()) {
+      await seedMessage({ subject, createdAt: new Date((now - 30 + index * 10) * 1000) })
+    }
+
+    expect(
+      (await dataOf<LoggedMessage[]>(await call('GET', '/admin/emails?limit=2'))).map((m) => m.subject),
+    ).toEqual(['newest', 'middle'])
+    expect(
+      (await dataOf<LoggedMessage[]>(await call('GET', '/admin/emails?limit=2&offset=2'))).map((m) => m.subject),
+    ).toEqual(['oldest'])
+  })
+
+  it('lists every message that went through the route', async () => {
     for (const subject of ['first', 'second', 'third']) {
       await call('POST', '/admin/emails', { to: ['a@example.com'], subject, text: 'T' })
     }
 
     const messages = await dataOf<LoggedMessage[]>(await call('GET', '/admin/emails'))
+
     expect(messages).toHaveLength(3)
-    expect(messages.map((message) => message.subject)).toContain('third')
+    expect(messages.map((message) => message.subject).sort()).toEqual(['first', 'second', 'third'])
   })
 
   it('filters by status', async () => {

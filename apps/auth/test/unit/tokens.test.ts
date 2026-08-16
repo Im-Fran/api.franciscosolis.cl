@@ -60,13 +60,15 @@ describe('issueAuthorizationCode', () => {
     })
   })
 
-  it('expires after the configured authorization-code TTL', async () => {
+  it('expires after the configured authorization-code TTL, neither sooner nor later', async () => {
     const { code } = await issueCode()
     const record = await consumeAuthorizationCode(db(), code)
-    const lifetime = record.expiresAt.getTime() - record.createdAt.getTime()
+    const lifetime = Math.round((record.expiresAt.getTime() - record.createdAt.getTime()) / 1000)
 
-    expect(lifetime).toBeGreaterThan(0)
-    expect(Math.round(lifetime / 1000)).toBeLessThanOrEqual(TTL.authorizationCode + 1)
+    // Both bounds are pinned: this is the shortest-lived credential the Worker issues, so a TTL
+    // that silently grew is as much a defect as one that shrank. The slack is D1's second-precision.
+    expect(lifetime).toBeGreaterThanOrEqual(TTL.authorizationCode - 1)
+    expect(lifetime).toBeLessThanOrEqual(TTL.authorizationCode + 1)
   })
 
   it('never issues the same code twice', async () => {

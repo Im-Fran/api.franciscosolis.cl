@@ -108,6 +108,42 @@ describe('GET /openapi.json', () => {
   })
 })
 
+/**
+ * The gateway ends up serving two different OpenAPI documents: the merged one it builds at
+ * `/openapi.json`, and each module's own, which falls through the proxy at `/<module>/openapi.json`
+ * because nothing intercepts that path. Consumers have to know which is which, so the distinction
+ * is recorded here rather than left to be discovered.
+ */
+describe('GET /<module>/openapi.json', () => {
+  it.each(['landing', 'auth', 'cms'])('proxies through to the %s module own document', async (module) => {
+    const response = await gateway(`/${module}/openapi.json`)
+    const document = await documentFrom(response)
+
+    expect(response.status).toBe(200)
+    expect(document.info.title).toBe(module)
+    // Unprefixed: this is the module describing itself, not its slice of the merged document.
+    expect(Object.keys(document.paths).sort()).toEqual(['/', '/thing'])
+  })
+
+  it('is a different document from the merged one', async () => {
+    const merged = await documentFrom(await gateway('/openapi.json'))
+    const auth = await documentFrom(await gateway('/auth/openapi.json'))
+
+    expect(merged.info.title).toBe('FranciscoSolis - Rest API')
+    expect(auth.info.title).toBe('auth')
+    expect(Object.keys(merged.paths)).toContain('/auth/thing')
+    expect(Object.keys(auth.paths)).not.toContain('/auth/thing')
+    expect(Object.keys(merged.paths)).not.toContain('/thing')
+  })
+
+  it('keeps every module schema, unlike the merged document that collapses them', async () => {
+    const perModule = await Promise.all(['landing', 'auth', 'cms'].map(async (module) =>
+      Object.keys((await documentFrom(await gateway(`/${module}/openapi.json`))).components.schemas)))
+
+    expect(perModule).toEqual([['landingSchema'], ['authSchema'], ['cmsSchema']])
+  })
+})
+
 describe('GET /openapi.json with a module unavailable', () => {
   it('drops the unreachable module and keeps the rest', async () => {
     const response = await gatewayWithBindings(

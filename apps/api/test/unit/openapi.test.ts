@@ -122,6 +122,51 @@ describe('mergeRemoteSpecs', () => {
       expect(asRecord(spec).components).toEqual({ schemas: { GatewayStatus: { type: 'object' } } })
     })
 
+    it('tolerates a remote spec whose components field is null', async () => {
+      const spec = gatewaySpec()
+
+      await mergeRemoteSpecs(spec, [{
+        prefix: '/landing',
+        fetchSpec: serving({ paths: { '/x': { get: { summary: 'x' } } }, components: null }),
+      }])
+
+      expect(Object.keys(asRecord(spec).paths)).toEqual(['/', '/landing/x'])
+      expect(asRecord(spec).components).toEqual({ schemas: { GatewayStatus: { type: 'object' } } })
+    })
+
+    /**
+     * The consequence of the shallow `Object.assign`, made deterministic: two modules that both
+     * publish under `components.schemas` do not merge, the later answer replaces the earlier group
+     * outright. Their paths are unaffected, which is why the merged document can look complete
+     * while half its `$ref` targets are gone.
+     */
+    it('lets the module that answers last replace the shared component group', async () => {
+      const spec = gatewaySpec()
+      const slow = Promise.withResolvers<Response>()
+
+      const merged = mergeRemoteSpecs(spec, [
+        { prefix: '/landing', fetchSpec: () => slow.promise },
+        { prefix: '/auth', fetchSpec: serving(moduleSpec('auth')) },
+      ])
+
+      // A macrotask lets auth finish its whole merge before landing answers, so the order the two
+      // write in is fixed rather than a race.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(asRecord(spec).components).toEqual({ schemas: { authSchema: { type: 'object' } } })
+
+      slow.resolve(Response.json(moduleSpec('landing')))
+      await merged
+
+      expect(asRecord(spec).components).toEqual({ schemas: { landingSchema: { type: 'object' } } })
+      expect(Object.keys(asRecord(spec).paths).sort()).toEqual([
+        '/',
+        '/auth',
+        '/auth/thing',
+        '/landing',
+        '/landing/thing',
+      ])
+    })
+
     it('still merges paths when the target spec has no components object to assign into', async () => {
       const spec = gatewaySpec()
       delete (asRecord(spec) as { components?: unknown }).components

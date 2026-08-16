@@ -201,6 +201,8 @@ describe('GET /magic-link/callback', () => {
     const response = await callback(token)
 
     expect(response.status).toBe(302)
+    // The Location header carries a single-use code, so no shared cache may keep this response.
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
     const target = new URL(response.headers.get('Location') as string)
     expect(target.origin + target.pathname).toBe(SEED.webRedirectUri)
     expect(target.searchParams.get('state')).toBe('st-cb')
@@ -317,5 +319,62 @@ describe('GET /magic-link/callback', () => {
       code: 400,
       error: 'The application this link was issued for is no longer available',
     })
+  })
+})
+
+/**
+ * `BOOTSTRAP_ADMIN_EMAILS` is the only bypass of the invitation-only rule and the only path that
+ * hands out the global `admin` role automatically, so it is driven end to end through the Worker
+ * rather than only against the service that implements it.
+ */
+describe('BOOTSTRAP_ADMIN_EMAILS through the whole flow', () => {
+  const exchange = (code: string) =>
+    SELF.fetch('https://auth.internal/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: SEED.webAppId,
+        code,
+        redirect_uri: SEED.webRedirectUri,
+        code_verifier: RFC7636.verifier,
+      }).toString(),
+    })
+
+  it('lets a listed address sign up uninvited and lands it holding the admin role', async () => {
+    const email = uniqueEmail('bootstrap-e2e')
+
+    const accessToken = await withWorkerEnv(
+      { BOOTSTRAP_ADMIN_EMAILS: `stranger@example.test, ${email.toUpperCase()} ` },
+      async () => {
+        const token = await requestLinkFor(email)
+        const redirect = await callback(token)
+        expect(redirect.status).toBe(302)
+
+        const code = new URL(redirect.headers.get('Location') as string).searchParams.get('code') as string
+        const exchanged = await exchange(code)
+        expect(exchanged.status).toBe(200)
+        return (await exchanged.json<{ access_token: string }>()).access_token
+      },
+    )
+
+    const me = await SELF.fetch('https://auth.internal/me', { headers: { Authorization: `Bearer ${accessToken}` } })
+    const body = await me.json<{ data: { user: { email: string }; roles: string[]; permissions: string[] } }>()
+
+    expect(me.status).toBe(200)
+    expect(body.data.user.email).toBe(email)
+    // The global default role plus the admin role the bootstrap list grants.
+    expect(body.data.roles).toEqual(['admin', 'user'])
+    expect(body.data.permissions).toContain('users:write')
+  })
+
+  it('refuses the very same address when it is not on the list', async () => {
+    const email = uniqueEmail('bootstrap-denied')
+
+    const response = await withWorkerEnv({ BOOTSTRAP_ADMIN_EMAILS: 'stranger@example.test' }, () => request({ email }))
+
+    expect(response.status).toBe(202)
+    expect(mailbox.sent).toHaveLength(0)
+    expect(await db().select().from(magicLinkTokens).where(eq(magicLinkTokens.email, email))).toHaveLength(0)
   })
 })

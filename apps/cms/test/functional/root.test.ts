@@ -1,6 +1,6 @@
 import { SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
-import { COLLECTION_NAMES } from '@/lib/collections'
+import { COLLECTION_NAMES, COLLECTIONS } from '@/lib/collections'
 
 describe('GET /', () => {
   it('reports the service and the collections it manages', async () => {
@@ -44,17 +44,20 @@ describe('response middleware', () => {
 })
 
 describe('GET /collections', () => {
-  it('lists every collection with its label and description', async () => {
+  it('lists every collection with the label and description the registry carries', async () => {
     const response = await SELF.fetch('https://cms.internal/collections')
     const body = await response.json<{ code: number; data: { slug: string; name: string; description: string }[] }>()
 
     expect(response.status).toBe(200)
     expect(body.code).toBe(200)
-    expect(body.data.map((entry) => entry.slug)).toEqual([...COLLECTION_NAMES])
-    for (const entry of body.data) {
-      expect(entry.name.length).toBeGreaterThan(0)
-      expect(entry.description.length).toBeGreaterThan(0)
-    }
+    // Straight off `COLLECTIONS`, so a slug wired to another collection's label fails here.
+    expect(body.data).toEqual(
+      COLLECTION_NAMES.map((slug) => ({
+        slug,
+        name: COLLECTIONS[slug].name,
+        description: COLLECTIONS[slug].description,
+      })),
+    )
   })
 
   it('is public and briefly cacheable', async () => {
@@ -117,12 +120,6 @@ describe('GET /openapi.json', () => {
 
     expect(body.components.securitySchemes.bearerAuth).toMatchObject({ type: 'http', scheme: 'bearer' })
   })
-
-  it('reaches the merged gateway document without a token', async () => {
-    const response = await SELF.fetch('https://cms.internal/openapi.json')
-
-    expect(response.status).toBe(200)
-  })
 })
 
 describe('onError', () => {
@@ -133,9 +130,13 @@ describe('onError', () => {
     expect(await response.json()).toEqual({ code: 404, error: 'Unknown collection: no-such-collection' })
   })
 
-  it('treats a known path with an unrouted verb as a 404', async () => {
+  it('leaves an unrouted verb on a cacheable path uncacheable', async () => {
+    // `DELETE /collections` matches no handler, so `onError` never runs and neither does the
+    // handler that sets `public, max-age=60`. The global default has to catch it: a path being
+    // publicly cacheable for GET must not make a shared cache keep this response too.
     const response = await SELF.fetch('https://cms.internal/collections', { method: 'DELETE' })
 
     expect(response.status).toBe(404)
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
   })
 })

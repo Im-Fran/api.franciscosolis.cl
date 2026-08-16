@@ -5,6 +5,12 @@ type RecordedRequest = {
   method: string
   body: string | null
   headers: Record<string, string>
+  /**
+   * The `RequestInit` exactly as the caller handed it to `fetch`. Kept alongside the normalized
+   * fields because Cloudflare-only options (`cf`) never survive the round trip through `Request`,
+   * and they are the only way to assert on caching hints.
+   */
+  init: RequestInit | undefined
 }
 
 type RouteHandler = (request: RecordedRequest) => Response | Promise<Response>
@@ -29,6 +35,7 @@ const stubFetch = (routes: Record<string, RouteHandler>) => {
       // Decoded by hand rather than with `.text()`, which warns for form-encoded bodies.
       body: request.body ? new TextDecoder().decode(await request.clone().arrayBuffer()) : null,
       headers: Object.fromEntries(request.headers),
+      init,
     }
     calls.push(recorded)
 

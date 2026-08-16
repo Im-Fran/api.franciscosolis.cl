@@ -128,16 +128,24 @@ const createApplication = async (
 }
 
 const createSessionRow = async (
-  input: { userId: string; applicationId?: string; provider?: ProviderName; scope?: string | null; revokedAt?: Date | null },
+  input: {
+    userId: string
+    applicationId?: string
+    provider?: ProviderName
+    scope?: string | null
+    revokedAt?: Date | null
+    /** Explicit value for the column `/me/sessions` orders on. Truncated, like every timestamp. */
+    lastSeenAt?: Date
+  },
 ): Promise<Session> => {
-  const now = new Date()
+  const now = nowInSeconds()
   const session: Session = {
     id: generateId(),
     userId: input.userId,
     applicationId: input.applicationId ?? SEED.webAppId,
     provider: input.provider ?? 'magic_link',
     scope: input.scope ?? 'openid profile email',
-    lastSeenAt: now,
+    lastSeenAt: input.lastSeenAt ?? now,
     revokedAt: input.revokedAt ?? null,
     revokedReason: input.revokedAt ? 'test' : null,
     ip: null,

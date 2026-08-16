@@ -1,6 +1,6 @@
 import { SELF, env } from 'cloudflare:test'
 import { beforeAll, describe, expect, it } from 'vitest'
-import type { Jwk, KeyPair } from '../helpers/tokens'
+import type { KeyPair } from '../helpers/tokens'
 import { editorClaims, forgeToken, generateKeyPair, mintRawToken, mintToken, stubJwks, testKeyPair } from '../helpers/tokens'
 
 /**
@@ -64,6 +64,19 @@ describe('a valid editor token', () => {
 
     expect(response.status).toBe(200)
     expect(body.data.email).toBe('fran@franciscosolis.cl')
+  })
+
+  it('is let in without a kid in its header, because the key set is resolved here, not by hono', async () => {
+    // `lib/jwks.ts` calls hono's `verify()` with a key it looked up itself, never `verifyWithJwks`.
+    // That is why a missing `kid` falls back to the first published key instead of being refused —
+    // and why `describeTokenError`'s `JwtHeaderRequiresKid` and `JwtAlgorithmNotAllowed` arms, both
+    // of which only `verifyWithJwks` ever throws, cannot fire in this Worker. Reported separately.
+    const anonymousKey = { ...keys.privateJwk, kid: undefined } as unknown as typeof keys.privateJwk
+    const response = await request(`Bearer ${await mintToken({ sub: 'no-kid' }, anonymousKey)}`)
+    const body = await response.json<{ data: { id: string } }>()
+
+    expect(response.status).toBe(200)
+    expect(body.data.id).toBe('no-kid')
   })
 
   it('defaults every optional claim rather than echoing undefined', async () => {
@@ -241,6 +254,28 @@ describe('403 — the token checks out but the account may not come in', () => {
     expect(await errorOf(response)).toBe('This account has no verified email address')
   })
 
+  it('refuses an account whose token simply omits the claim', async () => {
+    // A provider or auth-Worker change that drops `email_verified` rather than setting it false
+    // must still be refused: absent proves as little as false does. `!claims.email_verified`
+    // covers both today, and a refactor to `=== false` would quietly admit every such token.
+    const { email_verified: _verified, ...claims } = editorClaims()
+    const response = await request(`Bearer ${await mintRawToken(claims)}`)
+
+    expect(response.status).toBe(403)
+    expect(await errorOf(response)).toBe('This account has no verified email address')
+  })
+
+  it('refuses every falsy shape the claim can arrive in', async () => {
+    // The gate is a truthiness check rather than a comparison against `false`, which is what makes
+    // it hold for a claim that goes missing or arrives as the wrong type.
+    for (const emailVerified of [false, null, 0, '']) {
+      const response = await request(`Bearer ${await mintToken({ email_verified: emailVerified as never })}`)
+
+      expect(response.status, JSON.stringify(emailVerified)).toBe(403)
+      expect(await errorOf(response)).toBe('This account has no verified email address')
+    }
+  })
+
   it('refuses a verified address on an outside domain', async () => {
     const response = await request(`Bearer ${await mintToken({ email: 'someone@gmail.com' })}`)
 
@@ -324,20 +359,54 @@ describe('the gate covers every editorial route', () => {
 })
 
 describe('when the key set cannot be fetched', () => {
-  it('refuses the request with the reason, which carries no credential', async () => {
-    // Pointed at another URL so the per-isolate cache cannot answer from memory.
+  /**
+   * Points the Worker at another JWKS URL for one call so the per-isolate cache cannot answer from
+   * memory. Restored in a `finally`: leaving it swapped would fail every later test in this file
+   * for a reason unrelated to whatever actually broke.
+   */
+  const withJwksUrl = async <T>(url: string, body: () => Promise<T>): Promise<T> => {
     const original = env.AUTH_JWKS_URL
-    env.AUTH_JWKS_URL = 'https://auth.test/unreachable.json'
-    jwksFetch.mockImplementationOnce(async () => new Response('gone', { status: 503 }))
+    env.AUTH_JWKS_URL = url
+    try {
+      return await body()
+    } finally {
+      env.AUTH_JWKS_URL = original
+    }
+  }
 
+  it('refuses the request with the reason, which carries no credential', async () => {
     const token = await mintToken()
-    const response = await request(`Bearer ${token}`)
-    const body = await response.text()
-    env.AUTH_JWKS_URL = original
+    const body = await withJwksUrl('https://auth.test/unreachable.json', async () => {
+      jwksFetch.mockImplementationOnce(async () => new Response('gone', { status: 503 }))
+      const response = await request(`Bearer ${token}`)
 
-    expect(response.status).toBe(401)
+      expect(response.status).toBe(401)
+      return response.text()
+    })
+
     expect(body).toContain('JWKS endpoint answered 503')
     expect(body).not.toContain(token)
+  })
+
+  it('refuses a published key WebCrypto will not import, without echoing the token', async () => {
+    // The document is fine and the kid matches; the key material is not usable. That falls through
+    // to `describeTokenError`'s default arm, which returns the underlying message verbatim.
+    const token = await mintToken()
+    const body = await withJwksUrl('https://auth.test/corrupt-key.json', async () => {
+      jwksFetch.mockImplementationOnce(async () =>
+        Response.json({ keys: [{ ...keys.publicJwk, x: 'AAAA' }] }),
+      )
+      const response = await request(`Bearer ${token}`)
+
+      expect(response.status).toBe(401)
+      return response.text()
+    })
+
+    expect(body).toContain('Invalid access token: ')
+    expect(body).not.toContain(token)
+    for (const part of token.split('.')) {
+      expect(body).not.toContain(part.slice(0, 12))
+    }
   })
 
   it('recovers once the endpoint is back', async () => {
@@ -352,10 +421,25 @@ describe('the JWKS is fetched, not assumed', () => {
     expect(jwksFetch).toHaveBeenCalledWith(env.AUTH_JWKS_URL, { headers: { Accept: 'application/json' } })
   })
 
-  it('publishes only the public half of the key', async () => {
-    const published = (await (await jwksFetch()).json<{ keys: Jwk[] }>()).keys[0]
+  it('never hands the key server the credential it is verifying', async () => {
+    // The JWKS endpoint is a third party as far as this Worker is concerned: it publishes public
+    // keys and has no business seeing an access token. A GET with a single Accept header is all it
+    // may ever be sent.
+    const token = await mintToken({ sub: 'jwks-leak-canary' })
+    await request(`Bearer ${token}`)
 
-    expect(published).not.toHaveProperty('d')
-    expect(published?.kid).toBe(keys.kid)
+    // The stub is declared with no parameters; the Worker calls it with `(url, init)`.
+    const calls = jwksFetch.mock.calls as unknown as [string, RequestInit | undefined][]
+
+    expect(calls.length).toBeGreaterThan(0)
+    for (const call of calls) {
+      const serialised = JSON.stringify(call)
+      expect(serialised).not.toContain(token)
+      expect(serialised).not.toContain('jwks-leak-canary')
+      expect(serialised.toLowerCase()).not.toContain('authorization')
+      expect(serialised.toLowerCase()).not.toContain('bearer')
+      // No body either — a JWKS read is a plain GET.
+      expect(call[1]).toEqual({ headers: { Accept: 'application/json' } })
+    }
   })
 })

@@ -140,6 +140,31 @@ describe('CORS preflight', () => {
     expect(response.headers.get('Vary')).toBe('Origin, Access-Control-Request-Headers')
   })
 
+  /**
+   * The preflight is the gate a browser actually goes through before the cross-origin POST/PATCH/
+   * DELETE the allowlist exists for, so it has to echo an allowed origin rather than answer the
+   * canonical one. Both origins here differ from the fallback, which is what makes an echo visible.
+   */
+  it.each([
+    ['the Vite dev server', 'http://localhost:5173'],
+    ['a workers.dev preview', 'https://landing.franciscosolis.workers.dev'],
+  ])('echoes %s back on the preflight', async (_label, origin) => {
+    const response = await preflight('/auth/oauth/token', 'POST', origin)
+
+    expect(response.status).toBe(204)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(origin)
+  })
+
+  it('applies the allowlist to a preflight for every proxied module', async () => {
+    for (const path of ['/landing/stats/github', '/auth/oauth/token', '/cms/content/projects']) {
+      const allowed = await preflight(path, 'POST', 'http://localhost:5173')
+      const refused = await preflight(path, 'POST', 'https://evil.com')
+
+      expect(allowed.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5173')
+      expect(refused.headers.get('Access-Control-Allow-Origin')).toBe(FALLBACK_ORIGIN)
+    }
+  })
+
   it('still answers a disallowed origin, but with an origin that is not the caller', async () => {
     const response = await preflight('/auth/oauth/token', 'POST', 'https://evil.com')
 
@@ -159,5 +184,35 @@ describe('CORS preflight', () => {
 
     expect(response.headers.get('X-Stub-Module')).toBeNull()
     await expect(response.text()).resolves.toBe('')
+  })
+})
+
+/**
+ * The middleware is registered before the routes and short-circuits on the method alone, without
+ * looking for `Access-Control-Request-Method`. That is a real constraint on the modules — none of
+ * them can implement an OPTIONS handler of its own behind this gateway — and it holds only as long
+ * as the middleware stays in front of the `app.all` routes.
+ */
+describe('OPTIONS without preflight headers', () => {
+  it.each(['landing', 'auth', 'cms'])('is answered by the gateway rather than forwarded to %s', async (module) => {
+    const response = await gateway(`/${module}/thing`, { method: 'OPTIONS' })
+
+    expect(response.status).toBe(204)
+    expect(response.headers.get('X-Stub-Module')).toBeNull()
+    expect(response.headers.get('X-Stub-Method')).toBeNull()
+    await expect(response.text()).resolves.toBe('')
+  })
+
+  it('answers it with the same preflight headers as a well-formed one', async () => {
+    const response = await gateway('/cms/content/projects', { method: 'OPTIONS' })
+
+    expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PATCH,DELETE,OPTIONS')
+    expect(response.headers.get('Access-Control-Max-Age')).toBe('600')
+  })
+
+  it('short-circuits an OPTIONS to an unrouted path instead of 404ing', async () => {
+    const response = await gateway('/nope', { method: 'OPTIONS' })
+
+    expect(response.status).toBe(204)
   })
 })

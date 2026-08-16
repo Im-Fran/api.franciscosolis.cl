@@ -65,6 +65,33 @@ describe('app.onError', () => {
     await expect(response.json()).resolves.toEqual({ code: 500, error: 'D1_ERROR: no such table' })
   })
 
+  /**
+   * The other way a Hono middleware signals a failure: an `HTTPException` built with a ready-made
+   * `res` instead of a message. Its `message` is empty, so this lands on the intersection of both
+   * `onError` branches — the status is taken from the exception, the module's own body and headers
+   * are discarded, and the caller sees the gateway's uniform shape. Pinned because it is what a
+   * real caller gets, not because it is obviously the right call.
+   */
+  it('drops the custom response an HTTPException carries and normalizes it', async () => {
+    const response = await gatewayWithBindings(
+      {
+        AUTH: fetcher(() => {
+          throw new HTTPException(401, {
+            res: Response.json(
+              { error: 'invalid_grant', error_description: 'authorization code already used' },
+              { status: 401, headers: { 'WWW-Authenticate': 'Bearer error="invalid_grant"' } },
+            ),
+          })
+        }),
+      },
+      '/auth/oauth/token',
+    )
+
+    expect(response.status).toBe(401)
+    await expect(response.json()).resolves.toEqual({ code: 401, error: 'Internal Server Error' })
+    expect(response.headers.get('WWW-Authenticate')).toBeNull()
+  })
+
   it('falls back to a generic message when the error carries none', async () => {
     const response = await gatewayWithBindings(
       { LANDING: fetcher(() => Promise.reject(new Error(''))) },

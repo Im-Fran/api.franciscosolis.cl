@@ -76,6 +76,30 @@ describe('GET /content/:collection', () => {
     expect(await response.json()).toEqual({ code: 404, error: 'Unknown collection: talks' })
   })
 
+  it('answers 200 with an empty list for a name that only exists on Object.prototype', async () => {
+    // Known gap, reported separately: `isCollection` is an `in` check, so `toString` walks the
+    // prototype chain and passes the registry guard. The public consequence is this — the API
+    // tells the website a collection exists that does not, instead of the 404 above. Pinned so a
+    // fix to `Object.hasOwn` has to come past this test rather than land silently.
+    await seedEntry({ collection: 'projects', slug: 'real' })
+
+    const response = await get('/content/toString')
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ code: 200, data: [] })
+    // Bounded at least: it invents a collection, it does not spill another one's entries.
+    expect(await listSlugs('/content/toString')).toEqual([])
+  })
+
+  it('404s an entry under such a name with the wrong message', async () => {
+    // Same gap seen from the single-entry route: the guard lets `toString` through, so the caller
+    // is told the entry is missing rather than the collection.
+    const response = await get('/content/toString/anything')
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ code: 404, error: 'Entry not found' })
+  })
+
   it('is public and briefly cacheable', async () => {
     const response = await get('/content/projects')
 
@@ -155,6 +179,41 @@ describe('GET /content/:collection', () => {
   it('rejects a non-numeric limit or offset', async () => {
     expect((await get('/content/projects?limit=abc')).status).toBe(400)
     expect((await get('/content/projects?offset=-1')).status).toBe(400)
+  })
+
+  it('holds `tag` to 60 characters', async () => {
+    // The only bounds on strings an unauthenticated caller gets to put into a SQL LIKE pattern.
+    expect((await get(`/content/projects?tag=${'x'.repeat(60)}`)).status).toBe(200)
+    expect((await get(`/content/projects?tag=${'x'.repeat(61)}`)).status).toBe(400)
+  })
+
+  it('holds `search` to 120 characters', async () => {
+    expect((await get(`/content/projects?search=${'x'.repeat(120)}`)).status).toBe(200)
+    expect((await get(`/content/projects?search=${'x'.repeat(121)}`)).status).toBe(400)
+  })
+
+  it('measures those bounds after trimming, not before', async () => {
+    // `v.trim()` runs ahead of `v.maxLength()`, so padding does not count against the ceiling.
+    const padded = `%20%20${'x'.repeat(60)}%20%20`
+
+    expect((await get(`/content/projects?tag=${padded}`)).status).toBe(200)
+  })
+
+  it('names the bound it refused, in a body shaped unlike the rest of the API\'s errors', async () => {
+    // A validator rejection never reaches `onError`, so it is not the `{ code, error }` envelope
+    // every other failure uses — it is the raw valibot result. Worth pinning: a client that only
+    // knows the envelope cannot read this, and the bound itself is asserted from a second angle.
+    const response = await get(`/content/projects?search=${'x'.repeat(500)}`)
+    const body = await response.json<{
+      success: boolean
+      code?: number
+      error: { type: string; requirement: number }[]
+    }>()
+
+    expect(response.status).toBe(400)
+    expect(body.success).toBe(false)
+    expect(body).not.toHaveProperty('code')
+    expect(body.error[0]).toMatchObject({ type: 'max_length', requirement: 120 })
   })
 
   it('orders by position, then most recent, then title', async () => {

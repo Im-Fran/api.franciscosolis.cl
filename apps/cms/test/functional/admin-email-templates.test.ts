@@ -138,10 +138,23 @@ describe('POST /admin/email-templates', () => {
     expect((await call('POST', '/admin/email-templates', { name: 'B', subject: `${atLimit}x`, text: 'T' })).status).toBe(400)
   })
 
-  it('holds a body to the EMAIL_LIMITS ceiling', async () => {
-    const tooLong = 'x'.repeat(EMAIL_LIMITS.maxBodyLength + 1)
+  it('holds a body to the EMAIL_LIMITS ceiling, html and text alike', async () => {
+    const atLimit = 'x'.repeat(EMAIL_LIMITS.maxBodyLength)
+    const tooLong = `${atLimit}x`
 
     expect((await call('POST', '/admin/email-templates', { name: 'A', subject: 'S', text: tooLong })).status).toBe(400)
+    expect((await call('POST', '/admin/email-templates', { name: 'B', subject: 'S', html: tooLong })).status).toBe(400)
+    expect((await call('POST', '/admin/email-templates', { name: 'C', subject: 'S', html: atLimit })).status).toBe(201)
+    expect(await countRows('email_templates')).toBe(1)
+  })
+
+  it('holds a body to the same ceiling on update', async () => {
+    const seeded = await seedTemplate({ slug: 'bounded', text: 'Short' })
+    const tooLong = 'x'.repeat(EMAIL_LIMITS.maxBodyLength + 1)
+
+    expect((await call('PATCH', `/admin/email-templates/${seeded.id}`, { html: tooLong })).status).toBe(400)
+    expect((await call('PATCH', `/admin/email-templates/${seeded.id}`, { text: tooLong })).status).toBe(400)
+    expect((await rawRow(seeded.id))?.text).toBe('Short')
   })
 
   it('400s an empty name or subject', async () => {

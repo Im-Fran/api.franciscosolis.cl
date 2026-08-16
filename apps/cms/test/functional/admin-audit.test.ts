@@ -1,6 +1,6 @@
 import { SELF, env } from 'cloudflare:test'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { clearDatabase, seedEntry, seedLegalPage } from '../helpers/db'
+import { clearDatabase, seedAuditRow, seedEntry, seedLegalPage } from '../helpers/db'
 import { asEditor } from '../helpers/tokens'
 
 type AuditRow = {
@@ -110,6 +110,32 @@ describe('GET /admin/audit', () => {
     const [row] = await trail()
     expect(row?.metadata).toBeNull()
     expect(row?.resource_id).toBeNull()
+  })
+
+  it('returns the trail newest first', async () => {
+    // `created_at` is unix seconds, so rows written by one test share a second and cannot tell an
+    // ordered trail from an unordered one. Seeded seconds apart, which is what pins the ordering
+    // the route documents.
+    const now = Math.floor(Date.now() / 1000)
+    const seeded = []
+    for (const [index, event] of (['content.created', 'legal.updated', 'email.sent'] as const).entries()) {
+      seeded.push(await seedAuditRow({ event, createdAt: new Date((now - 30 + index * 10) * 1000) }))
+    }
+
+    const rows = await trail()
+
+    expect(rows.map((row) => row.event)).toEqual(['email.sent', 'legal.updated', 'content.created'])
+    expect(rows.map((row) => row.id)).toEqual([...seeded].reverse().map((row) => row.id))
+  })
+
+  it('pages through that order rather than restarting it', async () => {
+    const now = Math.floor(Date.now() / 1000)
+    for (const [index, event] of (['content.created', 'legal.updated', 'email.sent'] as const).entries()) {
+      await seedAuditRow({ event, createdAt: new Date((now - 30 + index * 10) * 1000) })
+    }
+
+    expect((await trail('?limit=2')).map((row) => row.event)).toEqual(['email.sent', 'legal.updated'])
+    expect((await trail('?limit=2&offset=2')).map((row) => row.event)).toEqual(['content.created'])
   })
 
   it('pages with limit and offset', async () => {

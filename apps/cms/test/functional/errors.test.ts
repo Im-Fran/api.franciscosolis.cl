@@ -110,7 +110,9 @@ describe('a non-Error thrown while verifying a token', () => {
     const { publicJwk } = await testKeyPair()
     const token = await mintToken()
 
-    // Another URL so the per-isolate cache cannot answer, and a throw that is not an Error.
+    // Another URL so the per-isolate cache cannot answer, and a throw that is not an Error. Both
+    // are undone in a `finally`: a leftover URL would fail every later test in this file for a
+    // reason unrelated to whatever actually broke.
     const original = env.AUTH_JWKS_URL
     env.AUTH_JWKS_URL = 'https://auth.test/string-throw.json'
     vi.stubGlobal(
@@ -120,13 +122,17 @@ describe('a non-Error thrown while verifying a token', () => {
       }),
     )
 
-    const response = await SELF.fetch('https://cms.internal/admin/me', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    const body = await response.json<{ error: string }>()
-
-    env.AUTH_JWKS_URL = original
-    stubJwks([publicJwk])
+    let response: Response
+    let body: { error: string }
+    try {
+      response = await SELF.fetch('https://cms.internal/admin/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      body = await response.json<{ error: string }>()
+    } finally {
+      env.AUTH_JWKS_URL = original
+      stubJwks([publicJwk])
+    }
 
     expect(response.status).toBe(401)
     expect(body.error).toBe('Invalid access token: unknown error')

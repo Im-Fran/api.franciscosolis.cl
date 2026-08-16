@@ -56,13 +56,21 @@ export default {
     return Response.json({
       module: '${module}',
       method: request.method,
+      url: request.url,
+      origin: url.origin,
       pathname: url.pathname,
       search: url.search,
       // Decoded by hand rather than with .text(), which warns for bodies workerd does not consider
       // textual (a form-encoded token exchange, for one).
       body: request.body ? new TextDecoder().decode(await request.arrayBuffer()) : null,
       headers: Object.fromEntries(request.headers),
-    }, { headers: { 'X-Stub-Module': '${module}' } })
+    }, {
+      headers: {
+        'X-Stub-Module': '${module}',
+        // Echoed as a header too, because a HEAD is answered with no body for the JSON to travel in.
+        'X-Stub-Method': request.method,
+      },
+    })
   },
 }
 `
@@ -79,6 +87,9 @@ const stubWorker = (module: ModuleName) => ({
 type EchoedRequest = {
   module: ModuleName
   method: string
+  /** Full URL the binding was handed, so a test can see that only the path prefix was rewritten. */
+  url: string
+  origin: string
   pathname: string
   search: string
   body: string | null

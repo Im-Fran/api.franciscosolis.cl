@@ -55,13 +55,18 @@ describe('admin authentication', () => {
 describe('GET /admin/users', () => {
   it('lists users newest first for a caller with users:read', async () => {
     const { token } = await callerWith(['users:read'])
-    const target = await createUser({ email: uniqueEmail('listed') })
+    // A shared marker in the address makes the page deterministic: the filter narrows the listing
+    // to these three, so their positions assert the ORDER BY rather than the rest of the fixture.
+    const marker = `ordered${crypto.randomUUID().slice(0, 8)}`
+    const oldest = await createUser({ email: `${marker}-a@example.test`, createdAt: new Date('2024-01-01T00:00:00.000Z') })
+    const newest = await createUser({ email: `${marker}-b@example.test`, createdAt: new Date('2026-01-01T00:00:00.000Z') })
+    const middle = await createUser({ email: `${marker}-c@example.test`, createdAt: new Date('2025-01-01T00:00:00.000Z') })
 
-    const response = await call('/users', token)
+    const response = await call(`/users?query=${marker}`, token)
     const body = await response.json<{ data: { id: string; email: string }[] }>()
 
     expect(response.status).toBe(200)
-    expect(body.data.map((row) => row.id)).toContain(target.id)
+    expect(body.data.map((row) => row.id)).toEqual([newest.id, middle.id, oldest.id])
     expect(body.data[0]).toHaveProperty('email')
   })
 
@@ -100,13 +105,58 @@ describe('GET /admin/users', () => {
 
   it('honours limit and offset', async () => {
     const { token } = await callerWith(['users:read'])
-    await Promise.all([createUser(), createUser(), createUser()])
+    const marker = `paged${crypto.randomUUID().slice(0, 8)}`
+    const created = []
+    for (let index = 0; index < 4; index++) {
+      created.push(
+        await createUser({
+          email: `${marker}-${index}@example.test`,
+          createdAt: new Date(Date.UTC(2026, 0, index + 1)),
+        }),
+      )
+    }
 
-    const first = await (await call('/users?limit=2', token)).json<{ data: unknown[] }>()
-    const second = await (await call('/users?limit=2&offset=2', token)).json<{ data: unknown[] }>()
+    const first = await (await call(`/users?query=${marker}&limit=2`, token)).json<{ data: { id: string }[] }>()
+    const second = await (await call(`/users?query=${marker}&limit=2&offset=2`, token)).json<{ data: { id: string }[] }>()
 
     expect(first.data).toHaveLength(2)
-    expect(second.data.length).toBeGreaterThan(0)
+    expect(second.data).toHaveLength(2)
+    // The second page has to skip the first, or `offset` is doing nothing at all.
+    const firstIds = first.data.map((row) => row.id)
+    const secondIds = second.data.map((row) => row.id)
+    expect(secondIds.some((id) => firstIds.includes(id))).toBe(false)
+    expect([...firstIds, ...secondIds].sort()).toEqual(created.map((user) => user.id).sort())
+  })
+
+  it('walks off the end of the result set rather than wrapping around', async () => {
+    const { token } = await callerWith(['users:read'])
+    const marker = `tail${crypto.randomUUID().slice(0, 8)}`
+    await createUser({ email: `${marker}@example.test` })
+
+    const body = await (await call(`/users?query=${marker}&offset=1`, token)).json<{ data: unknown[] }>()
+
+    expect(body.data).toEqual([])
+  })
+
+  it('treats `_` in the query as the SQL LIKE wildcard it is, not as a literal', async () => {
+    const { token } = await callerWith(['users:read'])
+    const marker = `wild${crypto.randomUUID().slice(0, 8)}`
+    const target = await createUser({ email: `${marker}abc@example.test` })
+
+    // `_` matches exactly one character, so this finds `…abc…` even though no address contains `a_c`.
+    const body = await (await call(`/users?query=${marker}a_c`, token)).json<{ data: { id: string }[] }>()
+
+    expect(body.data.map((row) => row.id)).toEqual([target.id])
+  })
+
+  it('treats `%` in the query as the SQL LIKE wildcard it is, so it matches everyone', async () => {
+    const { token } = await callerWith(['users:read'])
+    // Dated into the future so it is unambiguously the first row of the newest-first listing.
+    const target = await createUser({ email: uniqueEmail('wildcard-all'), createdAt: new Date('2030-01-01T00:00:00.000Z') })
+
+    const body = await (await call('/users?query=%25', token)).json<{ data: { id: string }[] }>()
+
+    expect(body.data[0]?.id).toBe(target.id)
   })
 
   it('rejects a limit above the cap or a non-numeric one', async () => {

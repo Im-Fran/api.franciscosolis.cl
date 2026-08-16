@@ -23,6 +23,7 @@ type AdminEntry = {
   published_at: string | null
   created_by: string | null
   updated_by: string | null
+  updated_at: string
 }
 
 let headers: Record<string, string>
@@ -160,6 +161,24 @@ describe('POST /admin/content/:collection', () => {
 
     expect(response.status).toBe(422)
     expect(await errorOf(response)).toBe('Could not derive a slug from the title; send one explicitly')
+  })
+
+  it('mints a slug from a long title that it will then refuse to be sent back', async () => {
+    // Known gap, reported separately: `slugify` truncates *after* trimming dashes, so a title that
+    // lands the 80-character cut mid-word produces a trailing dash — which `SLUG_PATTERN` rejects.
+    // The round trip is the symptom a CMS front-end actually hits: create, then send the entry's
+    // own slug back on an edit and be told it is malformed.
+    const created = await call('POST', '/admin/content/projects', { title: `${'a'.repeat(79)} b` })
+    const entry = await dataOf<AdminEntry>(created)
+
+    expect(created.status).toBe(201)
+    expect(entry.slug).toBe(`${'a'.repeat(79)}-`)
+
+    const echoed = await call('PATCH', `/admin/content/projects/${entry.id}`, { slug: entry.slug })
+
+    expect(echoed.status).toBe(400)
+    // The stored row keeps the slug the Worker itself minted, unreachable by that edit.
+    expect((await rawRow(entry.id))?.slug).toBe(`${'a'.repeat(79)}-`)
   })
 
   it('409s a duplicate slug inside the collection', async () => {
@@ -517,11 +536,34 @@ describe('PATCH /admin/content/:collection/:id', () => {
   })
 
   it('accepts an empty body as a no-op that still bumps the editor', async () => {
-    const seeded = await seedEntry({ collection: 'projects', title: 'Unchanged' })
+    const before = new Date('2024-01-01T00:00:00.000Z')
+    const seeded = await seedEntry({
+      collection: 'projects',
+      title: 'Unchanged',
+      updatedBy: 'someone-else@franciscosolis.cl',
+      updatedAt: before,
+    })
 
     const response = await call('PATCH', `/admin/content/projects/${seeded.id}`, {})
+    const entry = await dataOf<AdminEntry>(response)
+
     expect(response.status).toBe(200)
-    expect((await dataOf<AdminEntry>(response)).title).toBe('Unchanged')
+    expect(entry.title).toBe('Unchanged')
+    // The half the name promises: nothing was sent, but the row still records who touched it and
+    // when. Both are read off the stored row, not just the echoed response.
+    expect(entry.updated_by).toBe('fran@franciscosolis.cl')
+    expect((await rawRow(seeded.id))?.updated_by).toBe('fran@franciscosolis.cl')
+    expect(new Date(entry.updated_at).getTime()).toBeGreaterThan(before.getTime())
+  })
+
+  it('audits an empty PATCH as an update with no fields', async () => {
+    const seeded = await seedEntry({ collection: 'projects', slug: 'untouched', status: 'draft' })
+
+    await call('PATCH', `/admin/content/projects/${seeded.id}`, {})
+
+    const [row] = await readAuditLog()
+    expect(row?.event).toBe('content.updated')
+    expect(row?.metadata).toEqual({ collection: 'projects', fields: [], status: 'draft' })
   })
 
   it('writes an audit row naming the fields that were sent', async () => {

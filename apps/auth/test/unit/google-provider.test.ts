@@ -318,5 +318,18 @@ describe('verifyIdToken', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0]?.url).toBe(GOOGLE_JWKS_URI)
+    // The hint travels in the `RequestInit`, not in the request itself, so it has to be read there.
+    expect((calls[0]?.init as { cf?: Record<string, unknown> } | undefined)?.cf).toEqual({
+      cacheTtl: 3600,
+      cacheEverything: true,
+    })
+  })
+
+  it('fetches the JWKS once per verification, not once per key in the set', async () => {
+    const { calls } = await withJwks(['google-test-key', 'second-google-key'])
+
+    await verifyIdToken(env, await googleIdToken({ nonce: 'n' }, 'second-google-key'), 'n')
+
+    expect(calls.filter((call) => call.url === GOOGLE_JWKS_URI)).toHaveLength(1)
   })
 })

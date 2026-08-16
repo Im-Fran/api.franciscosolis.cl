@@ -3,6 +3,7 @@ import { desc, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { auditLogs, authorizationCodes, refreshTokens, sessions, users } from '@/db/schema'
 import { TTL } from '@/lib/config'
+import type { ProviderName } from '@/lib/config'
 import { sha256 } from '@/lib/crypto'
 import { verifyAccessToken } from '@/lib/jwt'
 import { issueAuthorizationCode, issueRefreshToken } from '@/services/tokens'
@@ -39,13 +40,14 @@ const grantCode = async (
     redirectUri?: string
     codeChallenge?: string
     scope?: string | null
+    provider?: ProviderName
   } = {},
 ) => {
   const userId = overrides.userId ?? (await createUser()).id
   const code = await issueAuthorizationCode(db(), {
     userId,
     applicationId: overrides.applicationId ?? SEED.webAppId,
-    provider: 'magic_link',
+    provider: overrides.provider ?? 'magic_link',
     redirectUri: overrides.redirectUri ?? SEED.webRedirectUri,
     codeChallenge: overrides.codeChallenge ?? RFC7636.challenge,
     codeChallengeMethod: 'S256',
@@ -473,6 +475,41 @@ describe('POST /oauth/token — refresh_token', () => {
     await expect(response.json()).resolves.toMatchObject({
       error_description: 'This refresh token was issued to another client',
     })
+  })
+
+  it('has already spent the token by the time the wrong client is rejected, so the session dies', async () => {
+    const first = await signedIn()
+    const other = await createApplication()
+
+    await form({ grant_type: 'refresh_token', client_id: other.id, refresh_token: first.refresh_token })
+
+    // The rejected attempt stamped `used_at`, so the rightful client's next legitimate refresh now
+    // looks like a replay. Pinned as the behaviour it is: the cross-client refusal is not free.
+    const retry = await form({
+      grant_type: 'refresh_token',
+      client_id: SEED.webAppId,
+      refresh_token: first.refresh_token,
+    })
+
+    expect(retry.status).toBe(400)
+    await expect(retry.json()).resolves.toMatchObject({
+      error_description: 'Refresh token reuse detected; the session has been revoked',
+    })
+
+    const [session] = await db().select().from(sessions).where(eq(sessions.id, first.session_id))
+    expect(session?.revokedReason).toBe('refresh_token_reuse')
+  })
+
+  it('re-issues the provider the session was created with, not a hardcoded one', async () => {
+    const { code } = await grantCode({ provider: 'google' })
+    const first = await (await exchange(code)).json<TokenBody>()
+    await expect(verifyAccessToken(env, first.access_token)).resolves.toMatchObject({ provider: 'google' })
+
+    const second = await (
+      await form({ grant_type: 'refresh_token', client_id: SEED.webAppId, refresh_token: first.refresh_token })
+    ).json<TokenBody>()
+
+    await expect(verifyAccessToken(env, second.access_token)).resolves.toMatchObject({ provider: 'google' })
   })
 
   it('refuses to refresh once the account is disabled', async () => {
