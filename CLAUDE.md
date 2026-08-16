@@ -37,17 +37,55 @@ scripts).
   use drizzle-orm/drizzle-kit, also catalogued.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
   on `dev`/`deploy`.
+- Vitest running inside `workerd` via `@cloudflare/vitest-pool-workers`, also catalogued.
 
 ## Commands (run from repo root)
 
 - `pnpm install` — installs for the whole workspace.
 - `pnpm run dev` — runs `dev` in every workspace app in parallel (`api` on :8787,
   `landing` on :8788, `auth` on :8789, `cms` on :8790).
+- `pnpm run test` / `pnpm run test:coverage` — runs every app's suite.
+- `pnpm run typecheck` — `tsc --noEmit` over `src/` and `test/` in every app.
+- `pnpm run build` — `wrangler deploy --dry-run` in every app. Not an artifact; it is the
+  check that each `wrangler.jsonc` is valid and each Worker still bundles.
 - `pnpm run deploy` — deploys every workspace app.
 - `pnpm run cf-typegen` — regenerates Cloudflare binding types (`CloudflareBindings`) in
   every app after a `wrangler.jsonc` change.
 
 Individual apps can also be run from their own directory (`cd apps/api && pnpm run dev`).
+
+## Testing
+
+Each app owns its suite under `apps/<app>/test/`, split into `unit/` (a module in isolation)
+and `functional/` (a request through the Worker via `SELF`). Config lives in each app's
+`vitest.config.ts`.
+
+Non-obvious things about this harness, learned the hard way — do not re-derive them:
+
+- The pinned `@cloudflare/vitest-pool-workers` (0.19.x, for Vitest 4) has **no
+  `/config` entrypoint and no `defineWorkersConfig`**. Configuration goes through the
+  `cloudflareTest()` Vite plugin inside a plain `defineConfig` from `vitest/config`.
+- It also exports **no `fetchMock`**. Control outbound HTTP with `vi.mock('axios', …)` or
+  `vi.stubGlobal('fetch', …)`. A module mock does reach the Worker behind `SELF`, because
+  that Worker shares the test's isolate.
+- The `@/*` alias must be restated as a Vite `resolve.alias`; Wrangler reads it from
+  tsconfig when bundling, but Vite does not.
+- Coverage must use the **istanbul** provider — `workerd` exposes no V8 coverage hooks.
+- `apps/auth` and `apps/cms` apply their real `migrations/` directory to each test file's
+  isolated D1 instance (`readD1Migrations` in the config, `applyD1Migrations` in
+  `test/setup.ts`), so a migration that no longer applies cleanly fails the test run.
+- `apps/api` boots the three internal Workers as auxiliary Miniflare Workers
+  (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS` are real service bindings in tests.
+- `apps/auth` gets a fixed, committed, test-only Ed25519 signing key from its
+  `vitest.config.ts`. It signs nothing outside the suite; the production key stays a secret.
+
+## CI
+
+`.github/workflows/ci.yml` runs one job per app (`fail-fast: false`), so every Worker is an
+independent check and a break in one does not mask the others. Each job typechecks, runs the
+suite with coverage, and does a credential-free `wrangler deploy --dry-run`. An aggregate `ci`
+job is the single status branch protection should require. When adding an app, add it to the
+`matrix.app` list.
 
 ## Architecture notes (non-obvious)
 

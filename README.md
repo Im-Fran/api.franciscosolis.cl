@@ -4,6 +4,7 @@
 
 **Public REST API for franciscosolis.cl, built as a pnpm monorepo of Cloudflare Workers.**
 
+[![CI](https://github.com/Im-Fran/api.franciscosolis.cl/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/Im-Fran/api.franciscosolis.cl/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/Im-Fran/api.franciscosolis.cl)](LICENSE)
 
 </div>
@@ -63,8 +64,12 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   authenticated request so revocation is immediate, and rotates refresh tokens with reuse
   detection.
 - **Shared dependency versions** — `pnpm-workspace.yaml` pins `hono`, `hono-openapi`,
-  `valibot`, `wrangler`, `axios`, `drizzle-orm`, `drizzle-kit`, `@hono/standard-validator`
+  `valibot`, `wrangler`, `axios`, `drizzle-orm`, `drizzle-kit`, `typescript`, `vitest`,
+  `@cloudflare/vitest-pool-workers`, `@vitest/coverage-istanbul`, `@hono/standard-validator`
   and `@valibot/to-json-schema` in a single `catalog` consumed by every app.
+- **Tested inside the real runtime** — every app has unit and functional suites that execute in
+  `workerd` through `@cloudflare/vitest-pool-workers`, against live D1 databases and real service
+  bindings rather than Node stand-ins. CI runs each app as its own independent check.
 
 ---
 
@@ -80,6 +85,8 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 | HTTP client | axios |
 | Language | TypeScript (strict) |
 | Package manager | pnpm workspaces (11.17.0) with a shared dependency catalog |
+| Testing | [Vitest](https://vitest.dev) running inside `workerd` via `@cloudflare/vitest-pool-workers` |
+| CI | GitHub Actions, one independent check per app |
 | Deployment | Cloudflare Wrangler, custom domain `api.franciscosolis.cl` |
 | Inter-service comms | Cloudflare Workers service bindings |
 
@@ -157,10 +164,79 @@ Each app can also be run individually from its own directory, e.g. `cd apps/api 
 
 ---
 
+## 🧪 Testing
+
+Every app has its own suite, split into **unit** tests (`test/unit/`, a module in isolation) and
+**functional** tests (`test/functional/`, a request travelling through the Worker).
+
+Tests run **inside `workerd`** via [`@cloudflare/vitest-pool-workers`](https://developers.cloudflare.com/workers/testing/vitest-integration/),
+not in Node. That matters: D1, service bindings, the Email Sending binding and the Workers globals
+are all real under test, so a suite cannot pass against behaviour the production runtime would
+reject. Each app's `vitest.config.ts` reuses its own `wrangler.jsonc`, so the test runtime inherits
+the same compatibility date and flags as the deployed Worker.
+
+From the repo root:
+
+```bash
+pnpm run test           # every app
+pnpm run test:coverage  # every app, with an istanbul coverage report
+pnpm run typecheck      # tsc over src/ and test/ in every app
+pnpm run build          # wrangler deploy --dry-run in every app
+```
+
+Or for a single app:
+
+```bash
+cd apps/auth
+pnpm run test
+pnpm run test:watch
+pnpm run test:coverage
+```
+
+Notes on the setup, per app:
+
+| App | What the harness provides |
+|-----|---------------------------|
+| `api` | The `landing`, `auth` and `cms` Workers are booted as auxiliary Miniflare Workers (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS` are genuine service bindings under test |
+| `landing` | A dummy `GH_TOKEN`; every GitHub call is mocked at the `axios` module |
+| `auth` | A live D1 database with `migrations/` applied per test file, plus a fixed test-only Ed25519 signing key |
+| `cms` | A live D1 database with `migrations/` applied per test file; `AUTH_JWKS_URL` points at an unroutable host so a JWKS fetch that escapes its stub fails loudly |
+
+Because `auth` and `cms` apply their real `migrations/` directory to each test file's isolated
+database, a migration that stops applying cleanly fails the test run rather than surfacing at
+deploy time.
+
+Coverage uses the **istanbul** provider — `workerd` exposes no V8 coverage hooks, so
+instrumentation is the only option there. Reports land in `apps/<app>/coverage/` (gitignored).
+
+---
+
 ## 🏗 Building for Production
 
-There is no separate build step — Cloudflare Workers are deployed straight from TypeScript
-source via Wrangler's own bundler as part of `deploy` (see below).
+Cloudflare Workers are deployed straight from TypeScript source via Wrangler's own bundler as part
+of `deploy`, so there is no artifact to build. `pnpm run build` exists only as a check: it runs
+`wrangler deploy --dry-run`, which needs no credentials and fails on an invalid `wrangler.jsonc`,
+a missing binding or code that does not bundle for the Workers runtime.
+
+---
+
+## ✅ Continuous Integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request, on pushes to
+`dev`, and on demand.
+
+It runs **one job per app**, so `api`, `landing`, `auth` and `cms` each report as an independent
+check. `fail-fast` is disabled: a failure in one app never cancels or hides the others, and the
+check that goes red points straight at the Worker that broke. Each job does the same three things
+for its own app:
+
+1. **Typecheck** — `tsc --noEmit` over `src/` and `test/` together.
+2. **Test** — the full suite inside `workerd`, with a coverage report uploaded as an artifact.
+3. **Build** — `wrangler deploy --dry-run`, catching config and bundling breakage the tests cannot see.
+
+A final aggregate job named `ci` turns green only when all four app jobs did, which gives branch
+protection a single status to require instead of a list that has to be edited whenever an app is
+added or renamed.
 
 ---
 
@@ -223,6 +299,8 @@ pnpm run cf-typegen
 | `apps/cms/wrangler.jsonc` | Worker name/config for the `cms` service, D1 binding, email sending binding, JWKS/issuer, allowed audiences, email domains and senders |
 | `apps/cms/migrations/` | D1 migrations for `franciscosolis_cms` |
 | `pnpm-workspace.yaml` | Workspace packages (`apps/*`, `packages/*`) and shared dependency catalog |
+| `apps/*/vitest.config.ts` | Test runtime for that app — bindings, D1 migrations and service-binding stubs |
+| `.github/workflows/ci.yml` | CI pipeline: typecheck, test and dry-run build, one independent check per app |
 
 ---
 
@@ -230,8 +308,9 @@ pnpm run cf-typegen
 
 1. Fork the repo
 2. Create a branch: `git checkout -b feat/your-feature`
-3. Commit: `git commit -m "feat: add your feature"`
-4. Push and open a PR
+3. Add tests for what you changed — `pnpm run test` and `pnpm run typecheck` must pass
+4. Commit: `git commit -m "feat: add your feature"`
+5. Push and open a PR against `dev`
 
 ---
 
