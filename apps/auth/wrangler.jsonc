@@ -39,10 +39,7 @@
     // `iss` claim of every issued access token, and the issuer of the OIDC discovery doc.
     "AUTH_ISSUER": "https://api.franciscosolis.cl/auth",
     "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
-    "MAIL_FROM_NAME": "FranciscoSolis",
-    // Sign-up is invitation-only. These addresses are the escape hatch: they may sign in
-    // without an invitation and are granted the `admin` role the first time they do.
-    "BOOTSTRAP_ADMIN_EMAILS": "f.solism@icloud.com"
+    "MAIL_FROM_NAME": "FranciscoSolis"
   },
   "observability": {
     "enabled": true,

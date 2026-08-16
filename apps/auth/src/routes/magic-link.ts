@@ -131,7 +131,7 @@ app.get(
     }
 
     try {
-      const { redirectUrl } = await completeAuthentication(db, c.env, { request, profile, ...context })
+      const { redirectUrl } = await completeAuthentication(db, { request, profile, ...context })
       await recordAudit(db, {
         event: 'magic_link.consumed',
         applicationId: application.id,

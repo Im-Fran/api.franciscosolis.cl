@@ -37,8 +37,6 @@ type Env = {
   AUTH_ISSUER: string
   MAIL_FROM_EMAIL: string
   MAIL_FROM_NAME: string
-  /** Comma-separated addresses that bypass the invitation requirement and get the `admin` role. */
-  BOOTSTRAP_ADMIN_EMAILS: string
 
   /** Ed25519 private key as a JWK JSON string. Secret. */
   JWT_PRIVATE_KEY: string

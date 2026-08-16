@@ -1,4 +1,3 @@
-import { env } from 'cloudflare:test'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { identities, invitations, userRoles, users } from '@/db/schema'
@@ -11,13 +10,11 @@ import {
   getRoleBySlug,
   getUserAuthorization,
   grantRole,
-  isBootstrapAdmin,
   normalizeEmail,
   resolveUserForProfile,
   toPublicUser,
 } from '@/services/users'
 import { createInvitation, createRole, createUser, db, grant, SEED, uniqueEmail } from '../helpers/db'
-import { testEnv } from '../helpers/env'
 
 const profile = (overrides: Partial<ProviderProfile> = {}): ProviderProfile => ({
   provider: 'google',
@@ -26,9 +23,6 @@ const profile = (overrides: Partial<ProviderProfile> = {}): ProviderProfile => (
   emailVerified: true,
   ...overrides,
 })
-
-/** An environment where nobody is a bootstrap admin, so the invitation rules are the only path in. */
-const closedEnv = testEnv({ BOOTSTRAP_ADMIN_EMAILS: '' })
 
 const rolesOf = async (userId: string) =>
   (await db().select().from(userRoles).where(eq(userRoles.userId, userId))).map((row) => row.roleId).sort()
@@ -40,33 +34,6 @@ describe('normalizeEmail', () => {
 
   it('leaves an already-normalized address alone', () => {
     expect(normalizeEmail('someone@example.test')).toBe('someone@example.test')
-  })
-})
-
-describe('isBootstrapAdmin', () => {
-  it('matches an address in the list regardless of case or padding', () => {
-    const configured = testEnv({ BOOTSTRAP_ADMIN_EMAILS: ' First@Example.test , second@example.test ' })
-
-    expect(isBootstrapAdmin(configured, 'first@example.test')).toBe(true)
-    expect(isBootstrapAdmin(configured, ' SECOND@example.TEST ')).toBe(true)
-  })
-
-  it('refuses an address that is not listed', () => {
-    const configured = testEnv({ BOOTSTRAP_ADMIN_EMAILS: 'first@example.test' })
-
-    expect(isBootstrapAdmin(configured, 'other@example.test')).toBe(false)
-    // A prefix must not match: sign-up would otherwise be open to a lookalike address.
-    expect(isBootstrapAdmin(configured, 'first@example.test.evil')).toBe(false)
-  })
-
-  it('treats an empty or missing variable as nobody, not everybody', () => {
-    expect(isBootstrapAdmin(testEnv({ BOOTSTRAP_ADMIN_EMAILS: '' }), '')).toBe(false)
-    expect(isBootstrapAdmin(testEnv({ BOOTSTRAP_ADMIN_EMAILS: ',,' }), '')).toBe(false)
-    expect(isBootstrapAdmin(testEnv({ BOOTSTRAP_ADMIN_EMAILS: undefined as unknown as string }), 'a@b.test')).toBe(false)
-  })
-
-  it('recognises the address configured for this deployment', () => {
-    expect(isBootstrapAdmin(env, SEED.bootstrapAdminEmail)).toBe(true)
   })
 })
 
@@ -258,12 +225,12 @@ describe('resolveUserForProfile', () => {
   it('refuses a profile the provider did not verify', async () => {
     // Linking on an unverified address would let a new provider claim someone else's account.
     await expect(
-      resolveUserForProfile(db(), closedEnv, profile({ emailVerified: false }), SEED.webAppId),
+      resolveUserForProfile(db(), profile({ emailVerified: false }), SEED.webAppId),
     ).rejects.toThrow(new OAuthException(403, 'access_denied', 'The provider did not verify this email address'))
   })
 
   it('refuses an unknown address with no invitation', async () => {
-    await expect(resolveUserForProfile(db(), closedEnv, profile(), SEED.webAppId)).rejects.toMatchObject({
+    await expect(resolveUserForProfile(db(), profile(), SEED.webAppId)).rejects.toMatchObject({
       status: 403,
       code: 'access_denied',
       description: 'This email address has not been invited',
@@ -275,7 +242,7 @@ describe('resolveUserForProfile', () => {
     const role = await createRole({ slug: 'invited-role' })
     const invitation = await createInvitation({ email, roleId: role.id })
 
-    const result = await resolveUserForProfile(db(), closedEnv, profile({ email }), SEED.webAppId)
+    const result = await resolveUserForProfile(db(), profile({ email }), SEED.webAppId)
 
     expect(result.isNewUser).toBe(true)
     expect(result.user.email).toBe(email)
@@ -293,7 +260,7 @@ describe('resolveUserForProfile', () => {
     const email = uniqueEmail('plain-invite')
     await createInvitation({ email })
 
-    const result = await resolveUserForProfile(db(), closedEnv, profile({ email }), SEED.webAppId)
+    const result = await resolveUserForProfile(db(), profile({ email }), SEED.webAppId)
 
     expect(await rolesOf(result.user.id)).toEqual([SEED.userRoleId])
   })
@@ -302,19 +269,19 @@ describe('resolveUserForProfile', () => {
     const email = uniqueEmail('scoped-invite')
     await createInvitation({ email, applicationId: SEED.cmsAppId })
 
-    await expect(resolveUserForProfile(db(), closedEnv, profile({ email }), SEED.webAppId)).rejects.toThrow(
+    await expect(resolveUserForProfile(db(), profile({ email }), SEED.webAppId)).rejects.toThrow(
       'This email address has not been invited',
     )
-    await expect(resolveUserForProfile(db(), closedEnv, profile({ email }), SEED.cmsAppId)).resolves.toMatchObject({
+    await expect(resolveUserForProfile(db(), profile({ email }), SEED.cmsAppId)).resolves.toMatchObject({
       isNewUser: true,
     })
   })
 
-  it('lets a bootstrap admin in without an invitation and grants them the admin role', async () => {
+  it('grants the admin role through the invitation `scripts/bootstrap-admin.mjs` writes', async () => {
     const email = uniqueEmail('bootstrap')
-    const bootstrapEnv = testEnv({ BOOTSTRAP_ADMIN_EMAILS: `other@example.test,${email.toUpperCase()}` })
+    await createInvitation({ email, roleId: SEED.adminRoleId })
 
-    const result = await resolveUserForProfile(db(), bootstrapEnv, profile({ email }), SEED.webAppId)
+    const result = await resolveUserForProfile(db(), profile({ email }), SEED.webAppId)
 
     expect(result.isNewUser).toBe(true)
     expect(await rolesOf(result.user.id)).toEqual([SEED.adminRoleId, SEED.userRoleId].sort())
@@ -327,7 +294,6 @@ describe('resolveUserForProfile', () => {
 
     const result = await resolveUserForProfile(
       db(),
-      closedEnv,
       profile({ email, providerAccountId: 'sub-identity', name: 'Ada', givenName: 'Ada', familyName: 'L', picture: 'https://p.test/a.png', locale: 'en', raw }),
       SEED.webAppId,
     )
@@ -342,11 +308,10 @@ describe('resolveUserForProfile', () => {
   it('signs an existing identity straight in, without needing an invitation', async () => {
     const email = uniqueEmail('returning')
     await createInvitation({ email })
-    const first = await resolveUserForProfile(db(), closedEnv, profile({ email, providerAccountId: 'sub-returning' }), SEED.webAppId)
+    const first = await resolveUserForProfile(db(), profile({ email, providerAccountId: 'sub-returning' }), SEED.webAppId)
 
     const second = await resolveUserForProfile(
       db(),
-      closedEnv,
       profile({ email, providerAccountId: 'sub-returning' }),
       SEED.webAppId,
     )
@@ -361,7 +326,6 @@ describe('resolveUserForProfile', () => {
 
     const result = await resolveUserForProfile(
       db(),
-      closedEnv,
       profile({ email: user.email.toUpperCase(), providerAccountId: 'sub-link' }),
       SEED.webAppId,
     )
@@ -377,7 +341,7 @@ describe('resolveUserForProfile', () => {
   it('does not hand a linked account any default role it was not already given', async () => {
     const user = await createUser({ email: uniqueEmail('nodefault') })
 
-    await resolveUserForProfile(db(), closedEnv, profile({ email: user.email }), SEED.webAppId)
+    await resolveUserForProfile(db(), profile({ email: user.email }), SEED.webAppId)
 
     expect(await rolesOf(user.id)).toEqual([])
   })
@@ -385,18 +349,18 @@ describe('resolveUserForProfile', () => {
   it('refuses a disabled account reached through an existing identity', async () => {
     const email = uniqueEmail('disabled-identity')
     await createInvitation({ email })
-    const created = await resolveUserForProfile(db(), closedEnv, profile({ email, providerAccountId: 'sub-disabled' }), SEED.webAppId)
+    const created = await resolveUserForProfile(db(), profile({ email, providerAccountId: 'sub-disabled' }), SEED.webAppId)
     await db().update(users).set({ status: 'disabled' }).where(eq(users.id, created.user.id))
 
     await expect(
-      resolveUserForProfile(db(), closedEnv, profile({ email, providerAccountId: 'sub-disabled' }), SEED.webAppId),
+      resolveUserForProfile(db(), profile({ email, providerAccountId: 'sub-disabled' }), SEED.webAppId),
     ).rejects.toThrow(new OAuthException(403, 'access_denied', 'This account is disabled'))
   })
 
   it('refuses a disabled account reached by email, without linking a new identity', async () => {
     const user = await createUser({ email: uniqueEmail('disabled-email'), status: 'disabled' })
 
-    await expect(resolveUserForProfile(db(), closedEnv, profile({ email: user.email }), SEED.webAppId)).rejects.toThrow(
+    await expect(resolveUserForProfile(db(), profile({ email: user.email }), SEED.webAppId)).rejects.toThrow(
       'This account is disabled',
     )
     expect(await db().select().from(identities).where(eq(identities.userId, user.id))).toHaveLength(0)
@@ -407,7 +371,6 @@ describe('resolveUserForProfile', () => {
 
     const result = await resolveUserForProfile(
       db(),
-      closedEnv,
       profile({ email: user.email, name: 'Provider name', picture: 'https://p.test/new.png', locale: 'es' }),
       SEED.webAppId,
     )
@@ -423,7 +386,7 @@ describe('resolveUserForProfile', () => {
   it('stamps lastLoginAt and verifies the address on an existing account', async () => {
     const user = await createUser({ email: uniqueEmail('lastlogin'), emailVerifiedAt: null, lastLoginAt: null })
 
-    await resolveUserForProfile(db(), closedEnv, profile({ email: user.email }), SEED.webAppId)
+    await resolveUserForProfile(db(), profile({ email: user.email }), SEED.webAppId)
 
     const [persisted] = await db().select().from(users).where(eq(users.id, user.id))
     expect(persisted?.lastLoginAt).not.toBeNull()
@@ -433,12 +396,11 @@ describe('resolveUserForProfile', () => {
   it('refreshes the identity row on every sign-in', async () => {
     const email = uniqueEmail('refresh-identity')
     await createInvitation({ email })
-    const created = await resolveUserForProfile(db(), closedEnv, profile({ email, providerAccountId: 'sub-refresh' }), SEED.webAppId)
+    const created = await resolveUserForProfile(db(), profile({ email, providerAccountId: 'sub-refresh' }), SEED.webAppId)
     const [before] = await db().select().from(identities).where(eq(identities.userId, created.user.id))
 
     await resolveUserForProfile(
       db(),
-      closedEnv,
       profile({ email, providerAccountId: 'sub-refresh', raw: { round: 'two' } }),
       SEED.webAppId,
     )
@@ -452,7 +414,7 @@ describe('resolveUserForProfile', () => {
     const email = uniqueEmail('MixedCase').toUpperCase()
     await createInvitation({ email: email.toLowerCase() })
 
-    const result = await resolveUserForProfile(db(), closedEnv, profile({ email }), SEED.webAppId)
+    const result = await resolveUserForProfile(db(), profile({ email }), SEED.webAppId)
 
     expect(result.user.email).toBe(email.toLowerCase())
   })

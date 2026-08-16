@@ -1,4 +1,3 @@
-import { env } from 'cloudflare:test'
 import { desc, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { auditLogs } from '@/db/schema'
@@ -8,10 +7,7 @@ import { completeAuthentication } from '@/services/authorization'
 import { consumeAuthorizationCode } from '@/services/tokens'
 import type { AuthorizationRequest, ProviderProfile } from '@/providers/types'
 import { createInvitation, createUser, db, SEED, uniqueEmail } from '../helpers/db'
-import { testEnv } from '../helpers/env'
 import { RFC7636 } from '../helpers/pkce'
-
-const closedEnv = testEnv({ BOOTSTRAP_ADMIN_EMAILS: '' })
 
 const authorizationRequest = async (overrides: Partial<AuthorizationRequest> = {}): Promise<AuthorizationRequest> => ({
   application: (await getApplication(db(), SEED.webAppId)) as Application,
@@ -44,7 +40,7 @@ describe('completeAuthentication', () => {
   it('sends the browser back to the client with a code and the echoed state', async () => {
     const user = await createUser({ email: uniqueEmail('complete') })
 
-    const result = await completeAuthentication(db(), closedEnv, {
+    const result = await completeAuthentication(db(), {
       request: await authorizationRequest(),
       profile: profileFor(user.email),
       ip: null,
@@ -62,7 +58,7 @@ describe('completeAuthentication', () => {
   it('omits state when the client did not send one', async () => {
     const user = await createUser({ email: uniqueEmail('nostate') })
 
-    const result = await completeAuthentication(db(), closedEnv, {
+    const result = await completeAuthentication(db(), {
       request: await authorizationRequest({ state: null }),
       profile: profileFor(user.email),
       ip: null,
@@ -75,7 +71,7 @@ describe('completeAuthentication', () => {
   it('binds the issued code to the application, redirect URI and PKCE challenge of the request', async () => {
     const user = await createUser({ email: uniqueEmail('bind') })
 
-    const result = await completeAuthentication(db(), closedEnv, {
+    const result = await completeAuthentication(db(), {
       request: await authorizationRequest({ redirectUri: SEED.webLocalRedirectUri, scope: 'openid' }),
       profile: profileFor(user.email),
       ip: null,
@@ -96,7 +92,7 @@ describe('completeAuthentication', () => {
 
   it('records a sign-in as oauth.callback.succeeded and a sign-up as user.created', async () => {
     const returning = await createUser({ email: uniqueEmail('returning') })
-    await completeAuthentication(db(), closedEnv, {
+    await completeAuthentication(db(), {
       request: await authorizationRequest(),
       profile: profileFor(returning.email),
       ip: '203.0.113.1',
@@ -109,7 +105,7 @@ describe('completeAuthentication', () => {
 
     const email = uniqueEmail('brand-new')
     await createInvitation({ email })
-    const created = await completeAuthentication(db(), closedEnv, {
+    const created = await completeAuthentication(db(), {
       request: await authorizationRequest(),
       profile: profileFor(email),
       ip: null,
@@ -123,7 +119,7 @@ describe('completeAuthentication', () => {
   it('preserves a query string the client registered on its redirect URI', async () => {
     const user = await createUser({ email: uniqueEmail('query') })
 
-    const result = await completeAuthentication(db(), closedEnv, {
+    const result = await completeAuthentication(db(), {
       request: await authorizationRequest({ redirectUri: `${SEED.webRedirectUri}?next=%2Fdashboard` }),
       profile: profileFor(user.email),
       ip: null,
@@ -140,7 +136,7 @@ describe('completeAuthentication', () => {
     const before = await db().select().from(auditLogs)
 
     await expect(
-      completeAuthentication(db(), closedEnv, {
+      completeAuthentication(db(), {
         request: await authorizationRequest(),
         profile: profileFor(email),
         ip: null,
@@ -155,7 +151,7 @@ describe('completeAuthentication', () => {
   it('propagates the provider onto the code so the session records how the user signed in', async () => {
     const user = await createUser({ email: uniqueEmail('provider') })
 
-    const result = await completeAuthentication(db(), closedEnv, {
+    const result = await completeAuthentication(db(), {
       request: await authorizationRequest(),
       profile: { ...profileFor(user.email), provider: 'google', providerAccountId: 'sub-provider' },
       ip: null,
@@ -164,21 +160,5 @@ describe('completeAuthentication', () => {
 
     const code = new URL(result.redirectUrl).searchParams.get('code') as string
     await expect(consumeAuthorizationCode(db(), code)).resolves.toMatchObject({ provider: 'google' })
-  })
-
-  it('reads the invitation rules from the environment it is handed', async () => {
-    const email = uniqueEmail('bootstrap-flow')
-    const bootstrapEnv = testEnv({ BOOTSTRAP_ADMIN_EMAILS: email })
-
-    await expect(
-      completeAuthentication(db(), bootstrapEnv, {
-        request: await authorizationRequest(),
-        profile: profileFor(email),
-        ip: null,
-        userAgent: null,
-      }),
-    ).resolves.toMatchObject({ isNewUser: true })
-
-    expect(env.BOOTSTRAP_ADMIN_EMAILS).toBe(SEED.bootstrapAdminEmail)
   })
 })

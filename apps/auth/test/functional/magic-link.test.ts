@@ -12,7 +12,6 @@ import { sha256 } from '@/lib/crypto'
 import { consumeAuthorizationCode } from '@/services/tokens'
 import { createApplication, createInvitation, createUser, db, SEED, uniqueEmail } from '../helpers/db'
 import { captureEmails, magicLinkTokenFrom } from '../helpers/email'
-import { withWorkerEnv } from '../helpers/env'
 import { RFC7636 } from '../helpers/pkce'
 
 const mailbox = captureEmails()
@@ -69,7 +68,7 @@ describe('POST /magic-link', () => {
   it('answers the same 202 for an address that may not sign in, and sends nothing', async () => {
     const email = uniqueEmail('stranger')
 
-    const response = await withWorkerEnv({ BOOTSTRAP_ADMIN_EMAILS: '' }, () => request({ email }))
+    const response = await request({ email })
 
     expect(response.status).toBe(202)
     // Identical body to the success case: the endpoint must not be an account-enumeration oracle.
@@ -93,7 +92,7 @@ describe('POST /magic-link', () => {
     await request({ email: invited })
 
     const stranger = uniqueEmail('audited-no')
-    await withWorkerEnv({ BOOTSTRAP_ADMIN_EMAILS: '' }, () => request({ email: stranger }))
+    await request({ email: stranger })
 
     const rows = await db().select().from(auditLogs)
     const events = rows.map((row) => ({ event: row.event, metadata: JSON.parse(row.metadata ?? 'null') }))
@@ -287,7 +286,7 @@ describe('GET /magic-link/callback', () => {
     const token = await requestLinkFor(email, { state: 'st-err' })
     await db().update(invitationsTable).set({ revokedAt: new Date() }).where(eq(invitationsTable.id, invitation.id))
 
-    const response = await withWorkerEnv({ BOOTSTRAP_ADMIN_EMAILS: '' }, () => callback(token))
+    const response = await callback(token)
 
     expect(response.status).toBe(302)
     const target = new URL(response.headers.get('Location') as string)
@@ -323,11 +322,11 @@ describe('GET /magic-link/callback', () => {
 })
 
 /**
- * `BOOTSTRAP_ADMIN_EMAILS` is the only bypass of the invitation-only rule and the only path that
- * hands out the global `admin` role automatically, so it is driven end to end through the Worker
- * rather than only against the service that implements it.
+ * The invitation `scripts/bootstrap-admin.mjs` writes is the only way the first `admin` ever comes
+ * to exist, so it is driven end to end through the Worker rather than only against the service that
+ * implements it.
  */
-describe('BOOTSTRAP_ADMIN_EMAILS through the whole flow', () => {
+describe('bootstrap admin invitation through the whole flow', () => {
   const exchange = (code: string) =>
     SELF.fetch('https://auth.internal/oauth/token', {
       method: 'POST',
@@ -341,40 +340,27 @@ describe('BOOTSTRAP_ADMIN_EMAILS through the whole flow', () => {
       }).toString(),
     })
 
-  it('lets a listed address sign up uninvited and lands it holding the admin role', async () => {
+  it('signs the invited address up and lands it holding the admin role', async () => {
     const email = uniqueEmail('bootstrap-e2e')
+    // Exactly what the script inserts: a global, pending invitation carrying the admin role.
+    await createInvitation({ email, roleId: SEED.adminRoleId })
 
-    const accessToken = await withWorkerEnv(
-      { BOOTSTRAP_ADMIN_EMAILS: `stranger@example.test, ${email.toUpperCase()} ` },
-      async () => {
-        const token = await requestLinkFor(email)
-        const redirect = await callback(token)
-        expect(redirect.status).toBe(302)
+    const token = await requestLinkFor(email)
+    const redirect = await callback(token)
+    expect(redirect.status).toBe(302)
 
-        const code = new URL(redirect.headers.get('Location') as string).searchParams.get('code') as string
-        const exchanged = await exchange(code)
-        expect(exchanged.status).toBe(200)
-        return (await exchanged.json<{ access_token: string }>()).access_token
-      },
-    )
+    const code = new URL(redirect.headers.get('Location') as string).searchParams.get('code') as string
+    const exchanged = await exchange(code)
+    expect(exchanged.status).toBe(200)
+    const accessToken = (await exchanged.json<{ access_token: string }>()).access_token
 
     const me = await SELF.fetch('https://auth.internal/me', { headers: { Authorization: `Bearer ${accessToken}` } })
     const body = await me.json<{ data: { user: { email: string }; roles: string[]; permissions: string[] } }>()
 
     expect(me.status).toBe(200)
     expect(body.data.user.email).toBe(email)
-    // The global default role plus the admin role the bootstrap list grants.
+    // The global default role plus the admin role the invitation grants.
     expect(body.data.roles).toEqual(['admin', 'user'])
     expect(body.data.permissions).toContain('users:write')
-  })
-
-  it('refuses the very same address when it is not on the list', async () => {
-    const email = uniqueEmail('bootstrap-denied')
-
-    const response = await withWorkerEnv({ BOOTSTRAP_ADMIN_EMAILS: 'stranger@example.test' }, () => request({ email }))
-
-    expect(response.status).toBe(202)
-    expect(mailbox.sent).toHaveLength(0)
-    expect(await db().select().from(magicLinkTokens).where(eq(magicLinkTokens.email, email))).toHaveLength(0)
   })
 })

@@ -7,7 +7,7 @@ import { generateId, randomToken, sha256 } from '@/lib/crypto'
 import { OAuthException } from '@/lib/errors'
 import { magicLinkTemplate, sendEmail } from '@/services/email'
 import { findPendingInvitation } from '@/services/invitations'
-import { findUserByEmail, isBootstrapAdmin, normalizeEmail } from '@/services/users'
+import { findUserByEmail, normalizeEmail } from '@/services/users'
 import type { AuthorizationRequest, ProviderDescriptor, ProviderProfile } from '@/providers/types'
 
 const magicLinkProvider: ProviderDescriptor = {
@@ -32,16 +32,13 @@ const countRecentRequests = async (db: Database, email: string) => {
 
 /**
  * Decides whether an address is allowed to receive a link. Sign-up is invitation-only, so an
- * address that matches no user, no pending invitation and no bootstrap admin gets nothing — but the
- * caller still answers 202, so this never becomes an account-enumeration oracle.
+ * address that matches no user and no pending invitation gets nothing — but the caller still
+ * answers 202, so this never becomes an account-enumeration oracle.
  */
-const canReceiveMagicLink = async (db: Database, env: Env, email: string, applicationId: string) => {
+const canReceiveMagicLink = async (db: Database, email: string, applicationId: string) => {
   const user = await findUserByEmail(db, email)
   if (user) {
     return { allowed: user.status === 'active', userId: user.id, reason: user.status === 'active' ? null : 'disabled' }
-  }
-  if (isBootstrapAdmin(env, email)) {
-    return { allowed: true, userId: null, reason: null }
   }
   const invitation = await findPendingInvitation(db, email, applicationId)
   return { allowed: invitation !== null, userId: null, reason: invitation ? null : 'not_invited' }
@@ -76,7 +73,7 @@ const requestMagicLink = async (
     return { sent: false, reason: 'rate_limited' }
   }
 
-  const eligibility = await canReceiveMagicLink(db, env, email, input.request.application.id)
+  const eligibility = await canReceiveMagicLink(db, email, input.request.application.id)
   if (!eligibility.allowed) {
     return { sent: false, reason: 'not_allowed' }
   }

@@ -13,7 +13,7 @@ import { captureEmails, magicLinkTokenFrom } from '../helpers/email'
 import { testEnv } from '../helpers/env'
 import { RFC7636 } from '../helpers/pkce'
 
-const closedEnv = testEnv({ BOOTSTRAP_ADMIN_EMAILS: '' })
+const workerEnv = testEnv()
 
 const mailbox = captureEmails()
 afterEach(() => {
@@ -47,7 +47,7 @@ describe('canReceiveMagicLink', () => {
   it('allows an existing active account', async () => {
     const user = await createUser({ email: uniqueEmail('active') })
 
-    await expect(canReceiveMagicLink(db(), closedEnv, user.email, SEED.webAppId)).resolves.toEqual({
+    await expect(canReceiveMagicLink(db(), user.email, SEED.webAppId)).resolves.toEqual({
       allowed: true,
       userId: user.id,
       reason: null,
@@ -57,27 +57,19 @@ describe('canReceiveMagicLink', () => {
   it('refuses a disabled account and says why', async () => {
     const user = await createUser({ email: uniqueEmail('disabled'), status: 'disabled' })
 
-    await expect(canReceiveMagicLink(db(), closedEnv, user.email, SEED.webAppId)).resolves.toEqual({
+    await expect(canReceiveMagicLink(db(), user.email, SEED.webAppId)).resolves.toEqual({
       allowed: false,
       userId: user.id,
       reason: 'disabled',
     })
   })
 
-  it('allows a bootstrap admin who has never signed in', async () => {
-    const email = uniqueEmail('bootstrap')
-
-    await expect(canReceiveMagicLink(db(), testEnv({ BOOTSTRAP_ADMIN_EMAILS: email }), email, SEED.webAppId)).resolves.toEqual(
-      { allowed: true, userId: null, reason: null },
-    )
-  })
-
   it('allows an invited address and refuses an uninvited one', async () => {
     const invited = uniqueEmail('invited')
     await createInvitation({ email: invited })
 
-    await expect(canReceiveMagicLink(db(), closedEnv, invited, SEED.webAppId)).resolves.toMatchObject({ allowed: true })
-    await expect(canReceiveMagicLink(db(), closedEnv, uniqueEmail('stranger'), SEED.webAppId)).resolves.toEqual({
+    await expect(canReceiveMagicLink(db(), invited, SEED.webAppId)).resolves.toMatchObject({ allowed: true })
+    await expect(canReceiveMagicLink(db(), uniqueEmail('stranger'), SEED.webAppId)).resolves.toEqual({
       allowed: false,
       userId: null,
       reason: 'not_invited',
@@ -88,8 +80,8 @@ describe('canReceiveMagicLink', () => {
     const email = uniqueEmail('cms-only')
     await createInvitation({ email, applicationId: SEED.cmsAppId })
 
-    await expect(canReceiveMagicLink(db(), closedEnv, email, SEED.cmsAppId)).resolves.toMatchObject({ allowed: true })
-    await expect(canReceiveMagicLink(db(), closedEnv, email, SEED.webAppId)).resolves.toMatchObject({ allowed: false })
+    await expect(canReceiveMagicLink(db(), email, SEED.cmsAppId)).resolves.toMatchObject({ allowed: true })
+    await expect(canReceiveMagicLink(db(), email, SEED.webAppId)).resolves.toMatchObject({ allowed: false })
   })
 })
 
@@ -97,7 +89,7 @@ describe('requestMagicLink', () => {
   it('emails a link and stores the whole authorization request beside its hash', async () => {
     const user = await createUser({ email: uniqueEmail('request') })
 
-    const result = await requestMagicLink(db(), closedEnv, {
+    const result = await requestMagicLink(db(), workerEnv, {
       email: user.email.toUpperCase(),
       request: await authorizationRequest({ state: 'st-1', scope: 'openid' }),
       ip: '203.0.113.5',
@@ -129,7 +121,7 @@ describe('requestMagicLink', () => {
   it('points the emailed link at AUTH_PUBLIC_URL, not at the incoming request URL', async () => {
     const user = await createUser({ email: uniqueEmail('public-url') })
 
-    await requestMagicLink(db(), closedEnv, {
+    await requestMagicLink(db(), workerEnv, {
       email: user.email,
       request: await authorizationRequest(),
       ip: null,
@@ -143,7 +135,7 @@ describe('requestMagicLink', () => {
   it('addresses the email to the normalized address and names the client application', async () => {
     const user = await createUser({ email: uniqueEmail('mail-shape') })
 
-    await requestMagicLink(db(), closedEnv, {
+    await requestMagicLink(db(), workerEnv, {
       email: ` ${user.email.toUpperCase()} `,
       request: await authorizationRequest(),
       ip: null,
@@ -160,7 +152,7 @@ describe('requestMagicLink', () => {
   it('records the link with the configured magic-link lifetime', async () => {
     const user = await createUser({ email: uniqueEmail('ttl') })
 
-    await requestMagicLink(db(), closedEnv, {
+    await requestMagicLink(db(), workerEnv, {
       email: user.email,
       request: await authorizationRequest(),
       ip: null,
@@ -177,7 +169,7 @@ describe('requestMagicLink', () => {
     const email = uniqueEmail('unknown')
 
     await expect(
-      requestMagicLink(db(), closedEnv, { email, request: await authorizationRequest(), ip: null, userAgent: null }),
+      requestMagicLink(db(), workerEnv, { email, request: await authorizationRequest(), ip: null, userAgent: null }),
     ).resolves.toEqual({ sent: false, reason: 'not_allowed' })
 
     expect(mailbox.sent).toHaveLength(0)
@@ -188,7 +180,7 @@ describe('requestMagicLink', () => {
     const user = await createUser({ email: uniqueEmail('blocked'), status: 'disabled' })
 
     await expect(
-      requestMagicLink(db(), closedEnv, {
+      requestMagicLink(db(), workerEnv, {
         email: user.email,
         request: await authorizationRequest(),
         ip: null,
@@ -204,12 +196,12 @@ describe('requestMagicLink', () => {
 
     for (let attempt = 0; attempt < MAGIC_LINK_RATE_LIMIT.max; attempt++) {
       await expect(
-        requestMagicLink(db(), closedEnv, { email: user.email, request, ip: null, userAgent: null }),
+        requestMagicLink(db(), workerEnv, { email: user.email, request, ip: null, userAgent: null }),
       ).resolves.toEqual({ sent: true })
     }
 
     await expect(
-      requestMagicLink(db(), closedEnv, { email: user.email, request, ip: null, userAgent: null }),
+      requestMagicLink(db(), workerEnv, { email: user.email, request, ip: null, userAgent: null }),
     ).resolves.toEqual({ sent: false, reason: 'rate_limited' })
 
     expect(mailbox.sent).toHaveLength(MAGIC_LINK_RATE_LIMIT.max)
@@ -221,7 +213,7 @@ describe('requestMagicLink', () => {
     const request = await authorizationRequest()
 
     for (let attempt = 0; attempt < MAGIC_LINK_RATE_LIMIT.max; attempt++) {
-      await requestMagicLink(db(), closedEnv, { email: user.email, request, ip: null, userAgent: null })
+      await requestMagicLink(db(), workerEnv, { email: user.email, request, ip: null, userAgent: null })
     }
     await db()
       .update(magicLinkTokens)
@@ -229,7 +221,7 @@ describe('requestMagicLink', () => {
       .where(eq(magicLinkTokens.email, user.email))
 
     await expect(
-      requestMagicLink(db(), closedEnv, { email: user.email, request, ip: null, userAgent: null }),
+      requestMagicLink(db(), workerEnv, { email: user.email, request, ip: null, userAgent: null }),
     ).resolves.toEqual({ sent: true })
   })
 
@@ -241,11 +233,11 @@ describe('requestMagicLink', () => {
     const request = await authorizationRequest()
 
     for (let attempt = 0; attempt < MAGIC_LINK_RATE_LIMIT.max; attempt++) {
-      await requestMagicLink(db(), closedEnv, { email: first.email, request, ip: null, userAgent: null })
+      await requestMagicLink(db(), workerEnv, { email: first.email, request, ip: null, userAgent: null })
     }
 
     await expect(
-      requestMagicLink(db(), closedEnv, { email: second.email, request, ip: null, userAgent: null }),
+      requestMagicLink(db(), workerEnv, { email: second.email, request, ip: null, userAgent: null }),
     ).resolves.toEqual({ sent: true })
   })
 
@@ -256,7 +248,7 @@ describe('requestMagicLink', () => {
     // An address that may not sign in never records a row, so it never trips the limit either —
     // pinning the current behaviour so a change to the ordering is deliberate.
     for (let attempt = 0; attempt < MAGIC_LINK_RATE_LIMIT.max + 2; attempt++) {
-      await expect(requestMagicLink(db(), closedEnv, { email, request, ip: null, userAgent: null })).resolves.toEqual({
+      await expect(requestMagicLink(db(), workerEnv, { email, request, ip: null, userAgent: null })).resolves.toEqual({
         sent: false,
         reason: 'not_allowed',
       })
@@ -267,7 +259,7 @@ describe('requestMagicLink', () => {
 describe('consumeMagicLinkToken', () => {
   const issue = async (overrides: Partial<AuthorizationRequest> = {}) => {
     const user = await createUser({ email: uniqueEmail('consume') })
-    await requestMagicLink(db(), closedEnv, {
+    await requestMagicLink(db(), workerEnv, {
       email: user.email,
       request: await authorizationRequest(overrides),
       ip: null,

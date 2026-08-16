@@ -1,8 +1,6 @@
 import { and, eq, isNull, or } from 'drizzle-orm'
 import type { Database } from '@/db/client'
 import { identities, permissions, rolePermissions, roles, userRoles, users } from '@/db/schema'
-import type { Env } from '@/env'
-import { ADMIN_ROLE_SLUG } from '@/lib/config'
 import type { ProviderName } from '@/lib/config'
 import { generateId } from '@/lib/crypto'
 import { OAuthException } from '@/lib/errors'
@@ -13,14 +11,6 @@ type User = typeof users.$inferSelect
 
 /** Emails are compared case-insensitively; the normalized form is what gets stored. */
 const normalizeEmail = (email: string) => email.trim().toLowerCase()
-
-/** Addresses in `BOOTSTRAP_ADMIN_EMAILS` may sign up without an invitation and become admins. */
-const isBootstrapAdmin = (env: Env, email: string) =>
-  (env.BOOTSTRAP_ADMIN_EMAILS ?? '')
-    .split(',')
-    .map((entry) => normalizeEmail(entry))
-    .filter(Boolean)
-    .includes(normalizeEmail(email))
 
 const findUserByEmail = async (db: Database, email: string): Promise<User | null> => {
   const [user] = await db.select().from(users).where(eq(users.email, normalizeEmail(email))).limit(1)
@@ -102,12 +92,11 @@ type ResolveResult = {
  *  2. The email matches an existing user: the identity is linked to it. Only safe because the
  *     caller guarantees the provider verified the address (see the check below); linking on an
  *     unverified email would let anyone claim an account by signing up elsewhere with that address.
- *  3. Nobody matches: this is a sign-up, which requires a pending invitation for the address or
- *     membership of `BOOTSTRAP_ADMIN_EMAILS`.
+ *  3. Nobody matches: this is a sign-up, which requires a pending invitation for the address.
+ *     The very first account is seeded straight into the database by `scripts/bootstrap-admin.mjs`.
  */
 const resolveUserForProfile = async (
   db: Database,
-  env: Env,
   profile: ProviderProfile,
   applicationId: string,
 ): Promise<ResolveResult> => {
@@ -146,9 +135,8 @@ const resolveUserForProfile = async (
     return { user: await applyProfileToUser(db, existingUser, profile), isNewUser: false }
   }
 
-  const bootstrapAdmin = isBootstrapAdmin(env, email)
-  const invitation = bootstrapAdmin ? null : await findPendingInvitation(db, email, applicationId)
-  if (!bootstrapAdmin && !invitation) {
+  const invitation = await findPendingInvitation(db, email, applicationId)
+  if (!invitation) {
     throw new OAuthException(403, 'access_denied', 'This email address has not been invited')
   }
 
@@ -173,19 +161,10 @@ const resolveUserForProfile = async (
     await grantRole(db, user.id, role.id)
   }
 
-  if (bootstrapAdmin) {
-    const adminRole = await getRoleBySlug(db, ADMIN_ROLE_SLUG, null)
-    if (adminRole) {
-      await grantRole(db, user.id, adminRole.id)
-    }
+  if (invitation.roleId) {
+    await grantRole(db, user.id, invitation.roleId, invitation.invitedBy)
   }
-
-  if (invitation) {
-    if (invitation.roleId) {
-      await grantRole(db, user.id, invitation.roleId, invitation.invitedBy)
-    }
-    await acceptInvitation(db, invitation.id, user.id)
-  }
+  await acceptInvitation(db, invitation.id, user.id)
 
   return { user, isNewUser: true }
 }
@@ -269,7 +248,6 @@ export {
   getRoleBySlug,
   getUserAuthorization,
   grantRole,
-  isBootstrapAdmin,
   normalizeEmail,
   resolveUserForProfile,
   toPublicUser,

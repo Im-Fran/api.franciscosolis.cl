@@ -35,13 +35,14 @@ offline against its JWKS.
 - `pnpm run db:generate` → `drizzle-kit generate`, writes a new SQL migration.
 - `pnpm run db:migrate:local` / `pnpm run db:migrate:remote` → apply migrations with Wrangler.
 - `pnpm run keys:generate` → prints a fresh Ed25519 keypair for `JWT_PRIVATE_KEY`.
+- `pnpm run admin:bootstrap [-- --remote]` → asks for an address and seeds the first admin.
 
 ## Environment
 
 `.dev.vars` (gitignored, copy from `.dev.vars.example`) holds the secrets:
 `JWT_PRIVATE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, plus local overrides of
 `AUTH_PUBLIC_URL` / `AUTH_ISSUER`. Non-secret config (`AUTH_PUBLIC_URL`, `AUTH_ISSUER`,
-`MAIL_FROM_*`, `BOOTSTRAP_ADMIN_EMAILS`) lives in `wrangler.jsonc` under `vars`.
+`MAIL_FROM_*`) lives in `wrangler.jsonc` under `vars`.
 
 ## Source layout
 
@@ -91,10 +92,11 @@ offline against its JWKS.
 - **`AUTH_PUBLIC_URL` is not derivable from the request**: behind the service binding the
   incoming URL is internal, so magic links and the Google `redirect_uri` are built from this
   var. Getting it wrong silently breaks both flows.
-- **Sign-up is invitation-only**: an unknown address is refused unless it has a pending
-  invitation or is listed in `BOOTSTRAP_ADMIN_EMAILS` (which also grants `admin` on first
-  sign-in). `POST /magic-link` still answers 202 either way — do not make it leak which
-  addresses exist.
+- **Sign-up is invitation-only, with no environment bypass**: an unknown address is refused
+  unless it has a pending invitation. `POST /magic-link` still answers 202 either way — do
+  not make it leak which addresses exist. The first admin is not a special case in the code:
+  `scripts/bootstrap-admin.mjs` writes an ordinary invitation carrying the `admin` role
+  straight into D1, so the sign-up path stays single. Do not reintroduce an env-var allowlist.
 - **The seed migration is hand-written and idempotent**: `0001_seed.sql` is not in drizzle's
   `meta/_journal.json` because it contains no DDL. Adding DDL there would desynchronise the
   drizzle snapshot — put schema changes in a generated migration instead.

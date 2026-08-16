@@ -177,7 +177,7 @@ app.get(
       })
       const profile = await verifyIdToken(c.env, tokens.id_token as string, state.nonce)
 
-      const { redirectUrl } = await completeAuthentication(db, c.env, {
+      const { redirectUrl } = await completeAuthentication(db, {
         request: {
           application,
           redirectUri: state.redirectUri,
