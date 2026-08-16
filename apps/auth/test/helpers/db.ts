@@ -178,9 +178,15 @@ const createInvitation = async (
 }
 
 const createIdentity = async (
-  input: { userId: string; provider: ProviderName; providerAccountId: string; email?: string | null },
+  input: {
+    userId: string
+    provider: ProviderName
+    providerAccountId: string
+    email?: string | null
+    lastUsedAt?: Date | null
+  },
 ) => {
-  const now = new Date()
+  const now = nowInSeconds()
   const identity = {
     id: generateId(),
     userId: input.userId,
@@ -188,7 +194,7 @@ const createIdentity = async (
     providerAccountId: input.providerAccountId,
     email: input.email ?? null,
     profile: null,
-    lastUsedAt: now,
+    lastUsedAt: 'lastUsedAt' in input ? (input.lastUsedAt ?? null) : now,
     createdAt: now,
     updatedAt: now,
   }

@@ -156,6 +156,23 @@ describe('GET /admin/users/:id', () => {
     expect(body.data.sessions.map((session) => session.id)).toEqual([live.id])
   })
 
+  it('reports a never-used identity with a null timestamp', async () => {
+    const { token } = await callerWith(['users:read'])
+    const target = await createUser()
+    await createIdentity({
+      userId: target.id,
+      provider: 'magic_link',
+      providerAccountId: target.email,
+      lastUsedAt: null,
+    })
+
+    const body = await (await call(`/users/${target.id}`, token)).json<{
+      data: { identities: { last_used_at: string | null }[] }
+    }>()
+
+    expect(body.data.identities[0]?.last_used_at).toBeNull()
+  })
+
   it('answers 404 for an unknown id', async () => {
     const { token } = await callerWith(['users:read'])
 

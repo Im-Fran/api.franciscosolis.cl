@@ -228,6 +228,21 @@ describe('verifyAccessToken', () => {
     await expect(verifyAccessToken(rotated, token)).resolves.toMatchObject({ sub: 'user-1' })
   })
 
+  it('falls back to the first published key for a token carrying no kid at all', async () => {
+    const { d, ...rest } = getSigningKey(env)
+    // `sign()` only writes a kid header when the key object has one, so dropping it produces a
+    // legacy-shaped token — it must still verify against the current key.
+    const keyWithoutKid = { ...rest, d, kid: undefined } as unknown as Ed25519Jwk
+    const token = await sign(
+      { ...claims(), iss: env.AUTH_ISSUER, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 60 },
+      keyWithoutKid,
+      'EdDSA',
+    )
+
+    expect(decode(token).header.kid).toBeUndefined()
+    await expect(verifyAccessToken(env, token)).resolves.toMatchObject({ sub: 'user-1' })
+  })
+
   it('refuses a token whose kid is not published', async () => {
     const token = await sign(
       { ...claims(), iss: env.AUTH_ISSUER, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 60 },

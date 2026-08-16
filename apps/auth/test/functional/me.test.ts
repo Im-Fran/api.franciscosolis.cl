@@ -98,6 +98,25 @@ describe('PATCH /me', () => {
     expect(row?.locale).toBeNull()
   })
 
+  it('updates the given and family names, and clears them on an explicit null', async () => {
+    const user = await createUser({ givenName: 'Given', familyName: 'Family', picture: 'https://p.test/old.png' })
+    const { token } = await signIn({ user })
+
+    await call('/me', token, {
+      method: 'PATCH',
+      body: JSON.stringify({ given_name: 'Ada', family_name: 'Lovelace' }),
+    })
+    let [row] = await db().select().from(users).where(eq(users.id, user.id))
+    expect(row).toMatchObject({ givenName: 'Ada', familyName: 'Lovelace', picture: 'https://p.test/old.png' })
+
+    await call('/me', token, {
+      method: 'PATCH',
+      body: JSON.stringify({ given_name: null, family_name: null, picture: null }),
+    })
+    ;[row] = await db().select().from(users).where(eq(users.id, user.id))
+    expect(row).toMatchObject({ givenName: null, familyName: null, picture: null })
+  })
+
   it('refuses to change the email address, which is the identity key', async () => {
     const { token, user } = await signIn()
 
@@ -149,6 +168,16 @@ describe('GET /me/identities', () => {
     const { token } = await signIn()
 
     await expect((await call('/me/identities', token)).json()).resolves.toEqual({ code: 200, data: [] })
+  })
+
+  it('reports a never-used identity with a null timestamp rather than omitting it', async () => {
+    const { token, user } = await signIn()
+    await createIdentity({ userId: user.id, provider: 'magic_link', providerAccountId: user.email, lastUsedAt: null })
+
+    const body = await (await call('/me/identities', token)).json<{ data: { last_used_at: string | null }[] }>()
+
+    expect(body.data).toHaveLength(1)
+    expect(body.data[0]?.last_used_at).toBeNull()
   })
 
   it('needs a token', async () => {

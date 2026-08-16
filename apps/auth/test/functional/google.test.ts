@@ -1,12 +1,12 @@
 import { SELF, env } from 'cloudflare:test'
 import { eq } from 'drizzle-orm'
 import { afterEach, describe, expect, it } from 'vitest'
-import { auditLogs, identities, oauthStates } from '@/db/schema'
+import { applications, auditLogs, identities, oauthStates } from '@/db/schema'
 import { TTL } from '@/lib/config'
 import { sha256 } from '@/lib/crypto'
 import { deriveChallenge } from '@/lib/pkce'
 import { consumeAuthorizationCode } from '@/services/tokens'
-import { createInvitation, createUser, db, SEED, uniqueEmail } from '../helpers/db'
+import { createApplication, createInvitation, createUser, db, SEED, uniqueEmail } from '../helpers/db'
 import { withWorkerEnv } from '../helpers/env'
 import { GOOGLE_CLIENT_ID, GOOGLE_JWKS_URI, GOOGLE_TOKEN_ENDPOINT, googleIdToken, googleJwks } from '../helpers/google'
 import { restoreFetch, stubFetch } from '../helpers/http'
@@ -208,6 +208,20 @@ describe('GET /oauth/google/callback', () => {
     await expect(replay.json()).resolves.toEqual({
       code: 400,
       error: 'This sign-in attempt was already completed; please start again',
+    })
+  })
+
+  it('refuses to complete when the client application was deactivated meanwhile', async () => {
+    const application = await createApplication({ redirectUris: ['https://short-lived.test/cb'] })
+    const { state } = await startFlow({ client_id: application.id, redirect_uri: 'https://short-lived.test/cb' })
+    await db().update(applications).set({ isActive: false }).where(eq(applications.id, application.id))
+
+    const response = await callback({ state, code: 'c' })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      code: 400,
+      error: 'The application this sign-in was started for is no longer available',
     })
   })
 
