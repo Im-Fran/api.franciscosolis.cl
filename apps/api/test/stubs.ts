@@ -58,7 +58,9 @@ export default {
       method: request.method,
       pathname: url.pathname,
       search: url.search,
-      body: request.body ? await request.text() : null,
+      // Decoded by hand rather than with .text(), which warns for bodies workerd does not consider
+      // textual (a form-encoded token exchange, for one).
+      body: request.body ? new TextDecoder().decode(await request.arrayBuffer()) : null,
       headers: Object.fromEntries(request.headers),
     }, { headers: { 'X-Stub-Module': '${module}' } })
   },
