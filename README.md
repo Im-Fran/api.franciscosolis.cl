@@ -14,31 +14,37 @@
 
 This repository holds the backend that powers **franciscosolis.cl**: a public-facing API
 worker (`apps/api`) that fronts a set of internal Cloudflare Workers — the landing site's
-own API (`apps/landing`) and the centralized authentication service (`apps/auth`). The
+own API (`apps/landing`), the centralized authentication service (`apps/auth`) and the
+content management service (`apps/cms`). The
 workers talk to each other directly through Cloudflare **service bindings** — no HTTP
 round-trip over the public internet — and the root API transparently proxies and merges the
 OpenAPI specs of every internal module it exposes.
 
-Both workers are built with **Hono** on the edge, validate input/output with **valibot**,
-and auto-generate an OpenAPI 3 document via `hono-openapi`. The `api` worker's `/openapi.json`
+Every worker is built with **Hono** on the edge, validates input/output with **valibot**,
+and auto-generates an OpenAPI 3 document via `hono-openapi`. The `api` worker's `/openapi.json`
 is not just its own spec: it fetches each internal module's spec over its service binding and
 merges the paths/components under a prefix (e.g. `/landing/*`), so consumers get one combined
 API description without the internal modules needing to be public.
 
 The workspace is managed with **pnpm workspaces**, sharing dependency versions through a
-pnpm `catalog` so both workers stay on the same Hono/valibot/wrangler versions.
+pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 
 ---
 
 ## ✨ Features
 
-- **Single public entrypoint, multiple internal Workers** — `apps/api` proxies `/landing/*`
-  and `/auth/*` to the `landing` and `auth` Workers via Cloudflare service bindings
-  (`LANDING`, `AUTH`), keeping internal services off the public internet.
+- **Single public entrypoint, multiple internal Workers** — `apps/api` proxies `/landing/*`,
+  `/auth/*` and `/cms/*` to the `landing`, `auth` and `cms` Workers via Cloudflare service
+  bindings (`LANDING`, `AUTH`, `CMS`), keeping internal services off the public internet.
 - **Centralized authentication** — `apps/auth` implements an OAuth 2.0 authorization code
   flow with PKCE over two providers (magic link by email, Google OAuth 2.0), backed by a D1
   database of users, identities, applications, roles, permissions, invitations and sessions.
   It issues EdDSA-signed JWTs that any service can verify offline against its published JWKS.
+- **Content management** — `apps/cms` backs the landing page's content collections (projects,
+  experience, skills, certifications, education), its legal pages, and outgoing email sent
+  through Cloudflare Email Sending. Published content is readable publicly; editing requires an
+  access token from `apps/auth` belonging to an `@franciscosolis.cl` account, verified offline
+  against the auth JWKS.
 - **Merged OpenAPI spec** — `mergeRemoteSpecs` (`apps/api/src/openapi.ts`) fetches each
   internal Worker's `/openapi.json` and merges it into the root spec under its route prefix;
   an unreachable module is silently skipped instead of breaking the whole document.
@@ -69,8 +75,8 @@ pnpm `catalog` so both workers stay on the same Hono/valibot/wrangler versions.
 | Runtime | Cloudflare Workers (`nodejs_compat`) |
 | Framework | [Hono](https://hono.dev) + [hono-openapi](https://www.npmjs.com/package/hono-openapi) |
 | Validation | [valibot](https://valibot.dev) via `@hono/standard-validator` |
-| Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth` only) |
-| Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`apps/auth` only) |
+| Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth`, `apps/cms`) |
+| Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`apps/auth`, `apps/cms`) |
 | HTTP client | axios |
 | Language | TypeScript (strict) |
 | Package manager | pnpm workspaces (11.17.0) with a shared dependency catalog |
@@ -109,8 +115,12 @@ Copy the example dev-vars files and fill them in:
 ```bash
 cp apps/landing/.dev.vars.example apps/landing/.dev.vars
 cp apps/auth/.dev.vars.example apps/auth/.dev.vars
+cp apps/cms/.dev.vars.example apps/cms/.dev.vars
 cd apps/auth && pnpm run keys:generate   # prints the JWT_PRIVATE_KEY to paste in
 ```
+
+`apps/cms` has no secrets of its own — its `.dev.vars` only points `AUTH_JWKS_URL` and
+`AUTH_ISSUER` at the local auth Worker.
 
 | Variable | Description | Where |
 |----------|-------------|-------|
@@ -118,14 +128,15 @@ cd apps/auth && pnpm run keys:generate   # prints the JWT_PRIVATE_KEY to paste i
 | `JWT_PRIVATE_KEY` | Ed25519 JWK signing the access tokens issued by `apps/auth` | `apps/auth/.dev.vars` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 client used by `apps/auth` | `apps/auth/.dev.vars` |
 
-Then create the auth database tables:
+Then create the database tables:
 
 ```bash
 cd apps/auth && pnpm run db:migrate:local
+cd apps/cms && pnpm run db:migrate:local
 ```
 
-The `api` worker has no secrets of its own; it only needs the `LANDING` and `AUTH` service
-bindings, which are wired up in `apps/api/wrangler.jsonc`. See
+The `api` worker has no secrets of its own; it only needs the `LANDING`, `AUTH` and `CMS`
+service bindings, which are wired up in `apps/api/wrangler.jsonc`. See
 [`apps/auth/README.md`](apps/auth/README.md) for the full authentication setup.
 
 ### 4. Run in development
@@ -140,6 +151,7 @@ This starts:
 - `api` on `http://localhost:8787` (inspector on port `9229`)
 - `landing` on `http://localhost:8788` (inspector on port `9230`)
 - `auth` on `http://localhost:8789` (inspector on port `9231`)
+- `cms` on `http://localhost:8790` (inspector on port `9232`)
 
 Each app can also be run individually from its own directory, e.g. `cd apps/api && pnpm run dev`.
 
@@ -168,11 +180,12 @@ Or deploy a single app:
 cd apps/api && pnpm run deploy
 cd apps/landing && pnpm run deploy
 cd apps/auth && pnpm run deploy
+cd apps/cms && pnpm run deploy
 ```
 
 `apps/api/wrangler.jsonc` binds the custom domain `api.franciscosolis.cl` (zone
-`franciscosolis.cl`) plus the `LANDING` and `AUTH` service bindings, so those Workers must be
-deployed under exactly the names `landing` and `auth` for the bindings to resolve.
+`franciscosolis.cl`) plus the `LANDING`, `AUTH` and `CMS` service bindings, so those Workers must
+be deployed under exactly the names `landing`, `auth` and `cms` for the bindings to resolve.
 
 `apps/auth` also needs its secrets and its database migrations in production:
 
@@ -181,6 +194,13 @@ cd apps/auth
 pnpm exec wrangler secret put JWT_PRIVATE_KEY
 pnpm exec wrangler secret put GOOGLE_CLIENT_ID
 pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
+pnpm run db:migrate:remote
+```
+
+`apps/cms` needs its own migrations in production, but no secrets:
+
+```bash
+cd apps/cms
 pnpm run db:migrate:remote
 ```
 
@@ -196,10 +216,12 @@ pnpm run cf-typegen
 
 | File | Purpose |
 |------|---------|
-| `apps/api/wrangler.jsonc` | Routes, custom domain, `LANDING` and `AUTH` service bindings, observability sampling |
+| `apps/api/wrangler.jsonc` | Routes, custom domain, `LANDING`, `AUTH` and `CMS` service bindings, observability sampling |
 | `apps/landing/wrangler.jsonc` | Worker name/config for the `landing` service |
 | `apps/auth/wrangler.jsonc` | Worker name/config for the `auth` service, D1 binding, email sending binding, public URL and issuer vars |
 | `apps/auth/migrations/` | D1 migrations for `franciscosolis_auth` |
+| `apps/cms/wrangler.jsonc` | Worker name/config for the `cms` service, D1 binding, email sending binding, JWKS/issuer, allowed audiences, email domains and senders |
+| `apps/cms/migrations/` | D1 migrations for `franciscosolis_cms` |
 | `pnpm-workspace.yaml` | Workspace packages (`apps/*`, `packages/*`) and shared dependency catalog |
 
 ---

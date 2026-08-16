@@ -63,7 +63,7 @@ app.get(
     status: 200,
     data: {
       message: "¡Hello, API!",
-      modules: ["landing", "auth"]
+      modules: ["landing", "auth", "cms"]
     }
   })
 )
@@ -109,6 +109,25 @@ app.all(
   }
 )
 
+app.all(
+  '/cms/*',
+  describeRoute({
+    description: 'Proxy to the CMS Worker (landing page content, legal pages and outgoing email)',
+    tags: ['CMS'],
+    responses: {
+      200: { description: 'Response forwarded from the cms Worker' },
+    },
+  }),
+  (c) => {
+    const url = new URL(c.req.url)
+    url.pathname = url.pathname.replace(/^\/cms/, '') || '/'
+    // The whole Request is forwarded, as in /auth/*: the CMS needs the body of POST/PATCH calls,
+    // the Authorization header to validate the access token, and CF-Connecting-IP for its audit
+    // trail.
+    return c.env.CMS.fetch(new Request(url, c.req.raw))
+  }
+)
+
 app.get('/openapi.json', async (c) => {
   const spec = await generateSpecs(app, {
     documentation: {
@@ -124,6 +143,7 @@ app.get('/openapi.json', async (c) => {
   await mergeRemoteSpecs(spec, [
     { prefix: '/landing', fetchSpec: () => c.env.LANDING.fetch(new Request('https://landing.internal/openapi.json')) },
     { prefix: '/auth', fetchSpec: () => c.env.AUTH.fetch(new Request('https://auth.internal/openapi.json')) },
+    { prefix: '/cms', fetchSpec: () => c.env.CMS.fetch(new Request('https://cms.internal/openapi.json')) },
   ])
 
   return c.json(spec)
