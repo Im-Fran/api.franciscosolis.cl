@@ -105,8 +105,4 @@ describe('asConflict', () => {
     expect(asConflict({ code: 500 }, 'duplicate').message).toBe('[object Object]')
     expect(asConflict(null, 'duplicate').message).toBe('null')
   })
-
-  it('returns rather than throws, so the caller decides when to raise', () => {
-    expect(() => asConflict(new Error(UNIQUE), 'duplicate')).not.toThrow()
-  })
 })

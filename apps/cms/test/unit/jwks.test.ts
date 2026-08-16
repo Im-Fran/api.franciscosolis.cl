@@ -222,4 +222,42 @@ describe('verifyAccessToken', () => {
       verifyAccessToken(envWith({ AUTH_JWKS_URL: 'https://auth.test/unreachable.json' }), token),
     ).rejects.toThrow('connection refused')
   })
+
+  // Last in the file on purpose: unlike the failures above, this JWKS document *is* fetched
+  // successfully, so it replaces the cached set and would perturb the fetch counts of any test
+  // written after it.
+  it('rejects a published key that is well-formed JSON but not an importable key', async () => {
+    // A realistic auth-side misconfiguration: the document parses, the kid matches, and WebCrypto
+    // still refuses the key material. It falls through `describeTokenError`'s default arm, which
+    // returns the message verbatim — so the message itself has to be safe to hand back.
+    const corrupted = { ...keyA.publicJwk, x: 'AAAA' }
+    fetchMock.mockImplementationOnce(async () => Response.json({ keys: [corrupted] }))
+    const token = await mintToken({}, keyA.privateJwk)
+
+    const rejection = await verifyAccessToken(
+      envWith({ AUTH_JWKS_URL: 'https://auth.test/corrupt-key.json' }),
+      token,
+    ).then(
+      () => null,
+      (error: unknown) => error as Error,
+    )
+
+    expect(rejection).toBeInstanceOf(Error)
+    expect(rejection?.name).toBe('DataError')
+    // Nothing the WebCrypto failure says may carry a fragment of the credential.
+    expect(rejection?.message).not.toContain(token)
+    for (const part of token.split('.')) {
+      expect(rejection?.message).not.toContain(part.slice(0, 12))
+    }
+  })
+
+  it('rejects a key whose type does not match the EdDSA the Worker pins', async () => {
+    const wrongType = { ...keyA.publicJwk, kty: 'RSA' }
+    fetchMock.mockImplementationOnce(async () => Response.json({ keys: [wrongType] }))
+    const token = await mintToken({}, keyA.privateJwk)
+
+    await expect(
+      verifyAccessToken(envWith({ AUTH_JWKS_URL: 'https://auth.test/wrong-kty.json' }), token),
+    ).rejects.toThrow()
+  })
 })

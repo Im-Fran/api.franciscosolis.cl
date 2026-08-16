@@ -102,6 +102,59 @@ const seedTemplate = async (seed: TemplateSeed = {}) => {
   return row
 }
 
+type MessageSeed = Partial<typeof emailMessages.$inferInsert>
+
+/**
+ * Seeds a row of the outgoing-mail log.
+ *
+ * `createdAt` is settable because that is the only way to pin the "newest first" ordering of
+ * `GET /admin/emails`: the column is unix seconds, so rows written by one test all land in the
+ * same second and cannot be told apart by the sort.
+ */
+const seedMessage = async (seed: MessageSeed = {}) => {
+  const row = {
+    id: crypto.randomUUID(),
+    toAddresses: '["someone@example.com"]',
+    fromEmail: 'hola@mail.franciscosolis.cl',
+    fromName: 'Francisco Solis',
+    replyTo: null,
+    subject: 'Seeded message',
+    html: null,
+    text: 'Seeded body',
+    templateSlug: null,
+    status: 'sent',
+    messageId: '<seeded@mail.franciscosolis.cl>',
+    error: null,
+    sentBy: 'seed@franciscosolis.cl',
+    sentAt: new Date(),
+    createdAt: new Date(),
+    ...seed,
+  }
+  await db().insert(emailMessages).values(row)
+  return row
+}
+
+type AuditSeed = Partial<typeof auditLogs.$inferInsert>
+
+/** Seeds an audit row. `createdAt` is settable for the same reason as `seedMessage`'s. */
+const seedAuditRow = async (seed: AuditSeed = {}) => {
+  const row = {
+    id: crypto.randomUUID(),
+    event: 'content.created',
+    actorEmail: 'seed@franciscosolis.cl',
+    actorId: 'editor-seed',
+    resourceType: 'content_entries',
+    resourceId: crypto.randomUUID(),
+    ip: null,
+    userAgent: null,
+    metadata: null,
+    createdAt: new Date(),
+    ...seed,
+  }
+  await db().insert(auditLogs).values(row)
+  return row
+}
+
 const countRows = async (table: string): Promise<number> => {
   const row = await env.DB.prepare(`SELECT count(*) AS total FROM ${table}`).first<{ total: number }>()
   return row?.total ?? 0
@@ -138,7 +191,9 @@ export {
   emailTemplates,
   legalPages,
   readAuditLog,
+  seedAuditRow,
   seedEntry,
   seedLegalPage,
+  seedMessage,
   seedTemplate,
 }

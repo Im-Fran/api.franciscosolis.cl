@@ -12,17 +12,41 @@ describe('the registry', () => {
     expect([...COLLECTION_NAMES]).toEqual(['projects', 'experience', 'skills', 'certifications', 'education'])
   })
 
-  it('gives every collection a name, a description and a schema', () => {
+  it('labels every collection with something a CMS front-end can put on a tab', () => {
+    // `GET /collections` hands these straight to a UI, so an empty or copy-pasted label is a real
+    // defect even though the type system is happy with one.
+    const names = COLLECTION_NAMES.map((slug) => COLLECTIONS[slug].name)
+    const descriptions = COLLECTION_NAMES.map((slug) => COLLECTIONS[slug].description)
+
     for (const slug of COLLECTION_NAMES) {
-      const definition = COLLECTIONS[slug]
-      expect(definition.name.length).toBeGreaterThan(0)
-      expect(definition.description.length).toBeGreaterThan(0)
-      expect(definition.schema).toBeDefined()
+      const { name, description } = COLLECTIONS[slug]
+      expect(name.trim(), slug).not.toBe('')
+      expect(description.trim(), slug).not.toBe('')
+      expect(name, slug).not.toBe(slug)
+      expect(description, slug).not.toBe(name)
     }
+
+    expect(new Set(names).size).toBe(names.length)
+    expect(new Set(descriptions).size).toBe(descriptions.length)
   })
 
-  it('keeps COLLECTION_NAMES in step with COLLECTIONS', () => {
-    expect([...COLLECTION_NAMES].sort()).toEqual(Object.keys(COLLECTIONS).sort())
+  it('wires each name to its own schema rather than sharing one', () => {
+    // A copy-paste that pointed two collections at the same schema would let a certification field
+    // through on a project. The distinct-field probe below is what catches it.
+    const probes: Record<CollectionName, Record<string, unknown>> = {
+      projects: { client: 'ACME' },
+      experience: { company: 'ACME' },
+      skills: { level: 3 },
+      certifications: { issuer: 'Cloudflare' },
+      education: { institution: 'UTEM' },
+    }
+
+    for (const owner of COLLECTION_NAMES) {
+      expect(parseCollectionData(owner, probes[owner]), owner).toEqual(probes[owner])
+      for (const other of COLLECTION_NAMES.filter((slug) => slug !== owner)) {
+        rejects(other, probes[owner])
+      }
+    }
   })
 })
 
@@ -47,9 +71,27 @@ describe('isCollection', () => {
     expect(isCollection('constructor')).toBe(true)
   })
 
-  it('does not leak data for a name that only exists on the prototype', () => {
-    // The consequence is bounded: the name has no schema, so a write against it fails loudly.
-    expect(() => parseCollectionData('toString' as CollectionName, {})).toThrow()
+  it('has no schema behind such a name, so a write against it fails loudly', () => {
+    // What bounds the gap above. `COLLECTIONS.toString` resolves to `Function.prototype.toString`,
+    // which has no `schema`, so valibot is handed `undefined` and throws a TypeError — not a
+    // ValiError, and not a silent pass. `routes/admin/content.ts` turns that into a 422.
+    let thrown: unknown
+    try {
+      parseCollectionData('toString' as CollectionName, { anything: true })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(TypeError)
+    expect(thrown).not.toBeInstanceOf(v.ValiError)
+    expect((thrown as TypeError).message).toContain('undefined')
+  })
+
+  it('carries no collection definition for a prototype name, whatever the guard says', () => {
+    // The guard is the only thing that says yes; nothing behind it does.
+    expect(Object.hasOwn(COLLECTIONS, 'toString')).toBe(false)
+    expect(Object.hasOwn(COLLECTIONS, 'constructor')).toBe(false)
+    expect(COLLECTION_NAMES).not.toContain('toString' as CollectionName)
   })
 })
 

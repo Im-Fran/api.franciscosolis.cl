@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '@/db/client'
 import type { AppEnv } from '@/env'
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
-import { clearDatabase, countRows, db, readAuditLog } from '../helpers/db'
+import { auditLogs, clearDatabase, countRows, db, readAuditLog } from '../helpers/db'
 
 beforeEach(clearDatabase)
 
@@ -66,11 +66,25 @@ describe('recordAudit', () => {
     expect(results).toHaveLength(2)
   })
 
-  it('stamps created_at without being asked', async () => {
+  it('stamps created_at with the current time in unix seconds', async () => {
+    const before = Math.floor(Date.now() / 1000)
     await recordAudit(db(), { event: 'content.updated' })
+    const after = Math.floor(Date.now() / 1000)
 
     const row = await env.DB.prepare('SELECT created_at FROM audit_logs').first<{ created_at: number }>()
-    expect(row?.created_at).toEqual(expect.any(Number))
+
+    // The column default is `unixepoch()`, so this is seconds — a millisecond value would land
+    // thousands of years out and read back as an unusable date.
+    expect(row?.created_at).toBeGreaterThanOrEqual(before)
+    expect(row?.created_at).toBeLessThanOrEqual(after)
+  })
+
+  it('reads the stamp back as a real date rather than a raw number', async () => {
+    await recordAudit(db(), { event: 'content.updated' })
+
+    const [row] = await db().select().from(auditLogs)
+    expect(row?.createdAt).toBeInstanceOf(Date)
+    expect(Math.abs((row?.createdAt.getTime() ?? 0) - Date.now())).toBeLessThan(60_000)
   })
 
   it('swallows a write failure instead of turning a successful edit into a 500', async () => {
