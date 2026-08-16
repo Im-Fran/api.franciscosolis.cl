@@ -6,7 +6,6 @@ import { TTL } from '@/lib/config'
 import { findPendingInvitation } from '@/services/invitations'
 import { createApplication, createInvitation, createRole, createUser, db, SEED, signIn, uniqueEmail } from '../helpers/db'
 import { captureEmails, linkFrom } from '../helpers/email'
-import { withWorkerEnv } from '../helpers/env'
 import { RFC7636 } from '../helpers/pkce'
 
 const mailbox = captureEmails()
@@ -268,18 +267,16 @@ describe('DELETE /admin/invitations/:id', () => {
     await expect(findPendingInvitation(db(), email, SEED.webAppId)).resolves.toBeNull()
 
     // And the address can no longer complete a sign-in through the magic link provider.
-    const magicLink = await withWorkerEnv({ BOOTSTRAP_ADMIN_EMAILS: '' }, () =>
-      SELF.fetch('https://auth.internal/magic-link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          client_id: SEED.webAppId,
-          redirect_uri: SEED.webRedirectUri,
-          code_challenge: RFC7636.challenge,
-        }),
+    const magicLink = await SELF.fetch('https://auth.internal/magic-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        client_id: SEED.webAppId,
+        redirect_uri: SEED.webRedirectUri,
+        code_challenge: RFC7636.challenge,
       }),
-    )
+    })
     expect(magicLink.status).toBe(202)
     expect(mailbox.sent).toHaveLength(0)
   })

@@ -1,5 +1,4 @@
 import type { Database } from '@/db/client'
-import type { Env } from '@/env'
 import { issueAuthorizationCode } from '@/services/tokens'
 import { recordAudit } from '@/services/audit'
 import { resolveUserForProfile } from '@/services/users'
@@ -14,7 +13,6 @@ import type { AuthorizationRequest, ProviderProfile } from '@/providers/types'
  */
 const completeAuthentication = async (
   db: Database,
-  env: Env,
   input: {
     request: AuthorizationRequest
     profile: ProviderProfile
@@ -24,7 +22,7 @@ const completeAuthentication = async (
 ) => {
   const { request, profile } = input
 
-  const { user, isNewUser } = await resolveUserForProfile(db, env, profile, request.application.id)
+  const { user, isNewUser } = await resolveUserForProfile(db, profile, request.application.id)
 
   const code = await issueAuthorizationCode(db, {
     userId: user.id,

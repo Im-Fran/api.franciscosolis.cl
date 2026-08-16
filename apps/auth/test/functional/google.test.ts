@@ -355,7 +355,7 @@ describe('GET /oauth/google/callback', () => {
     const { state, nonce } = await startFlow()
     await stubGoogle(await googleIdToken({ sub: 'sub-uninvited', email, nonce }))
 
-    const response = await withWorkerEnv({ BOOTSTRAP_ADMIN_EMAILS: '' }, () => callback({ state, code: 'c' }))
+    const response = await callback({ state, code: 'c' })
 
     expect(new URL(response.headers.get('Location') as string).searchParams.get('error_description')).toBe(
       'This email address has not been invited',

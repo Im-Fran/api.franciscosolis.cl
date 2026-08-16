@@ -102,7 +102,6 @@ OAuth client.
 | `AUTH_PUBLIC_URL` | `wrangler.jsonc` var | Public base URL, e.g. `https://api.franciscosolis.cl/auth` |
 | `AUTH_ISSUER` | `wrangler.jsonc` var | `iss` claim of issued access tokens |
 | `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | `wrangler.jsonc` var | Sender identity for outgoing email |
-| `BOOTSTRAP_ADMIN_EMAILS` | `wrangler.jsonc` var | Comma-separated addresses that bypass the invitation requirement and get `admin` |
 
 In production, set the secrets with Wrangler:
 
@@ -125,7 +124,24 @@ The seed migration creates the baseline permissions, the global `admin` and `use
 `franciscosolis-web` client application (redirect URIs `https://franciscosolis.cl/auth/callback`
 and `http://localhost:5173/auth/callback`).
 
-### 3. Configure Google
+### 3. Create the first administrator
+
+Sign-up is invitation-only and nothing in the environment bypasses that, so the first account is
+seeded straight into the database:
+
+```bash
+cd apps/auth
+pnpm run admin:bootstrap             # local dev database
+pnpm run admin:bootstrap -- --remote  # the real franciscosolis_auth D1 database
+```
+
+The script asks for an email address and writes a pending, global invitation carrying the `admin`
+role, valid for 7 days: the next magic link sent to that address creates the account and grants it
+`admin`. If the address already has an account, the role is granted to it directly. Re-running it
+replaces the pending invitation instead of piling up duplicates. Every further account is invited
+from the admin API (`POST /auth/admin/invitations`).
+
+### 4. Configure Google
 
 In the Google Cloud console, add this exact authorized redirect URI:
 
@@ -136,12 +152,12 @@ https://api.franciscosolis.cl/auth/oauth/google/callback
 For local development, `.dev.vars` overrides `AUTH_PUBLIC_URL`, so also add the matching
 `http://localhost:8787/auth/oauth/google/callback`.
 
-### 4. Configure email
+### 5. Configure email
 
 Onboard `mail.franciscosolis.cl` in **Compute → Email Service → Email Sending** in the Cloudflare
 dashboard so `hola@mail.franciscosolis.cl` is allowed to send.
 
-### 5. Run
+### 6. Run
 
 ```bash
 pnpm run dev            # from the repo root, runs every Worker in parallel

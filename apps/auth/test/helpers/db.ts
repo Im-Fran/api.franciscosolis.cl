@@ -27,8 +27,6 @@ const SEED = {
   cmsRedirectUri: 'https://cms.franciscosolis.cl/auth/callback',
   adminRoleId: '8e7a797c-5012-4a96-a9a2-e8b5bdaeb802',
   userRoleId: 'e159f911-541f-4d48-806e-aaa94971c9a9',
-  /** The single address `BOOTSTRAP_ADMIN_EMAILS` carries in `wrangler.jsonc`. */
-  bootstrapAdminEmail: 'f.solism@icloud.com',
 } as const
 
 const db = () => getDb(env)

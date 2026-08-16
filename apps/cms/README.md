@@ -126,8 +126,8 @@ Three conditions have to hold for a request to reach an admin route:
 3. Its email address is **verified** and its domain is listed in `CMS_ALLOWED_EMAIL_DOMAINS`
    (`franciscosolis.cl`).
 
-Because sign-up in `apps/auth` is invitation-only, a new editor also needs an invitation (or an
-entry in `BOOTSTRAP_ADMIN_EMAILS`) before they can sign in at all.
+Because sign-up in `apps/auth` is invitation-only, a new editor also needs an invitation before
+they can sign in at all.
 
 The redirect URIs registered for the CMS client are placeholders until the front-end has a real
 URL; update them with `PATCH /auth/admin/applications/franciscosolis-cms`.
