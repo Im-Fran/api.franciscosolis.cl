@@ -1,0 +1,56 @@
+import { fileURLToPath } from 'node:url'
+import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers'
+import { defineConfig } from 'vitest/config'
+
+/**
+ * The migrations are read here, on the Node side, and handed to the test Worker as a binding: the
+ * suite then applies them to the isolated D1 instance of every test file. Tests therefore run
+ * against the same schema production does, and a migration that does not apply cleanly fails the
+ * build instead of surfacing later.
+ */
+const migrations = await readD1Migrations(fileURLToPath(new URL('./migrations', import.meta.url)))
+
+/**
+ * Test-only Ed25519 signing key. Committing it is deliberate and safe: it signs nothing outside
+ * this suite, and pinning it keeps token fixtures reproducible. The production key lives in the
+ * `JWT_PRIVATE_KEY` secret and is never in the repository.
+ */
+const TEST_JWT_PRIVATE_KEY = JSON.stringify({
+  kty: 'OKP',
+  crv: 'Ed25519',
+  alg: 'EdDSA',
+  kid: 'zkYWu6vANSKYDOXRS4kw3_owd0qlSMSkVvyPMlwF0uQ',
+  x: 'YCt-mqiJ3dJzyf4dTfnH7WBTc5ksvphTws14AUe9sUQ',
+  d: '-qBXxI03vpROyfgZ-orvh9MgkCx-P8DDPQ5EB-hASo0',
+})
+
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: './wrangler.jsonc' },
+      miniflare: {
+        bindings: {
+          TEST_MIGRATIONS: migrations,
+          JWT_PRIVATE_KEY: TEST_JWT_PRIVATE_KEY,
+          GOOGLE_CLIENT_ID: 'test-google-client-id',
+          GOOGLE_CLIENT_SECRET: 'test-google-client-secret',
+        },
+      },
+    }),
+  ],
+  resolve: {
+    // Wrangler reads the `@/*` mapping straight from tsconfig when it bundles; Vite does not, so
+    // it has to be restated here or every `@/…` import fails to resolve under test.
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
+  test: {
+    include: ['test/**/*.test.ts'],
+    setupFiles: ['./test/setup.ts'],
+    coverage: {
+      // workerd exposes no V8 coverage hooks, so instrumentation is the only provider that works.
+      provider: 'istanbul',
+      include: ['src/**/*.ts'],
+      reporter: ['text', 'html', 'lcov'],
+    },
+  },
+})
