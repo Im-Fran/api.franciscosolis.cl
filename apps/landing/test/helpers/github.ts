@@ -60,6 +60,14 @@ const starsPage = (stargazerCounts: number[], pageInfo: PageInfo) =>
 const pullRequestsPayload = (totalCount: number) =>
   githubResponse({ data: { user: { pullRequests: { totalCount } } } })
 
+/**
+ * GitHub's GraphQL API reports bad credentials, an exhausted rate limit and a suspended or renamed
+ * account as an HTTP **200** carrying `errors` and a null `user` — not as a non-2xx status, so
+ * axios resolves rather than rejecting and none of the transport-failure stubs reach this path.
+ */
+const graphqlErrorPayload = (message: string, type = 'FORBIDDEN') =>
+  githubResponse({ data: { user: null }, errors: [{ type, message }] })
+
 const profilePayload = (overrides: Record<string, unknown> = {}) => ({
   login: 'Im-Fran',
   id: 20404280,
@@ -74,6 +82,17 @@ const profilePayload = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+/**
+ * Drops keys from a payload. GitHub genuinely omits fields rather than nulling them — a token
+ * without the `repo` scope gets a user payload with no `total_private_repos` at all — so the
+ * absent-field cases have to be built by deletion, not by an `undefined` override.
+ */
+const withoutKeys = <T extends Record<string, unknown>>(payload: T, ...keys: string[]) => {
+  const copy: Record<string, unknown> = { ...payload }
+  for (const key of keys) delete copy[key]
+  return copy
+}
+
 const readJson = async <T>(response: Response): Promise<T> => (await response.json()) as T
 
 export {
@@ -81,9 +100,11 @@ export {
   axiosPost,
   expectedGitHubHeaders,
   githubResponse,
+  graphqlErrorPayload,
   profilePayload,
   pullRequestsPayload,
   readJson,
   resetAxios,
   starsPage,
+  withoutKeys,
 }

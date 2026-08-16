@@ -6,6 +6,7 @@ import {
   githubResponse,
   profilePayload,
   resetAxios,
+  withoutKeys,
 } from '../helpers/github'
 
 vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
@@ -60,6 +61,33 @@ describe('getGitHubProfile', () => {
     await expect(getGitHubProfile({ GH_TOKEN: TOKEN })).resolves.toMatchObject({
       repos: { public: 0, private: 0, total: 0 },
       followers: 0,
+    })
+  })
+
+  // KNOWN BUG (reported, not fixed here): `total_private_repos` is only present when the token
+  // carries the `repo` scope; without it the arithmetic silently produces NaN. Pinned as it is
+  // today so the contract violation is visible and a fix in either direction turns this red.
+  it('produces an undefined private count and a NaN total when GitHub omits total_private_repos', async () => {
+    axiosGet().mockResolvedValue(
+      githubResponse(withoutKeys(profilePayload(), 'total_private_repos')),
+    )
+
+    const profile = await getGitHubProfile({ GH_TOKEN: TOKEN })
+
+    expect(profile.repos.public).toBe(42)
+    expect(profile.repos.private).toBeUndefined()
+    expect(profile.repos.total).toBeNaN()
+  })
+
+  it('leaves the rest of the mapping intact when the private count is missing', async () => {
+    axiosGet().mockResolvedValue(
+      githubResponse(withoutKeys(profilePayload(), 'total_private_repos')),
+    )
+
+    await expect(getGitHubProfile({ GH_TOKEN: TOKEN })).resolves.toMatchObject({
+      avatar: 'https://avatars.githubusercontent.com/u/20404280?v=4',
+      profile_url: 'https://github.com/Im-Fran',
+      followers: 137,
     })
   })
 

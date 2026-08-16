@@ -3,6 +3,8 @@ import { getGitHubPullRequests } from '@/stats/github/pull-requests'
 import {
   axiosPost,
   expectedGitHubHeaders,
+  githubResponse,
+  graphqlErrorPayload,
   pullRequestsPayload,
   resetAxios,
 } from '../helpers/github'
@@ -63,5 +65,27 @@ describe('getGitHubPullRequests', () => {
     axiosPost().mockRejectedValue(failure)
 
     await expect(getGitHubPullRequests({ GH_TOKEN: TOKEN })).rejects.toBe(failure)
+  })
+
+  // Same unguarded dereference as `stars.ts`, and the same reason it matters: GitHub reports bad
+  // credentials, rate limits and an unresolvable login as an HTTP 200 with `errors`, so this is the
+  // ordinary failure path rather than an exotic one. Reported as a bug; pinned here as it stands.
+  it('throws a raw dereference error when GraphQL reports failure in-band with a null user', async () => {
+    axiosPost().mockResolvedValue(graphqlErrorPayload('Bad credentials', 'UNAUTHORIZED'))
+
+    await expect(getGitHubPullRequests({ GH_TOKEN: TOKEN })).rejects.toThrowError(
+      /Cannot read properties of null \(reading 'pullRequests'\)/,
+    )
+  })
+
+  it('returns the count anyway when GraphQL reports a partial failure alongside the data', async () => {
+    axiosPost().mockResolvedValue(
+      githubResponse({
+        data: { user: { pullRequests: { totalCount: 9 } } },
+        errors: [{ message: 'Something went wrong while executing your query' }],
+      }),
+    )
+
+    await expect(getGitHubPullRequests({ GH_TOKEN: TOKEN })).resolves.toBe(9)
   })
 })

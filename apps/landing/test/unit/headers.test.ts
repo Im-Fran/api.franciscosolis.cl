@@ -36,9 +36,4 @@ describe('githubHeaders', () => {
     expect(githubHeaders('second-token').Authorization).toBe('token second-token')
     expect(first.Authorization).toBe('token tampered')
   })
-
-  it('produces no scheme prefix of its own beyond `token`', () => {
-    // A `Bearer` prefix is what most APIs want and what GitHub's search API rejects.
-    expect(githubHeaders('abc123').Authorization.startsWith('Bearer')).toBe(false)
-  })
 })

@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getGitHubStars } from '@/stats/github/stars'
-import { axiosPost, expectedGitHubHeaders, resetAxios, starsPage } from '../helpers/github'
+import {
+  axiosPost,
+  expectedGitHubHeaders,
+  githubResponse,
+  graphqlErrorPayload,
+  resetAxios,
+  starsPage,
+} from '../helpers/github'
 
 vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn() } }))
 
@@ -94,6 +101,108 @@ describe('getGitHubStars', () => {
 
     expect(postedBody(1).query).toBe(postedBody(0).query)
     expect(postedBody(1).variables.login).toBe('Im-Fran')
+  })
+
+  it('re-sends the token on every page, not only on the first request', async () => {
+    // The headers are rebuilt inside the loop; dropping the token after page one would still return
+    // a plausible total in production, because GraphQL answers unauthenticated requests with a 200.
+    axiosPost()
+      .mockResolvedValueOnce(starsPage([1], { hasNextPage: true, endCursor: 'c1' }))
+      .mockResolvedValueOnce(starsPage([1], { hasNextPage: true, endCursor: 'c2' }))
+      .mockResolvedValueOnce(starsPage([1], LAST_PAGE))
+
+    await getGitHubStars({ GH_TOKEN: TOKEN })
+
+    expect(axiosPost()).toHaveBeenCalledTimes(3)
+    expect(postedConfig(1)).toEqual({ headers: expectedGitHubHeaders(TOKEN) })
+    expect(postedConfig(2)).toEqual({ headers: expectedGitHubHeaders(TOKEN) })
+  })
+
+  it('always posts to the GraphQL endpoint, never to a per-page URL', async () => {
+    axiosPost()
+      .mockResolvedValueOnce(starsPage([1], { hasNextPage: true, endCursor: 'c1' }))
+      .mockResolvedValueOnce(starsPage([1], LAST_PAGE))
+
+    await getGitHubStars({ GH_TOKEN: TOKEN })
+
+    expect(axiosPost().mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      'https://api.github.com/graphql',
+      'https://api.github.com/graphql',
+    ])
+  })
+
+  // KNOWN BUG (reported, not fixed here): the walk has no page ceiling and no cursor-progress check.
+  // A test cannot assert non-termination safely, so this pins the mechanism behind it — the second
+  // request is byte-for-byte the first one, and only the stub's own `hasNextPage: false` ends it.
+  // In production that answer loops forever and burns the Worker's CPU budget.
+  it('re-requests the first page when hasNextPage is true but endCursor is null', async () => {
+    axiosPost()
+      .mockResolvedValueOnce(starsPage([7], { hasNextPage: true, endCursor: null }))
+      .mockResolvedValueOnce(starsPage([7], LAST_PAGE))
+
+    await expect(getGitHubStars({ GH_TOKEN: TOKEN })).resolves.toBe(14)
+
+    expect(postedBody(1).variables.after).toBeNull()
+    expect(postedBody(1)).toEqual(postedBody(0))
+  })
+
+  it('double counts a page GitHub hands back twice, having no seen-cursor guard', async () => {
+    axiosPost()
+      .mockResolvedValueOnce(starsPage([30], { hasNextPage: true, endCursor: 'stuck' }))
+      .mockResolvedValueOnce(starsPage([30], { hasNextPage: true, endCursor: 'stuck' }))
+      .mockResolvedValueOnce(starsPage([30], LAST_PAGE))
+
+    await expect(getGitHubStars({ GH_TOKEN: TOKEN })).resolves.toBe(90)
+    expect(postedBody(1).variables.after).toBe('stuck')
+    expect(postedBody(2).variables.after).toBe('stuck')
+  })
+
+  // GitHub's GraphQL API answers bad credentials, an exhausted rate limit and a suspended account
+  // with an HTTP 200 carrying `errors`, so axios resolves and none of the rejection stubs above
+  // reach this path. The dereference is unguarded — pinned here, and reported as a bug.
+  it('throws a raw dereference error when GraphQL reports failure in-band with a null user', async () => {
+    axiosPost().mockResolvedValue(graphqlErrorPayload('Bad credentials'))
+
+    await expect(getGitHubStars({ GH_TOKEN: TOKEN })).rejects.toThrowError(
+      /Cannot read properties of null \(reading 'repositories'\)/,
+    )
+  })
+
+  it('throws rather than reporting 0 when the repositories connection itself is null', async () => {
+    axiosPost().mockResolvedValue(githubResponse({ data: { user: { repositories: null } } }))
+
+    await expect(getGitHubStars({ GH_TOKEN: TOKEN })).rejects.toThrowError(
+      /Cannot read properties of null \(reading 'nodes'\)/,
+    )
+  })
+
+  it('does not return a partial total when a later page fails in-band', async () => {
+    axiosPost()
+      .mockResolvedValueOnce(starsPage([40], { hasNextPage: true, endCursor: 'c1' }))
+      .mockResolvedValueOnce(graphqlErrorPayload('API rate limit exceeded', 'RATE_LIMITED'))
+
+    await expect(getGitHubStars({ GH_TOKEN: TOKEN })).rejects.toThrowError(TypeError)
+    expect(axiosPost()).toHaveBeenCalledTimes(2)
+  })
+
+  it('counts a page that arrives alongside a partial-failure errors array', async () => {
+    // GraphQL may return both `data` and `errors`; the walk ignores `errors` entirely, so a
+    // partially failed page still contributes its nodes to the total.
+    axiosPost().mockResolvedValue(
+      githubResponse({
+        data: {
+          user: {
+            repositories: {
+              nodes: [{ stargazers: { totalCount: 12 } }],
+              pageInfo: LAST_PAGE,
+            },
+          },
+        },
+        errors: [{ message: 'Something went wrong while executing your query' }],
+      }),
+    )
+
+    await expect(getGitHubStars({ GH_TOKEN: TOKEN })).resolves.toBe(12)
   })
 
   it('propagates a failure on the first page', async () => {
