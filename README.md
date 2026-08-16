@@ -135,9 +135,6 @@ cd apps/auth && pnpm run db:migrate:local
 cd apps/cms && pnpm run db:migrate:local
 ```
 
-`apps/cms` also needs a real D1 database id: run `pnpm exec wrangler d1 create franciscosolis_cms`
-and paste the printed id into `apps/cms/wrangler.jsonc`, which ships with a placeholder.
-
 The `api` worker has no secrets of its own; it only needs the `LANDING`, `AUTH` and `CMS`
 service bindings, which are wired up in `apps/api/wrangler.jsonc`. See
 [`apps/auth/README.md`](apps/auth/README.md) for the full authentication setup.

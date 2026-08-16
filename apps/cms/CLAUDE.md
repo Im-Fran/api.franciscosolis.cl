@@ -114,9 +114,6 @@ trusts the local auth Worker. Everything else lives in `wrangler.jsonc` under `v
 - **The template renderer is intentionally not a template engine** (`lib/template.ts`): no
   conditionals, no loops, no expression evaluation. It runs inside a Worker that can send
   mail from a real domain.
-- **`D1` needs its real `database_id`**: `wrangler.jsonc` ships a placeholder. Run
-  `wrangler d1 create franciscosolis_cms` and paste the id in, or remote deploys will fail
-  to bind the database.
 - **The CMS client application must exist in the auth database** with the id listed in
   `CMS_ALLOWED_AUDIENCES` — see `apps/auth/migrations/0002_cms_application.sql`. Its
   redirect URIs are placeholders until the CMS front-end has a real URL.

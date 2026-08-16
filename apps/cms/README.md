@@ -81,23 +81,17 @@ Reading published content is **public** — that is what the website itself call
 
 Dependencies are installed from the **monorepo root** (`pnpm install`).
 
-### 1. Create the database
+### 1. Apply migrations
 
-```bash
-pnpm exec wrangler d1 create franciscosolis_cms
-```
-
-Paste the printed `database_id` into `wrangler.jsonc` — it ships with a placeholder, and remote
-deploys cannot bind the database until it is replaced.
-
-### 2. Apply migrations
+The `franciscosolis_cms` D1 database already exists and its id is wired into `wrangler.jsonc`;
+only the tables need creating.
 
 ```bash
 pnpm run db:migrate:local     # local development
 pnpm run db:migrate:remote    # production
 ```
 
-### 3. Point the Worker at a local auth service
+### 2. Point the Worker at a local auth service
 
 ```bash
 cp .dev.vars.example .dev.vars
@@ -106,7 +100,7 @@ cp .dev.vars.example .dev.vars
 There are no secrets to fill in — the file only redirects `AUTH_JWKS_URL` and `AUTH_ISSUER` at the
 local auth Worker so tokens minted locally are accepted.
 
-### 4. Run it
+### 3. Run it
 
 ```bash
 pnpm run dev    # http://localhost:8790, inspector on 9232

@@ -18,9 +18,7 @@
     {
       "binding": "DB",
       "database_name": "franciscosolis_cms",
-      // Replace with the id printed by `wrangler d1 create franciscosolis_cms`. Until then only
-      // `--local` development works; a remote deploy will fail to bind the database.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "ca36fa0f-aa0d-4955-87b3-285a462a8e91",
       "migrations_dir": "migrations"
     }
   ],
