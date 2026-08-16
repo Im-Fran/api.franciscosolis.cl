@@ -8,7 +8,11 @@
   },
   "scripts": {
     "dev": "pnpm run -r --parallel --aggregate-output dev",
+    "build": "pnpm run -r build",
     "deploy": "pnpm run -r deploy",
-    "cf-typegen": "pnpm run -r cf-typegen"
+    "cf-typegen": "pnpm run -r cf-typegen",
+    "typecheck": "pnpm run -r typecheck",
+    "test": "pnpm run -r test",
+    "test:coverage": "pnpm run -r test:coverage"
   }
 }

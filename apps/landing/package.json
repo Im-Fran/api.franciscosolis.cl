@@ -4,8 +4,13 @@
   "license": "GPL-3.0-only",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8788 --inspector-port 9230",
+    "build": "wrangler deploy --dry-run --outdir dist",
     "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "typecheck": "tsc --noEmit -p test/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@hono/standard-validator": "catalog:",
@@ -16,6 +21,11 @@
     "valibot": "catalog:"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "catalog:",
+    "@cloudflare/workers-types": "^5.20260730.1",
+    "@vitest/coverage-istanbul": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
     "wrangler": "catalog:"
   }
 }

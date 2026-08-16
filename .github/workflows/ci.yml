@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch makes the in-flight run obsolete. `dev` is exempt: its runs are the
+# record of what landed, so they are allowed to finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # One job per Worker, so every app reports as its own check and a failure in one never hides or
+  # cancels the others (`fail-fast: false`). The job name is the app name, which is what shows up
+  # in the checks list and what a branch protection rule can be pinned to.
+  app:
+    name: ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, landing, auth, cms]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The whole workspace is installed, not just this app: the catalog and the shared lockfile
+      # are workspace-wide, and `--frozen-lockfile` is what makes CI fail on an uncommitted
+      # dependency change instead of silently resolving a different tree than the developer had.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Runs before the tests because a type error is cheaper to read than the runtime failure it
+      # would otherwise turn into. Covers `src/` and `test/` together.
+      - name: Typecheck
+        run: pnpm --filter ${{ matrix.app }} run typecheck
+
+      # Tests execute inside workerd via @cloudflare/vitest-pool-workers, so this exercises the
+      # real Workers runtime — D1, service bindings and all — rather than a Node stand-in.
+      - name: Test
+        run: pnpm --filter ${{ matrix.app }} run test:coverage
+
+      # `wrangler deploy --dry-run` needs no credentials and catches what tests cannot: an invalid
+      # wrangler.jsonc, a missing binding, or code that does not bundle for the Workers runtime.
+      - name: Build (dry-run deploy)
+        run: pnpm --filter ${{ matrix.app }} run build
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.app }}
+          path: apps/${{ matrix.app }}/coverage
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Aggregate check: a single required status that turns green only when every app job did. Branch
+  # protection can require this one instead of being updated each time an app is added or renamed.
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    needs: app
+    if: always()
+    steps:
+      - name: Verify every app job succeeded
+        run: |
+          if [ "${{ needs.app.result }}" != "success" ]; then
+            echo "At least one app check failed: ${{ needs.app.result }}"
+            exit 1
+          fi
+          echo "All app checks passed."
