@@ -28,7 +28,7 @@ type ContentEmailProps = {
 const ContentEmail = ({ heading, html, preview, brandName }: ContentEmailProps) => (
   <EmailLayout preview={preview ?? heading} heading={heading} brandName={brandName}>
     <div
-      style={{ fontSize: '15px', lineHeight: 1.6, color: theme.colors.body }}
+      style={{ fontSize: '16px', lineHeight: 1.65, color: theme.colors.body }}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   </EmailLayout>

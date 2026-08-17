@@ -4,6 +4,7 @@ import type { Env } from '@/env'
 import { HTTPException } from 'hono/http-exception'
 import { describeRoute, generateSpecs, resolver } from 'hono-openapi'
 import * as v from 'valibot'
+import { registerBrandAssets } from '@/brand'
 import { mergeRemoteSpecs } from '@/openapi'
 import { registerServiceProxies, remoteSpecComponents } from '@/proxy'
 import { SERVICE_MODULE_NAMES } from '@/services'
@@ -72,6 +73,10 @@ app.get(
 
 // One `ALL /<module>/*` proxy per entry in the service registry (`src/services.ts`).
 registerServiceProxies(app)
+
+// `GET /brand/lockup.png`. The only bytes this gateway owns, and it owns them because the emails
+// the other Workers send need the logo at a public URL (see `src/brand.ts`).
+registerBrandAssets(app)
 
 app.get('/openapi.json', async (c) => {
   const spec = await generateSpecs(app, {

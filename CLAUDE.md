@@ -144,11 +144,19 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   not a migration.
 - **Email bodies are react-email components, in one shared package**: neither Worker builds
   mail markup any more. `@franciscosolis/emails` renders `{ subject, html, text }` and the
-  Worker only hands that to its `EMAIL` binding. Two consequences worth knowing before
-  touching either: rendering is asynchronous, and both Workers alias `prettier/standalone`
+  Worker only hands that to its `EMAIL` binding. Three consequences worth knowing before
+  touching either: rendering is asynchronous; both Workers alias `prettier/standalone`
   and `prettier/plugins/html` out of their bundle (in `wrangler.jsonc` *and* in
   `vitest.config.ts`) because `@react-email/render` imports ~1.5 MB of formatter statically
-  for an option neither uses. See `packages/emails/CLAUDE.md`.
+  for an option neither uses; and the layout is deliberately light-first — a dark email body
+  is what mail clients' colour rewriting breaks worst, and the palette, the `bgcolor`
+  attributes and the missing `<style>` block are all defending against a specific client.
+  See `packages/emails/CLAUDE.md` before changing any of them.
+- **The email layout reaches back into `apps/api`**: `EmailLayout` renders the brand lockup
+  from `https://api.franciscosolis.cl/brand/lockup.png`, which `apps/api/src/brand.ts` serves.
+  An email cannot carry a logo any other way — Gmail blocks `data:` URIs and strips inline
+  SVG — and the gateway owns the only public hostname in the repo. Renaming that path breaks
+  the logo in every inbox already delivered, so `theme.logo.src` and the route move together.
 - **The gateway's CORS allows write verbs because of auth**: `apps/api` used to allow `GET`
   only; sign-in, token exchange and the admin API need `POST`/`PATCH`/`DELETE`. The origin
   allowlist was not touched and must stay locked down.
