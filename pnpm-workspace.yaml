@@ -16,6 +16,7 @@ catalog:
   '@hono/standard-validator': ^0.3.0
   '@valibot/to-json-schema': ^1.7.1
   '@vitest/coverage-istanbul': ^4.1.10
+  '@cloudflare/workers-types': ^5.20260730.1
 
 allowBuilds:
   esbuild: true

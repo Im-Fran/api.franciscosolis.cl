@@ -29,7 +29,7 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "catalog:",
-    "@cloudflare/workers-types": "^5.20260730.1",
+    "@cloudflare/workers-types": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
     "drizzle-kit": "catalog:",
     "typescript": "catalog:",
