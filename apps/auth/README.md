@@ -168,6 +168,54 @@ at `http://localhost:8787/auth/*`.
 
 ---
 
+## 🧩 Client applications
+
+Every sign-in starts from a registered client application: its `client_id` is what
+`/oauth/authorize` is called with, and its redirect URIs are compared by exact string match. The
+migrations register `franciscosolis-web` and `franciscosolis-cms`; everything else is registered
+either through the admin API or from the CLI, which writes straight to D1 and so needs no access
+token — which is what makes it usable before anyone can sign in.
+
+```bash
+cd apps/auth
+pnpm run applications -- list             # local dev database
+pnpm run applications -- list --remote    # the real franciscosolis_auth database
+```
+
+| Command | What it does |
+|---------|--------------|
+| `list` | Every registered client, with its type, status and redirect URI count |
+| `show <client-id>` | One client in full |
+| `create [<client-id>]` | Registers a client; prompts for whatever is not passed as a flag |
+| `update <client-id>` | Name, description, redirect URIs, active status, or drops the secret |
+| `rotate-secret <client-id>` | Issues a new client secret |
+| `delete <client-id>` | Removes a client and everything keyed to it |
+
+```bash
+# A browser app: public client, PKCE only.
+pnpm run applications -- create franciscosolis-web \
+  --name "franciscosolis.cl" \
+  --redirect-uri https://franciscosolis.cl/auth/callback \
+  --redirect-uri http://localhost:5173/auth/callback
+
+# A backend that can keep a secret.
+pnpm run applications -- create my-backend --name "My backend" \
+  --redirect-uri https://my-backend.test/auth/callback --confidential
+
+# Add a redirect URI without restating the existing ones.
+pnpm run applications -- update franciscosolis-cms --add-redirect-uri http://localhost:5174/auth/callback
+
+# Stop new sign-ins; tokens already issued keep working until they expire.
+pnpm run applications -- update my-backend --deactivate --remote
+```
+
+A client secret is printed **once**, at creation and on rotation — only its SHA-256 hash is stored,
+exactly as with the admin API, so it cannot be read back afterwards. Add `--json` for scriptable
+output, `--dry-run` to see the SQL without running it, and `-y` to skip confirmations. Every write
+lands in `audit_logs` tagged `{"source":"cli"}`.
+
+---
+
 ## 🔑 Sign-in flow
 
 Both providers produce the same result: a one-time `code` on the client's redirect URI.

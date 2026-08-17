@@ -16,7 +16,8 @@
     "db:migrate:local": "wrangler d1 migrations apply franciscosolis_auth --local",
     "db:migrate:remote": "wrangler d1 migrations apply franciscosolis_auth --remote",
     "keys:generate": "node scripts/generate-keys.mjs",
-    "admin:bootstrap": "node scripts/bootstrap-admin.mjs"
+    "admin:bootstrap": "node scripts/bootstrap-admin.mjs",
+    "applications": "node scripts/configure-applications.mjs"
   },
   "dependencies": {
     "@hono/standard-validator": "catalog:",

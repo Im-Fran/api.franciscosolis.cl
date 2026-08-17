@@ -29,6 +29,10 @@ type AuditEvent =
   | 'invitation.accepted'
   | 'application.created'
   | 'application.updated'
+  // Only `scripts/configure-applications.mjs` writes these two: the admin API deliberately has no
+  // route that deletes a client or reads a secret back, so both are operator-only actions.
+  | 'application.secret_rotated'
+  | 'application.deleted'
   | 'role.granted'
   | 'role.revoked'
 

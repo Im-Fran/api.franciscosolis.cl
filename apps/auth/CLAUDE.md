@@ -36,6 +36,8 @@ offline against its JWKS.
 - `pnpm run db:migrate:local` / `pnpm run db:migrate:remote` → apply migrations with Wrangler.
 - `pnpm run keys:generate` → prints a fresh Ed25519 keypair for `JWT_PRIVATE_KEY`.
 - `pnpm run admin:bootstrap [-- --remote]` → asks for an address and seeds the first admin.
+- `pnpm run applications -- <list|show|create|update|rotate-secret|delete> [--remote]` → configures
+  client applications straight in D1; `-- --help` prints the full flag list.
 
 ## Environment
 
@@ -97,6 +99,13 @@ offline against its JWKS.
   not make it leak which addresses exist. The first admin is not a special case in the code:
   `scripts/bootstrap-admin.mjs` writes an ordinary invitation carrying the `admin` role
   straight into D1, so the sign-up path stays single. Do not reintroduce an env-var allowlist.
+- **Client applications are configurable without a token**: `scripts/configure-applications.mjs`
+  writes to D1 through Wrangler, because the admin API needs `applications:write`, which nobody has
+  until a client exists to sign in through. It mirrors the admin routes deliberately — same
+  validation, same base64url secret hashed with SHA-256, same audit events — and additionally
+  covers secret rotation and deletion, which the API intentionally does not expose
+  (`application.secret_rotated` and `application.deleted` in `AuditEvent` exist only for it). Values
+  are interpolated into SQL, so anything with control characters is refused rather than escaped.
 - **The seed migration is hand-written and idempotent**: `0001_seed.sql` is not in drizzle's
   `meta/_journal.json` because it contains no DDL. Adding DDL there would desynchronise the
   drizzle snapshot — put schema changes in a generated migration instead.
