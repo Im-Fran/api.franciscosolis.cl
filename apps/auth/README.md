@@ -2,7 +2,7 @@
 
 # 🔐 auth — Centralized Authentication
 
-**Internal Cloudflare Worker behind `api.franciscosolis.cl/auth`: OAuth 2.0 authorization code flow with PKCE, magic link and Google sign-in, roles and permissions on D1.**
+**Internal Cloudflare Worker behind `api.franciscosolis.cl/auth`: a complete OAuth 2.0 + OpenID Connect provider — authorization code with PKCE, rotatable client secrets, magic link and Google sign-in, roles and permissions on D1.**
 
 [![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)](https://github.com/Im-Fran/api.franciscosolis.cl/blob/dev/LICENSE)
 
@@ -23,6 +23,12 @@ with Cloudflare Email Sending, and **Google OAuth 2.0** — and both converge on
 afterwards. The result is an **EdDSA-signed JWT access token** that any Worker or backend can
 verify offline against `/.well-known/jwks.json`, plus a rotating refresh token stored in D1.
 
+It is also a full **OpenID Connect provider**: one authorization endpoint, an `id_token`, a
+UserInfo endpoint and a discovery document, which is what lets an off-the-shelf relying party —
+another application of ours on its own domain, or **Cloudflare Access** — point at it and work
+without anything being written for it specially. Confidential clients authenticate with a
+**client secret** that can be rotated with a grace period, so a rotation never means downtime.
+
 Accounts, identities, applications, roles, permissions, invitations, sessions and an audit trail
 all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle ORM**.
 
@@ -30,6 +36,24 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
 
 ## ✨ Features
 
+- **One authorization endpoint** — `GET /oauth/authorize` validates and parks the request, then
+  puts the user in front of a sign-in screen; whichever provider they choose resumes that same
+  request. The screen is the Worker's own minimal page unless `AUTH_LOGIN_URL` points at a
+  front-end, which drives exactly the same endpoints.
+- **OpenID Connect** — `id_token` with `nonce`, `at_hash`, `auth_time`, `sid` and `groups`, a
+  UserInfo endpoint, token introspection, RP-initiated logout and a discovery document published
+  at both `/.well-known/openid-configuration` and `/.well-known/oauth-authorization-server`.
+- **Client secrets with overlapping rotation** — a confidential client can hold several secrets at
+  once. Rotating issues a new one and gives the outgoing ones a deadline instead of cutting them
+  off, so a deployment has a window to pick the new value up; `grace_seconds: 0` ends them at once,
+  which is what a leak calls for. Only the SHA-256 hash is ever stored, and `last_used_at` says
+  whether an old secret is still being presented by anything.
+- **Per-client policy** — authentication method (`none`, `client_secret_post`,
+  `client_secret_basic`), allowed grants, allowed scopes, post-logout redirect URIs, extra CORS
+  origins, and whether PKCE is required. PKCE can only be waived for a confidential client.
+- **Cross-domain by design** — the OAuth endpoints answer CORS from any origin a registered client
+  actually uses, so an application on its own domain needs no gateway change to sign in.
+- **Client credentials grant** — for a backend acting as itself rather than for a person.
 - **Authorization code + PKCE for every provider** — the browser only ever carries a one-time
   `code`; tokens are fetched with a separate `POST /oauth/token` bound to the client's
   `code_verifier`.
@@ -199,10 +223,11 @@ pnpm run applications -- list --remote    # the real franciscosolis_auth databas
 | Command | What it does |
 |---------|--------------|
 | `list` | Every registered client, with its type, status and redirect URI count |
-| `show <client-id>` | One client in full |
+| `show <client-id>` | One client in full, with the metadata of its secrets |
 | `create [<client-id>]` | Registers a client; prompts for whatever is not passed as a flag |
-| `update <client-id>` | Name, description, redirect URIs, active status, or drops the secret |
-| `rotate-secret <client-id>` | Issues a new client secret |
+| `update <client-id>` | Name, description, redirect URIs, policy or active status |
+| `rotate-secret <client-id>` | Issues a new secret and retires the previous ones after a grace period |
+| `revoke-secret <client-id>` | Revokes one secret by id |
 | `delete <client-id>` | Removes a client and everything keyed to it |
 
 ```bash
@@ -216,6 +241,11 @@ pnpm run applications -- create franciscosolis-web \
 pnpm run applications -- create my-backend --name "My backend" \
   --redirect-uri https://my-backend.test/auth/callback --confidential
 
+# A machine-to-machine client, with no user behind it.
+pnpm run applications -- create my-worker --name "My worker" \
+  --redirect-uri https://my-worker.test/unused --confidential \
+  --grant-type client_credentials
+
 # Add a redirect URI without restating the existing ones.
 pnpm run applications -- update franciscosolis-cms --add-redirect-uri http://localhost:5174/auth/callback
 
@@ -223,41 +253,118 @@ pnpm run applications -- update franciscosolis-cms --add-redirect-uri http://loc
 pnpm run applications -- update my-backend --deactivate --remote
 ```
 
+### Rotating a secret
+
+```bash
+# Routine rotation: the current secret keeps working for a week while the new one rolls out.
+pnpm run applications -- rotate-secret my-backend --remote
+
+# One day instead.
+pnpm run applications -- rotate-secret my-backend --grace 86400 --remote
+
+# A leak: the old secret stops authenticating immediately.
+pnpm run applications -- rotate-secret my-backend --grace 0 --remote
+
+# Which secrets exist, and whether the old one is still being used by anything.
+pnpm run applications -- show my-backend --remote
+```
+
 A client secret is printed **once**, at creation and on rotation — only its SHA-256 hash is stored,
-exactly as with the admin API, so it cannot be read back afterwards. Add `--json` for scriptable
-output, `--dry-run` to see the SQL without running it, and `-y` to skip confirmations. Every write
-lands in `audit_logs` tagged `{"source":"cli"}`.
+exactly as with the admin API, so it cannot be read back afterwards. `show` lists a six-character
+hint and `last_used_at` per secret, which is how you tell whether it is safe to revoke one early.
+Add `--json` for scriptable output, `--dry-run` to see the SQL without running it, and `-y` to skip
+confirmations. Every write lands in `audit_logs` tagged `{"source":"cli"}`.
+
+The same is available over HTTP for anyone holding `applications:write`:
+`GET`/`POST /admin/applications/:id/secrets` and
+`DELETE /admin/applications/:id/secrets/:secretId`.
 
 ---
 
 ## 🔑 Sign-in flow
 
-Both providers produce the same result: a one-time `code` on the client's redirect URI.
+The general entry point is one endpoint. It parks the request, lets the user pick a provider, and
+whichever one they choose ends on the same one-time `code` at the client's redirect URI.
 
 ```
-1. Client generates code_verifier + code_challenge (S256) and a state.
+1. Client generates code_verifier + code_challenge (S256), a state and a nonce.
 
-2a. Magic link                              2b. Google
-    POST /auth/magic-link                       GET /auth/oauth/google/authorize
-      { email, client_id, redirect_uri,           ?client_id&redirect_uri&state
-        state, code_challenge }                    &code_challenge
-    → 202, link emailed                         → 302 to Google
-    user clicks the link                        user approves
-    GET /auth/magic-link/callback?token=…       GET /auth/oauth/google/callback?code&state
+2. GET /auth/oauth/authorize
+     ?response_type=code&client_id&redirect_uri&scope=openid%20profile%20email
+      &state&nonce&code_challenge&code_challenge_method=S256
+   → the sign-in screen (or 302 to AUTH_LOGIN_URL?request=<handle>)
 
-3. → 302 <redirect_uri>?code=…&state=…
+3a. Magic link                              3b. Google
+    POST /auth/oauth/authorize/<handle>         GET /auth/oauth/authorize/<handle>/google
+         /magic-link  { email }                 → 302 to Google, user approves
+    → link emailed, user clicks it              GET /auth/oauth/google/callback?code&state
+    GET /auth/magic-link/callback?token=…
 
-4. POST /auth/oauth/token   (application/x-www-form-urlencoded)
+4. → 302 <redirect_uri>?code=…&state=…
+
+5. POST /auth/oauth/token   (application/x-www-form-urlencoded)
      grant_type=authorization_code
      client_id, code, redirect_uri, code_verifier
-   → { access_token, token_type, expires_in, refresh_token, scope, session_id }
+     (+ client_secret, or an HTTP Basic header, for a confidential client)
+   → { access_token, token_type, expires_in, refresh_token, id_token, scope, session_id }
 
-5. Authenticated requests: Authorization: Bearer <access_token>
+6. Authenticated requests: Authorization: Bearer <access_token>
+   Claims:   GET /auth/oauth/userinfo
    Refresh:  grant_type=refresh_token&client_id=…&refresh_token=…
+   Sign out: GET /auth/oauth/logout?id_token_hint=…&post_logout_redirect_uri=…
 ```
 
-Access tokens live 15 minutes, refresh tokens 30 days and rotate on every use. Authorization
-codes live 2 minutes, magic links 15 minutes.
+`id_token` is issued whenever the granted scope contains `openid`. A client that wants to skip the
+provider chooser can pass `provider=google`, or keep calling `POST /auth/magic-link` and
+`GET /auth/oauth/google/authorize` directly — both still take the same parameters and still work.
+
+Access tokens and ID tokens live 15 minutes, refresh tokens 30 days and rotate on every use.
+Authorization codes live 2 minutes, magic links 15 minutes, a parked authorization request 30.
+
+---
+
+## 🌍 Another application, on another domain
+
+Nothing about the gateway has to change to sign in from a different domain. Register the client
+with its redirect URI, and the OAuth endpoints will answer cross-origin requests from that origin —
+the allowlist is the set of origins registered clients actually use, not a list kept in the
+gateway's source (see `ownsCors` in `apps/api/src/services.ts`).
+
+```bash
+pnpm run applications -- create my-app --name "My app" \
+  --redirect-uri https://my-app.example/auth/callback --remote
+# → the browser at https://my-app.example may now call /auth/oauth/token and /auth/oauth/userinfo
+```
+
+Add `--allowed-origin https://console.my-app.example` for an origin that has no redirect URI of its
+own, such as a dashboard calling the API from a different subdomain.
+
+### Cloudflare Access as a relying party
+
+Cloudflare Access speaks generic OIDC and does not implement PKCE, which is what
+`--no-pkce` exists for. It is only sound because the client authenticates with a secret instead.
+
+```bash
+pnpm run applications -- create cloudflare-access --name "Cloudflare Access" \
+  --redirect-uri https://<your-team>.cloudflareaccess.com/cdn-cgi/access/callback \
+  --auth-method client_secret_post --no-pkce \
+  --scope openid --scope email --scope profile --scope groups \
+  --remote
+```
+
+Then, in the Cloudflare dashboard, add a generic OIDC identity provider with the printed
+`client_id` and `client_secret` and these endpoints:
+
+| Field | Value |
+|-------|-------|
+| Auth URL | `https://api.franciscosolis.cl/auth/oauth/authorize` |
+| Token URL | `https://api.franciscosolis.cl/auth/oauth/token` |
+| Certificate URL | `https://api.franciscosolis.cl/auth/.well-known/jwks.json` |
+| Claims | `groups` (role slugs), `email`, `name` |
+
+Group rules read the `groups` claim, which carries this service's role slugs, so an Access policy
+can be written against a role granted here. Note that sign-up stays invitation-only: an address
+Access sends over that has no account and no pending invitation is refused, deliberately.
 
 ---
 
@@ -272,18 +379,26 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `GET` | `/` | Service status and the available providers |
 | `GET` | `/.well-known/jwks.json` | Public keys for offline access token verification |
 | `GET` | `/.well-known/oauth-authorization-server` | RFC 8414 metadata |
+| `GET` | `/.well-known/openid-configuration` | The same document, under its OpenID Connect name |
 | `GET` | `/openapi.json` | OpenAPI 3 document |
 
 ### Sign-in
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/magic-link` | Request a magic link (always 202) |
+| `GET` | `/oauth/authorize` | The authorization endpoint: parks the request, shows the sign-in screen |
+| `GET` | `/oauth/authorize/:handle` | Describes a parked request, for a custom sign-in front-end |
+| `POST` | `/oauth/authorize/:handle/magic-link` | Continue a parked request by email |
+| `GET` | `/oauth/authorize/:handle/google` | Continue a parked request through Google |
+| `POST` | `/magic-link` | Request a magic link directly (always 202) |
 | `GET` | `/magic-link/callback` | Consume the link, redirect with an authorization code |
-| `GET` | `/oauth/google/authorize` | Start the Google flow |
+| `GET` | `/oauth/google/authorize` | Start the Google flow directly |
 | `GET` | `/oauth/google/callback` | Google's redirect target |
-| `POST` | `/oauth/token` | Exchange a code, or rotate a refresh token |
-| `POST` | `/oauth/revoke` | Revoke a refresh token and its session |
+| `POST` | `/oauth/token` | Exchange a code, rotate a refresh token, or issue a client token |
+| `POST` | `/oauth/revoke` | Revoke an access or refresh token, and the session behind it |
+| `POST` | `/oauth/introspect` | RFC 7662 introspection of the calling client's own tokens |
+| `GET` `POST` | `/oauth/userinfo` | OIDC claims about the bearer of an access token |
+| `GET` `POST` | `/oauth/logout` | RP-initiated logout |
 
 ### Authenticated (`Authorization: Bearer …`)
 
@@ -310,6 +425,9 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `DELETE` | `/admin/invitations/:id` | `invitations:write` |
 | `GET` `POST` | `/admin/applications` | `applications:read` / `applications:write` |
 | `PATCH` | `/admin/applications/:id` | `applications:write` |
+| `GET` | `/admin/applications/:id/secrets` | `applications:read` |
+| `POST` | `/admin/applications/:id/secrets` | `applications:write` |
+| `DELETE` | `/admin/applications/:id/secrets/:secretId` | `applications:write` |
 | `GET` `POST` | `/admin/roles` | `roles:read` / `roles:write` |
 | `GET` | `/admin/permissions` | `roles:read` |
 | `POST` | `/admin/roles/:id/permissions` | `roles:write` |
@@ -325,7 +443,9 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 |-------|---------|
 | `users` | One row per person, keyed by email |
 | `identities` | Provider accounts linked to a user (`magic_link`, `google`) |
-| `applications` | Registered OAuth clients and their exact-match redirect URIs |
+| `applications` | Registered OAuth clients: redirect URIs, authentication method, grants, scopes |
+| `application_secrets` | Client secrets, hashed; several may be alive at once during a rotation |
+| `authorization_requests` | Requests parked at `/oauth/authorize` while the user authenticates |
 | `roles` / `permissions` / `role_permissions` / `user_roles` | Authorization model |
 | `invitations` | Allowlist controlling who may sign up |
 | `magic_link_tokens` | Pending magic links with their captured authorization request |

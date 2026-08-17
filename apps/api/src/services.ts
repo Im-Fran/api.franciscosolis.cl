@@ -21,6 +21,13 @@ type ForwardingPolicy = {
    * instead of being followed inside the Worker.
    */
   redirect?: RequestInit['redirect']
+  /**
+   * Set when the module answers cross-origin requests itself, which makes the gateway leave its
+   * CORS headers alone. Only worth it for a module whose set of allowed origins is not knowable
+   * here — `auth` is the case: its clients live on their own domains and are registered in its
+   * database, so the gateway's fixed allowlist cannot describe them.
+   */
+  ownsCors?: boolean
 }
 
 /** An internal Worker mounted under `/<name>/*` and merged into the combined OpenAPI document. */
@@ -55,6 +62,9 @@ const SERVICE_MODULES = [
     // `redirect: 'manual'` keeps the 302 that carries an authorization code from being followed
     // inside the Worker instead of reaching the browser.
     redirect: 'manual',
+    // Sign-in happens from whatever domain a registered client application lives on, which this
+    // gateway cannot enumerate. The auth Worker answers CORS from its own list of clients instead.
+    ownsCors: true,
   },
   {
     name: 'cms',
@@ -76,5 +86,10 @@ type ServiceBinding = RegisteredModule['binding']
 /** Module names, in registry order — the `modules` list `GET /` advertises. */
 const SERVICE_MODULE_NAMES = SERVICE_MODULES.map(({ name }) => name)
 
-export { SERVICE_MODULES, SERVICE_MODULE_NAMES }
+/** Path prefixes the gateway's own CORS middleware must not touch. */
+const CORS_DELEGATED_PREFIXES = SERVICE_MODULES.filter((module) => 'ownsCors' in module && module.ownsCors).map(
+  ({ name }) => `/${name}/`,
+)
+
+export { CORS_DELEGATED_PREFIXES, SERVICE_MODULES, SERVICE_MODULE_NAMES }
 export type { RegisteredModule, ServiceBinding, ServiceModule }

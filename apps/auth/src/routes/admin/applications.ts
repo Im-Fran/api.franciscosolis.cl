@@ -107,16 +107,22 @@ const createApplicationSchema = v.object({
 })
 
 /**
- * PKCE may only be turned off for a client that authenticates with a secret. For a public client
- * the challenge is the only thing tying the authorization code to whoever asked for it, so an
- * `is_active` flip could otherwise leave an unprotected client behind.
+ * Keeps the one invariant a client cannot be allowed to break: a public client always requires
+ * PKCE, because the challenge is the only thing tying an authorization code to whoever asked for
+ * it. Asking for both at once is refused; turning a client public while it happened to have PKCE
+ * off re-arms PKCE rather than dead-ending the caller, since that is the direction that is safe.
  */
-const assertPkceRule = (authMethod: string, requirePkce: boolean) => {
-  if (!requirePkce && authMethod === 'none') {
+const resolvePkceRule = (authMethod: string, requirePkce: boolean, requestedExplicitly: boolean) => {
+  if (requirePkce || authMethod !== 'none') {
+    return requirePkce
+  }
+  if (requestedExplicitly) {
     throw new HTTPException(400, {
-      message: 'require_pkce can only be turned off for a confidential client — a public client has nothing else binding the code to it',
+      message:
+        'require_pkce can only be turned off for a confidential client — a public client has nothing else binding the code to it',
     })
   }
+  return true
 }
 
 app.post(
@@ -147,8 +153,7 @@ app.post(
 
     const authMethod =
       body.token_endpoint_auth_method ?? (body.confidential ? 'client_secret_post' : 'none')
-    const requirePkce = body.require_pkce ?? true
-    assertPkceRule(authMethod, requirePkce)
+    const requirePkce = resolvePkceRule(authMethod, body.require_pkce ?? true, body.require_pkce === false)
 
     const now = new Date()
     const application: Application = {
@@ -238,8 +243,11 @@ app.patch(
     }
 
     const authMethod = body.token_endpoint_auth_method ?? application.tokenEndpointAuthMethod
-    const requirePkce = body.require_pkce ?? application.requirePkce
-    assertPkceRule(authMethod, requirePkce)
+    const requirePkce = resolvePkceRule(
+      authMethod,
+      body.require_pkce ?? application.requirePkce,
+      body.require_pkce === false,
+    )
 
     const updated: Application = {
       ...application,

@@ -6,11 +6,11 @@ import { describeRoute, generateSpecs, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import { mergeRemoteSpecs } from '@/openapi'
 import { registerServiceProxies, remoteSpecComponents } from '@/proxy'
-import { SERVICE_MODULE_NAMES } from '@/services'
+import { CORS_DELEGATED_PREFIXES, SERVICE_MODULE_NAMES } from '@/services'
 
 const app = new Hono<{ Bindings: Env }>()
 
-app.use('*', cors({
+const gatewayCors = cors({
   origin: (origin) => {
     if (origin?.endsWith('localhost:5173') || origin?.endsWith('franciscosolis.workers.dev') || origin?.endsWith('franciscosolis.cl')) {
       return origin
@@ -24,14 +24,30 @@ app.use('*', cors({
   exposeHeaders: ['Content-Type'],
   maxAge: 600,
   credentials: false,
-}));
+})
+
+// One module answers cross-origin requests itself and is skipped here — see `ownsCors` in
+// src/services.ts. Running both would mean this middleware overwriting the module's decision with
+// the fixed allowlist, which is exactly the answer that module exists to avoid giving.
+app.use('*', async (c, next) => {
+  const { pathname } = new URL(c.req.url)
+  if (CORS_DELEGATED_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return next()
+  }
+  return gatewayCors(c, next)
+});
 
 // ponytail: Hono's c.json() omits charset, which mangles non-ASCII bytes on clients that default to Latin-1
 app.use('*', async (c, next) => {
   await next()
-  if (c.res.headers.get('Content-Type') === 'application/json') {
-    c.res.headers.set('Content-Type', 'application/json; charset=UTF-8')
+  if (c.res.headers.get('Content-Type') !== 'application/json') {
+    return
   }
+  // A Response that came back from a service binding carries immutable headers, so it has to be
+  // rebuilt rather than edited in place — writing to it directly is silently dropped.
+  const response = new Response(c.res.body, c.res)
+  response.headers.set('Content-Type', 'application/json; charset=UTF-8')
+  c.res = response
 })
 
 app.onError((err, c) => {

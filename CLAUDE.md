@@ -15,9 +15,10 @@ together four Cloudflare Workers, all living directly in this repo:
 - `apps/api` — public gateway Worker, deployed to `api.franciscosolis.cl`.
 - `apps/landing` — internal Worker with the landing page's GitHub stats, only reachable
   from `apps/api` via a Cloudflare service binding, never public directly.
-- `apps/auth` — internal Worker with centralized authentication (OAuth 2.0 authorization
-  code + PKCE, magic link and Google providers, D1-backed users/roles/permissions), also
-  reachable only through `apps/api`, at `/auth/*`.
+- `apps/auth` — internal Worker with centralized authentication: a full OAuth 2.0 + OpenID
+  Connect provider (authorization code + PKCE, rotatable client secrets, magic link and Google
+  providers, D1-backed users/roles/permissions), also reachable only through `apps/api`, at
+  `/auth/*`.
 - `apps/cms` — internal Worker with the CMS behind the landing page (content collections,
   legal pages, outgoing email), reachable through `apps/api` at `/cms/*`. Public reads of
   published content, editorial writes gated to `@franciscosolis.cl` accounts.
@@ -136,7 +137,9 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   `apps/cms` owns `franciscosolis_cms`; both use Drizzle and Wrangler-applied migrations.
   `auth` issues EdDSA-signed JWTs that any other Worker can verify offline against
   `https://api.franciscosolis.cl/auth/.well-known/jwks.json` — never add a service binding
-  back into `auth` just to validate a token. `apps/cms` is the reference for how to consume
+  back into `auth` just to validate a token. It is also an OpenID Connect provider, so an
+  off-the-shelf relying party (Cloudflare Access included) can be pointed at
+  `/auth/.well-known/openid-configuration` and needs nothing written for it. `apps/cms` is the reference for how to consume
   them (`src/lib/jwks.ts`).
 - **The CMS content model is a registry, not a table per type**: every collection lives in
   one `content_entries` table discriminated by `collection`, with collection-specific fields
@@ -151,7 +154,10 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   for an option neither uses. See `packages/emails/CLAUDE.md`.
 - **The gateway's CORS allows write verbs because of auth**: `apps/api` used to allow `GET`
   only; sign-in, token exchange and the admin API need `POST`/`PATCH`/`DELETE`. The origin
-  allowlist was not touched and must stay locked down.
+  allowlist was not touched and must stay locked down — but `/auth/*` is now excluded from it
+  entirely (`ownsCors` in `apps/api/src/services.ts`), because `apps/auth` signs in applications
+  on domains the gateway cannot enumerate and answers CORS from its own list of registered
+  clients instead.
 - This repo uses `dev` as its default/main branch — never target `main`/`master`.
 - `apps/landing/.dev.vars` holds the `GH_TOKEN` secret for local dev, and
   `apps/auth/.dev.vars` holds `JWT_PRIVATE_KEY` and the Google OAuth client. Neither must
