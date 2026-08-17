@@ -31,11 +31,11 @@ const rootResponseSchema = v.object({
 app.get(
   '/',
   describeRoute({
-    description: 'Estado del sitio landing',
+    description: 'Landing site status',
     tags: ['General'],
     responses: {
       200: {
-        description: 'El sitio landing está operativo',
+        description: 'The landing site is operational',
         content: {
           'application/json': { schema: resolver(rootResponseSchema) },
         },
@@ -59,7 +59,7 @@ app.get(
       info: {
         title: 'FranciscoSolis - Landing API',
         version: '1.0.0',
-        description: 'Internal API detrás del sitio landing de franciscosolis.cl: estadísticas de GitHub y metadata del sitio.',
+        description: 'Internal API behind the franciscosolis.cl landing site: GitHub stats and site metadata.',
       },
     },
   })

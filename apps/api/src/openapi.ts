@@ -3,15 +3,16 @@ import type { generateSpecs } from 'hono-openapi'
 type Spec = Awaited<ReturnType<typeof generateSpecs>>
 type RemoteSpec = { paths?: Record<string, unknown>; components?: Record<string, unknown> }
 
-/** Un componente interno cuyo spec OpenAPI se monta bajo `prefix`. */
+/** An internal component whose OpenAPI spec is mounted under `prefix`. */
 type RemoteComponent = {
   prefix: string
   fetchSpec: () => Promise<Response>
 }
 
 /**
- * Fusiona el spec OpenAPI de componentes internos (Workers vía service binding) dentro de `spec`,
- * montando sus rutas bajo el `prefix` dado. Un componente caído no rompe el resto del spec.
+ * Merges the OpenAPI spec of internal components (Workers reached over a service binding) into
+ * `spec`, mounting their routes under the given `prefix`. A component that is down does not break
+ * the rest of the spec.
  */
 const mergeRemoteSpecs = async (spec: Spec, components: RemoteComponent[]) => {
   await Promise.all(components.map(async ({ prefix, fetchSpec }) => {
@@ -25,7 +26,7 @@ const mergeRemoteSpecs = async (spec: Spec, components: RemoteComponent[]) => {
       }
       Object.assign(spec.components, remote.components)
     } catch {
-      // Componente no disponible; se omite del spec combinado.
+      // Component unavailable; it is skipped in the combined spec.
     }
   }))
 }

@@ -32,8 +32,11 @@ lerna-debug.log*
 # misc
 .DS_Store
 
-# Claude
-.claude
+# Claude — the shared config is committed, personal overrides and caches are not
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/settings.local.json
 docs/superpowers
 .superpowers
 

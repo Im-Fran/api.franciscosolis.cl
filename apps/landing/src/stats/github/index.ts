@@ -44,11 +44,11 @@ const starsResponseSchema = v.object({
 app.get(
     '/',
     describeRoute({
-        description: 'Listado de endpoints de estadísticas de GitHub disponibles',
+        description: 'List of available GitHub stats endpoints',
         tags: ['GitHub'],
         responses: {
             200: {
-                description: 'La GitHub Stats API está operativa',
+                description: 'The GitHub Stats API is operational',
                 content: { 'application/json': { schema: resolver(indexResponseSchema) } },
             },
         },
@@ -65,11 +65,11 @@ app.get(
 app.get(
     '/commits',
     describeRoute({
-        description: 'Cantidad total de commits del usuario en GitHub',
+        description: 'Total number of commits by the user on GitHub',
         tags: ['GitHub'],
         responses: {
             200: {
-                description: 'Cantidad de commits',
+                description: 'Commit count',
                 content: { 'application/json': { schema: resolver(commitsResponseSchema) } },
             },
         },
@@ -86,11 +86,11 @@ app.get(
 app.get(
     '/profile',
     describeRoute({
-        description: 'Perfil público de GitHub del usuario',
+        description: "The user's public GitHub profile",
         tags: ['GitHub'],
         responses: {
             200: {
-                description: 'Datos del perfil de GitHub',
+                description: 'GitHub profile data',
                 content: { 'application/json': { schema: resolver(profileResponseSchema) } },
             },
         },
@@ -107,11 +107,11 @@ app.get(
 app.get(
     '/stars',
     describeRoute({
-        description: 'Cantidad total de estrellas obtenidas en los repositorios propios',
+        description: 'Total number of stars earned across the owned repositories',
         tags: ['GitHub'],
         responses: {
             200: {
-                description: 'Cantidad de estrellas',
+                description: 'Star count',
                 content: { 'application/json': { schema: resolver(starsResponseSchema) } },
             },
         },

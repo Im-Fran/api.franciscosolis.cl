@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/version-bump.mjs\" bump",
+            "timeout": 30,
+            "statusMessage": "Checking app versions"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/version-bump.mjs\" commit",
+            "timeout": 30,
+            "statusMessage": "Staging app version bumps"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|mcp__github__create_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/version-bump.mjs\" verify",
+            "timeout": 30,
+            "statusMessage": "Verifying app version bumps"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(pnpm run typecheck)",
+      "Bash(pnpm run test)",
+      "Bash(pnpm run test:coverage)",
+      "Bash(pnpm run build)",
+      "Bash(pnpm --filter * run typecheck)",
+      "Bash(pnpm --filter * run test)",
+      "Bash(pnpm --filter * run build)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)"
+    ],
+    "deny": [
+      "Read(./apps/*/.dev.vars)",
+      "Edit(./apps/*/.dev.vars)"
+    ]
+  }
+}
