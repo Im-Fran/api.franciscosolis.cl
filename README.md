@@ -55,6 +55,9 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   `packages/emails`, rendered to an HTML + plain-text pair at send time. Values are escaped by
   construction, the text alternative is derived from the HTML so the two cannot drift, and the
   whole set is previewable in a browser with `pnpm --filter @franciscosolis/emails run preview`.
+  The layout carries the FranciscoSolis identity — gradient rule, horizontal lockup, iris accent
+  — on a light palette chosen for how mail clients rewrite colours, not for taste; `apps/api`
+  serves the logo at `/brand/lockup.png` because an email cannot embed one.
 - **Merged OpenAPI spec** — `mergeRemoteSpecs` (`apps/api/src/openapi.ts`) fetches each
   internal Worker's `/openapi.json` and merges it into the root spec under its route prefix;
   an unreachable module is silently skipped instead of breaking the whole document.

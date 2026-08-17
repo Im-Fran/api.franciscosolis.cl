@@ -58,6 +58,63 @@ describe('magicLinkTemplate', () => {
   })
 })
 
+/**
+ * These pin the decisions in `packages/emails/src/theme.ts` from the consumer side, because that
+ * package has no suite of its own — rendering has to be exercised inside `workerd`, and this is
+ * where that happens. They are about the shape of the document, not about taste: each one is a way
+ * an email has actually arrived unreadable in a real client.
+ */
+describe('branding and legibility', () => {
+  let html: string
+
+  beforeAll(async () => {
+    html = (await magicLinkTemplate({
+      url: 'https://api.test/cb',
+      applicationName: 'App',
+      expiresInMinutes: 15,
+    })).html
+  })
+
+  it('declares a light colour scheme, so Apple Mail and iOS do not invert it', () => {
+    expect(html).toContain('name="color-scheme" content="light"')
+    expect(html).toContain('name="supported-color-schemes" content="light"')
+  })
+
+  it('carries the brand lockup from a public URL, with the wordmark as its alt text', () => {
+    // A `data:` URI would be blocked by Gmail and inline SVG stripped, so the logo has to be an
+    // ordinary hosted image — served by `apps/api` at this exact path.
+    expect(html).toContain('src="https://api.franciscosolis.cl/brand/lockup.png"')
+    expect(html).toContain('alt="FranciscoSolis"')
+  })
+
+  it('paints its surfaces with a bgcolor attribute as well as an inline style', () => {
+    // Outlook's Word engine and several webmail sanitisers honour the attribute and not the
+    // property. A card that only declares one of the two is a card that can lose its background.
+    expect(html).toContain('bgcolor="#ffffff"')
+    expect(html).toContain('background-color:#ffffff')
+  })
+
+  it('keeps body copy at ink rather than a grey that dies on a repainted background', () => {
+    // The palette used to be dark, with `#a1a1aa` body text: 2.4:1 the moment a client forces the
+    // card back to white, which is exactly what Outlook.com does.
+    expect(html).toContain('color:#1e1e1e')
+    expect(html).not.toContain('#a1a1aa')
+    expect(html).not.toContain('#15151c')
+  })
+
+  it('gives the gradient rule a flat fallback, since Outlook drops background images', () => {
+    expect(html).toContain('background-color:#75549c;background-image:linear-gradient(45deg')
+  })
+
+  it('keeps the decorative rule out of the plain-text part', async () => {
+    // The rule is a non-breaking space in a table cell. Left alone it opens every plain-text
+    // alternative with a run of blank lines.
+    const { text } = await magicLinkTemplate({ url: 'https://api.test/cb', applicationName: 'App', expiresInMinutes: 15 })
+
+    expect(text.startsWith('Sign in to App')).toBe(true)
+  })
+})
+
 describe('invitationTemplate', () => {
   it('names the inviter when one is known', async () => {
     const template = await invitationTemplate({
@@ -116,8 +173,12 @@ describe('HTML escaping', () => {
       expiresInDays: 7,
     })
 
-    expect(template.html).not.toContain('<img')
-    expect(template.html).toContain('&quot;&gt;&lt;img')
+    // Not a bare `not.toContain('<img')`: the layout carries a legitimate one, the brand lockup.
+    // What must not survive is the attacker's tag, so the angle brackets are what get asserted on —
+    // `onerror=alert(1)` itself is expected to be present, inert, inside the escaped text.
+    expect(template.html).not.toContain('<img src=x')
+    expect(template.html).not.toContain('alert(1)>')
+    expect(template.html).toContain('&quot;&gt;&lt;img src=x onerror=alert(1)&gt;')
   })
 
   it('escapes the ampersands inside the link itself', async () => {

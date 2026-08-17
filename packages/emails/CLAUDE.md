@@ -29,11 +29,14 @@ package. That is deliberate on all four counts — see below.
 ## Source layout
 
 - `src/index.ts` — the public API. Anything a Worker imports has to be re-exported here.
-- `src/theme.ts` — colours, font stack, widths. The only place a hex code belongs.
+- `src/theme.ts` — `palette` (the brand's published colours) and `theme` (what the components
+  actually reference). The only place a hex code belongs.
 - `src/render.ts` — `renderEmail`, the primitive every template's wrapper calls.
 - `src/components/` — `email-layout.tsx` (the shell), `action-link.tsx`, `paragraph.tsx`.
 - `src/templates/` — one file per email. Also the directory the preview server reads.
 - `src/prettier-stub.ts` — not a template; see the bundle note below.
+- `assets/lockup.png` — the logo the layout points at. The bytes that actually get served live in
+  `apps/api/src/brand.ts`; this is the source they were encoded from.
 
 ## Architecture notes (non-obvious)
 
@@ -68,3 +71,30 @@ package. That is deliberate on all four counts — see below.
 - **`PreviewProps` and the default export are load-bearing**, not decoration: the preview
   server enumerates `src/templates/` and needs both. A template without them silently
   disappears from the preview.
+- **The palette is light-first, and that is a compatibility decision, not a taste one.** It used to
+  be a dark card with `#a1a1aa` body copy. Outlook.com and Gmail's web client rewrite colours they
+  read as a theme — they force the surface back to white and leave the text grey, which lands at
+  about 2.4:1. A light design gives them nothing to fix. Four things hold that up and none of them
+  are decoration: the `color-scheme`/`supported-color-schemes` metas in `<Head>` (Apple Mail and iOS
+  auto-invert without them), a `bgcolor` attribute beside every `background-color` (the attribute is
+  what Outlook's Word engine honours), the page background painted by a wrapper `<Section>` rather
+  than only `<body>` (Gmail drops `<body>` and keeps its children), and the flat `iris-500` under
+  the gradient rule (Outlook ignores `background-image`). Removing any one of them reintroduces a
+  specific broken client. `theme.ts` carries the contrast table.
+- **There must be no `<style>` block.** `apps/auth`'s suite asserts it, and the reason it asserts it
+  is that the whole design has to survive a sanitiser that keeps only inline attributes. This is
+  what rules out `@media (prefers-color-scheme: dark)` and is why the palette is light-first instead
+  of adaptive. It is also why `PLAIN_TEXT_SKIP_CLASS` is a class name — a class attribute costs
+  nothing in a mail client and is the one hook html-to-text can select on.
+- **The logo is a hosted PNG, and every property of it is forced.** Gmail strips inline SVG and
+  blocks `data:` URIs, so it cannot be embedded; `apps/api` serves it at `/brand/lockup.png` because
+  that Worker owns the only public hostname in the repo. It is flattened onto white rather than
+  transparent because a client that darkens the card does not darken image pixels — a transparent
+  lockup loses the ink-coloured "Solis". Its `alt` is the wordmark, but that does *not* reach the
+  plain-text part (`toPlainText` skips images), which is why the footer also names the brand in
+  words. Changing the asset means re-encoding `apps/api/src/brand.ts`; see `README.md`.
+- **`ContentEmail`'s editor HTML keeps its own link styling.** Anchors inside the injected body come
+  out in the client's default blue rather than `iris-500`, because reaching them would mean either a
+  `<style>` block or rewriting the editor's markup, and both are ruled out above. Default link blue
+  clears AA on white, so this is a known, bounded cosmetic gap — not something to fix by parsing the
+  fragment.
