@@ -87,6 +87,28 @@ suite with coverage, and does a credential-free `wrangler deploy --dry-run`. An 
 job is the single status branch protection should require. When adding an app, add it to the
 `matrix.app` list.
 
+## Versioning
+
+Every app carries its own `version` in `apps/<app>/package.json`, following MAJOR.MINOR.PATCH.
+That string identifies the bundle Wrangler deploys, so an app that changed on a branch must never
+ship under the same version as the branch it forked from.
+
+`.claude/hooks/version-bump.mjs` automates this, wired up in `.claude/settings.json`:
+
+- `bump` runs after every file edit and bumps each app that changed since `origin/dev`.
+- `commit` runs before `git commit` and stages the bumped `package.json` files so the bump travels
+  in that commit.
+- `verify` runs before a pull request is opened and blocks it, listing any app that changed without
+  a bump.
+
+The level comes from the branch's Conventional Commit subjects for that app — `feat!:` or
+`BREAKING CHANGE` → major, `feat:` → minor, anything else → patch. `CLAUDE_VERSION_BUMP` overrides
+it. All modes are idempotent: once a branch carries a bump for an app, later edits only ever *raise*
+the level (patch → minor when a `feat:` lands), never bump again and never downgrade. An app with no
+`package.json` at the base ref is left alone — a new app's version is deliberate.
+
+Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
+
 ## Architecture notes (non-obvious)
 
 - **Service binding, not HTTP**: `apps/api` talks to the internal Workers through Cloudflare
