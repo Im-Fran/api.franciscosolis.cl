@@ -14,7 +14,7 @@
 
 `api` is the root Worker of the [`api.franciscosolis.cl`](https://github.com/Im-Fran/api.franciscosolis.cl) monorepo. It's deployed on the `api.franciscosolis.cl` domain and acts as the **public gateway/entrypoint**: it doesn't implement any business logic of its own beyond a status endpoint, and instead forwards requests to the monorepo's internal Workers through [Cloudflare Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/), merging their OpenAPI specs into a single document.
 
-It's built with [Hono](https://hono.dev/) on [Cloudflare Workers](https://workers.cloudflare.com/), using `wrangler` for both local development and deployment. Three internal components are registered — `landing` (the landing site's Worker, at `apps/landing`), `auth` (centralized authentication, at `apps/auth`) and `cms` (content management, at `apps/cms`) — and the code is designed so that adding a new internal module is a matter of a few lines.
+It's built with [Hono](https://hono.dev/) on [Cloudflare Workers](https://workers.cloudflare.com/), using `wrangler` for both local development and deployment. Three internal components are registered — `landing` (the landing site's Worker, at `apps/landing`), `auth` (centralized authentication, at `apps/auth`) and `cms` (content management, at `apps/cms`) — and they're declared as data in a single registry (`src/services.ts`), so adding a new internal module is one entry in that array rather than new code in the gateway.
 
 ## ✨ Features
 
@@ -104,12 +104,26 @@ The service bindings (`services: [{ binding: "LANDING", service: "landing" }, { 
 
 ## ⚙️ Configuration — Routing to a New Internal Module
 
+Modules are declared as **data**, in the `SERVICE_MODULES` registry of `src/services.ts`. The proxy route, the `modules` list in `GET /`, the OpenAPI merge and the `Env` binding type are all derived from that array, so `src/index.ts` does not grow when a module is added.
+
 To expose a new internal monorepo component behind this gateway:
 
 1. Add the Service Binding in `wrangler.jsonc` (`services: [...]`) pointing to the target Worker's name.
-2. Declare the binding in `src/env.ts` (`type Env`).
-3. Add an `app.all('/<module>/*', ...)` route in `src/index.ts` that forwards to the new binding's `Fetcher`, the same way the `/landing/*` proxy does.
-4. Register the module in `modules` (the `GET /` response) and add its entry to `mergeRemoteSpecs` in `GET /openapi.json` so its OpenAPI spec gets included under the matching prefix.
+2. Add an entry to `SERVICE_MODULES` in `src/services.ts`:
+
+```ts
+{
+  name: 'blog',            // mounts ALL /blog/*, and merges its spec under /blog
+  binding: 'BLOG',         // the binding declared in wrangler.jsonc
+  tag: 'Blog',             // OpenAPI tag for the proxy route
+  description: 'Proxy to the blog Worker',
+  // Optional, both omitted by default:
+  //   forwardHeaders: ['Content-Type', 'Authorization']  → only these headers cross the binding
+  //   redirect: 'manual'                                 → pinned on the forwarded Request
+}
+```
+
+That's it — there's no third step. Omitting `forwardHeaders` forwards the caller's request as it stands (method, headers and body), which is what a module needs when it validates the `Authorization` header itself or records `CF-Connecting-IP`/`User-Agent` in an audit trail. `test/unit/services.test.ts` fails if the entry names a binding that `wrangler.jsonc` doesn't declare.
 
 There are no environment variables (`.env`) in this app: all infrastructure configuration lives in `wrangler.jsonc` (bindings, domain, observability) and is resolved at deploy time by Cloudflare.
 

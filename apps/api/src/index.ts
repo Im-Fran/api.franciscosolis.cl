@@ -5,6 +5,8 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, generateSpecs, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import { mergeRemoteSpecs } from '@/openapi'
+import { registerServiceProxies, remoteSpecComponents } from '@/proxy'
+import { SERVICE_MODULE_NAMES } from '@/services'
 
 const app = new Hono<{ Bindings: Env }>()
 
@@ -48,11 +50,11 @@ const rootResponseSchema = v.object({
 app.get(
   '/',
   describeRoute({
-    description: 'Estado de la API y listado de módulos disponibles',
+    description: 'API status and list of available modules',
     tags: ['General'],
     responses: {
       200: {
-        description: 'La API está operativa',
+        description: 'The API is up',
         content: {
           'application/json': { schema: resolver(rootResponseSchema) },
         },
@@ -63,70 +65,13 @@ app.get(
     status: 200,
     data: {
       message: "¡Hello, API!",
-      modules: ["landing", "auth", "cms"]
+      modules: SERVICE_MODULE_NAMES,
     }
   })
 )
 
-app.all(
-  '/landing/*',
-  describeRoute({
-    description: 'Proxy hacia el Worker del sitio landing (franciscosolis.cl)',
-    tags: ['Landing'],
-    responses: {
-      200: { description: 'Respuesta reenviada desde el Worker landing' },
-    },
-  }),
-  (c) => {
-    const url = new URL(c.req.url)
-    url.pathname = url.pathname.replace(/^\/landing/, '') || '/'
-    return c.env.LANDING.fetch(new Request(url, c.req.raw), {
-      headers: {
-        'Content-Type': c.req.header('Content-Type') || '',
-        'Authorization': c.req.header('Authorization') || '',
-      }
-    })
-  }
-)
-
-app.all(
-  '/auth/*',
-  describeRoute({
-    description: 'Proxy hacia el Worker de autenticación centralizada',
-    tags: ['Auth'],
-    responses: {
-      200: { description: 'Respuesta reenviada desde el Worker auth' },
-    },
-  }),
-  (c) => {
-    const url = new URL(c.req.url)
-    url.pathname = url.pathname.replace(/^\/auth/, '') || '/'
-    // Se reenvía la Request completa (método, cabeceras y cuerpo) en vez de reconstruir solo
-    // algunas cabeceras: el módulo auth necesita CF-Connecting-IP y User-Agent para su bitácora,
-    // y el cuerpo para los POST. `redirect: 'manual'` evita que los 302 que llevan el authorization
-    // code se sigan dentro del Worker en lugar de llegar al navegador.
-    return c.env.AUTH.fetch(new Request(new Request(url, c.req.raw), { redirect: 'manual' }))
-  }
-)
-
-app.all(
-  '/cms/*',
-  describeRoute({
-    description: 'Proxy to the CMS Worker (landing page content, legal pages and outgoing email)',
-    tags: ['CMS'],
-    responses: {
-      200: { description: 'Response forwarded from the cms Worker' },
-    },
-  }),
-  (c) => {
-    const url = new URL(c.req.url)
-    url.pathname = url.pathname.replace(/^\/cms/, '') || '/'
-    // The whole Request is forwarded, as in /auth/*: the CMS needs the body of POST/PATCH calls,
-    // the Authorization header to validate the access token, and CF-Connecting-IP for its audit
-    // trail.
-    return c.env.CMS.fetch(new Request(url, c.req.raw))
-  }
-)
+// One `ALL /<module>/*` proxy per entry in the service registry (`src/services.ts`).
+registerServiceProxies(app)
 
 app.get('/openapi.json', async (c) => {
   const spec = await generateSpecs(app, {
@@ -139,12 +84,7 @@ app.get('/openapi.json', async (c) => {
     },
   }, c)
 
-  // Nuevos componentes internos solo necesitan una entrada más aquí.
-  await mergeRemoteSpecs(spec, [
-    { prefix: '/landing', fetchSpec: () => c.env.LANDING.fetch(new Request('https://landing.internal/openapi.json')) },
-    { prefix: '/auth', fetchSpec: () => c.env.AUTH.fetch(new Request('https://auth.internal/openapi.json')) },
-    { prefix: '/cms', fetchSpec: () => c.env.CMS.fetch(new Request('https://cms.internal/openapi.json')) },
-  ])
+  await mergeRemoteSpecs(spec, remoteSpecComponents(c.env))
 
   return c.json(spec)
 })
