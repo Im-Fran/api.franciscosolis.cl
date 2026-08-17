@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { describeRoute, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import type { AppEnv } from '@/env'
-import { CODE_CHALLENGE_METHOD } from '@/lib/config'
+import { CLIENT_AUTH_METHODS, CODE_CHALLENGE_METHOD, GRANT_TYPES, RESPONSE_TYPE } from '@/lib/config'
 import { getPublicJwks } from '@/lib/jwt'
 import { SUPPORTED_SCOPES } from '@/services/applications'
 
@@ -44,11 +45,14 @@ app.get(
   },
 )
 
-const metadataResponseSchema = v.object({
+const metadataResponseSchema = v.looseObject({
   issuer: v.string(),
   authorization_endpoint: v.string(),
   token_endpoint: v.string(),
+  userinfo_endpoint: v.string(),
   revocation_endpoint: v.string(),
+  introspection_endpoint: v.string(),
+  end_session_endpoint: v.string(),
   jwks_uri: v.string(),
   grant_types_supported: v.array(v.string()),
   response_types_supported: v.array(v.string()),
@@ -58,36 +62,83 @@ const metadataResponseSchema = v.object({
   id_token_signing_alg_values_supported: v.array(v.string()),
 })
 
-app.get(
-  '/.well-known/oauth-authorization-server',
-  describeRoute({
-    description:
-      'OAuth 2.0 Authorization Server Metadata (RFC 8414). Describes the endpoints and capabilities of this service. Note that `authorization_endpoint` only covers the redirect-based Google flow — the magic link provider is started with a POST to /magic-link instead.',
-    tags: ['Discovery'],
-    responses: {
-      200: {
-        description: 'Authorization server metadata',
-        content: { 'application/json': { schema: resolver(metadataResponseSchema) } },
-      },
+/**
+ * The metadata document, shared by both discovery URLs.
+ *
+ * RFC 8414 and OpenID Connect Discovery describe the same server with two names and two overlapping
+ * field sets, so it is built once here and published twice: a relying party that only knows one of
+ * the two spellings must not see a different server than one that knows the other.
+ */
+const buildMetadata = (env: { AUTH_ISSUER: string; AUTH_PUBLIC_URL: string }) => {
+  const base = env.AUTH_PUBLIC_URL
+  return {
+    issuer: env.AUTH_ISSUER,
+    authorization_endpoint: `${base}/oauth/authorize`,
+    token_endpoint: `${base}/oauth/token`,
+    userinfo_endpoint: `${base}/oauth/userinfo`,
+    revocation_endpoint: `${base}/oauth/revoke`,
+    introspection_endpoint: `${base}/oauth/introspect`,
+    end_session_endpoint: `${base}/oauth/logout`,
+    jwks_uri: `${base}/.well-known/jwks.json`,
+    grant_types_supported: [...GRANT_TYPES],
+    response_types_supported: [RESPONSE_TYPE],
+    response_modes_supported: ['query'],
+    subject_types_supported: ['public'],
+    code_challenge_methods_supported: [CODE_CHALLENGE_METHOD],
+    token_endpoint_auth_methods_supported: [...CLIENT_AUTH_METHODS],
+    revocation_endpoint_auth_methods_supported: [...CLIENT_AUTH_METHODS],
+    introspection_endpoint_auth_methods_supported: [...CLIENT_AUTH_METHODS],
+    scopes_supported: [...SUPPORTED_SCOPES],
+    claims_supported: [
+      'iss',
+      'sub',
+      'aud',
+      'exp',
+      'iat',
+      'auth_time',
+      'nonce',
+      'at_hash',
+      'azp',
+      'sid',
+      'email',
+      'email_verified',
+      'name',
+      'given_name',
+      'family_name',
+      'picture',
+      'locale',
+      'roles',
+      'groups',
+      'permissions',
+    ],
+    id_token_signing_alg_values_supported: ['EdDSA'],
+    // Every registered client is first-party, so nobody is ever asked to approve a scope.
+    require_pushed_authorization_requests: false,
+    claims_parameter_supported: false,
+    request_parameter_supported: false,
+    request_uri_parameter_supported: false,
+  }
+}
+
+const discovery = describeRoute({
+  description:
+    'Metadata describing this authorization server: its endpoints, the grants, scopes and client authentication methods it accepts, and the algorithm its tokens are signed with. Published at both well-known URLs — RFC 8414 for OAuth 2.0 clients and OpenID Connect Discovery for OIDC relying parties — with identical content. This is the single document to point a relying party (Cloudflare Access among them) at.',
+  tags: ['Discovery'],
+  responses: {
+    200: {
+      description: 'Authorization server metadata',
+      content: { 'application/json': { schema: resolver(metadataResponseSchema) } },
     },
-  }),
-  (c) => {
-    const base = c.env.AUTH_PUBLIC_URL
-    c.header('Cache-Control', 'public, max-age=3600')
-    return c.json({
-      issuer: c.env.AUTH_ISSUER,
-      authorization_endpoint: `${base}/oauth/google/authorize`,
-      token_endpoint: `${base}/oauth/token`,
-      revocation_endpoint: `${base}/oauth/revoke`,
-      jwks_uri: `${base}/.well-known/jwks.json`,
-      grant_types_supported: ['authorization_code', 'refresh_token'],
-      response_types_supported: ['code'],
-      code_challenge_methods_supported: [CODE_CHALLENGE_METHOD],
-      token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
-      scopes_supported: [...SUPPORTED_SCOPES],
-      id_token_signing_alg_values_supported: ['EdDSA'],
-    })
   },
-)
+})
+
+const serveMetadata = (c: Context<AppEnv>) => {
+  c.header('Cache-Control', 'public, max-age=3600')
+  return c.json(buildMetadata(c.env))
+}
+
+app.get('/.well-known/oauth-authorization-server', discovery, (c) => serveMetadata(c))
+app.get('/.well-known/openid-configuration', discovery, (c) => serveMetadata(c))
 
 export default app
+export { buildMetadata }

@@ -85,19 +85,56 @@ describe('GET /.well-known/oauth-authorization-server', () => {
     const base = env.AUTH_PUBLIC_URL
 
     expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toEqual({
+    await expect(response.json()).resolves.toMatchObject({
       issuer: env.AUTH_ISSUER,
-      authorization_endpoint: `${base}/oauth/google/authorize`,
+      authorization_endpoint: `${base}/oauth/authorize`,
       token_endpoint: `${base}/oauth/token`,
+      userinfo_endpoint: `${base}/oauth/userinfo`,
       revocation_endpoint: `${base}/oauth/revoke`,
+      introspection_endpoint: `${base}/oauth/introspect`,
+      end_session_endpoint: `${base}/oauth/logout`,
       jwks_uri: `${base}/.well-known/jwks.json`,
-      grant_types_supported: ['authorization_code', 'refresh_token'],
+      grant_types_supported: ['authorization_code', 'refresh_token', 'client_credentials'],
       response_types_supported: ['code'],
       code_challenge_methods_supported: [CODE_CHALLENGE_METHOD],
-      token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
-      scopes_supported: ['openid', 'profile', 'email'],
+      token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
+      scopes_supported: ['openid', 'profile', 'email', 'offline_access', 'roles', 'groups'],
       id_token_signing_alg_values_supported: ['EdDSA'],
     })
+  })
+
+  it('advertises no flow that returns a token straight from the redirect', async () => {
+    const body = await (await get('/.well-known/oauth-authorization-server')).json<{
+      response_types_supported: string[]
+      grant_types_supported: string[]
+    }>()
+
+    expect(body.response_types_supported).toEqual(['code'])
+    expect(body.grant_types_supported).not.toContain('implicit')
+    expect(body.grant_types_supported).not.toContain('password')
+  })
+
+  it('publishes the same document at the OpenID Connect discovery URL', async () => {
+    const [oauth, oidc] = await Promise.all([
+      (await get('/.well-known/oauth-authorization-server')).json(),
+      (await get('/.well-known/openid-configuration')).json(),
+    ])
+
+    expect(oidc).toEqual(oauth)
+  })
+
+  it('names every claim it actually puts in a token', async () => {
+    const body = await (await get('/.well-known/openid-configuration')).json<{ claims_supported: string[] }>()
+
+    for (const claim of ['sub', 'email', 'email_verified', 'auth_time', 'nonce', 'at_hash', 'groups', 'roles']) {
+      expect(body.claims_supported).toContain(claim)
+    }
+  })
+
+  it('is cacheable at the OIDC URL too', async () => {
+    expect((await get('/.well-known/openid-configuration')).headers.get('Cache-Control')).toBe(
+      'public, max-age=3600',
+    )
   })
 
   it('advertises S256 only, so a client cannot negotiate plain PKCE', async () => {

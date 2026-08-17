@@ -6,15 +6,25 @@ import type { AppEnv } from '@/env'
 import { OAuthException } from '@/lib/errors'
 import { describeProviders } from '@/providers'
 
+import { clientCors } from '@/middleware/cors'
+
 /* Routes */
 import admin from '@/routes/admin'
+import authorize from '@/routes/authorize'
 import google from '@/routes/google'
+import introspect from '@/routes/introspect'
+import logout from '@/routes/logout'
 import magicLink from '@/routes/magic-link'
 import me from '@/routes/me'
 import token from '@/routes/token'
+import userinfo from '@/routes/userinfo'
 import wellKnown from '@/routes/well-known'
 
 const app = new Hono<AppEnv>()
+
+// Client applications live on their own domains, so the endpoints a browser calls directly answer
+// cross-origin requests from any origin a registered client actually uses. See middleware/cors.ts.
+app.use('*', clientCors)
 
 // Hono's c.json() omits charset, which mangles non-ASCII bytes on clients that default to Latin-1.
 app.use('*', async (c, next) => {
@@ -89,9 +99,13 @@ app.get(
 )
 
 app.route('/', wellKnown)
+app.route('/', authorize)
 app.route('/', magicLink)
 app.route('/', google)
 app.route('/', token)
+app.route('/', userinfo)
+app.route('/', introspect)
+app.route('/', logout)
 app.route('/', me)
 app.route('/admin', admin)
 

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { applications, auditLogs } from '@/db/schema'
 import { sha256 } from '@/lib/crypto'
-import { createApplication, createRole, db, SEED, signIn } from '../helpers/db'
+import { createApplication, createRole, db, findSecrets, SEED, signIn } from '../helpers/db'
 import { RFC7636 } from '../helpers/pkce'
 
 const call = (path: string, token?: string, init: RequestInit = {}) =>
@@ -23,7 +23,7 @@ const callerWith = async (granted: string[]) => {
 describe('GET /admin/applications', () => {
   it('lists the registered clients without their secret hash', async () => {
     const { token } = await callerWith(['applications:read'])
-    await createApplication({ clientSecretHash: await sha256('hidden'), redirectUris: ['https://c.test/cb'] })
+    await createApplication({ clientSecret: 'hidden-secret', redirectUris: ['https://c.test/cb'] })
 
     const response = await call('/applications', token)
     const body = await response.json<{ data: Record<string, unknown>[] }>()
@@ -31,16 +31,23 @@ describe('GET /admin/applications', () => {
     expect(response.status).toBe(200)
     expect(body.data.map((row) => row.client_id)).toContain(SEED.webAppId)
     expect(Object.keys(body.data[0] ?? {}).sort()).toEqual([
+      'allowed_origins',
       'client_id',
       'confidential',
       'created_at',
       'description',
+      'grant_types',
       'is_active',
       'name',
+      'post_logout_redirect_uris',
       'redirect_uris',
+      'require_pkce',
+      'scopes',
+      'token_endpoint_auth_method',
       'updated_at',
     ])
-    expect(JSON.stringify(body)).not.toContain(await sha256('hidden'))
+    expect(JSON.stringify(body)).not.toContain(await sha256('hidden-secret'))
+    expect(JSON.stringify(body)).not.toContain('hidden-secret')
   })
 
   it('reports the seeded clients as public with their exact redirect URIs', async () => {
@@ -121,7 +128,9 @@ describe('POST /admin/applications', () => {
     expect(body.data.client_secret).toMatch(/^[A-Za-z0-9_-]{43}$/)
 
     const [row] = await db().select().from(applications).where(eq(applications.id, 'new-confidential'))
-    expect(row?.clientSecretHash).toBe(await sha256(body.data.client_secret))
+    expect(row?.tokenEndpointAuthMethod).toBe('client_secret_post')
+    const [secret] = await findSecrets('new-confidential')
+    expect(secret?.secretHash).toBe(await sha256(body.data.client_secret))
 
     // The secret is nowhere in the listing afterwards.
     const listed = await (await call('/applications', token)).text()
@@ -183,7 +192,10 @@ describe('POST /admin/applications', () => {
 
     const [row] = await db().select().from(auditLogs).where(eq(auditLogs.applicationId, 'audited-client'))
     expect(row?.event).toBe('application.created')
-    expect(JSON.parse(row?.metadata ?? 'null')).toEqual({ confidential: true })
+    expect(JSON.parse(row?.metadata ?? 'null')).toEqual({
+      token_endpoint_auth_method: 'client_secret_post',
+      grant_types: null,
+    })
   })
 
   it('refuses a caller with only applications:read', async () => {
@@ -257,7 +269,7 @@ describe('PATCH /admin/applications/:id', () => {
     expect(row).toMatchObject({ name: 'Original', description: null, redirectUris: '["https://keep.test/cb"]' })
   })
 
-  it('never turns a public client into a confidential one', async () => {
+  it('never lets a secret be injected through the update payload', async () => {
     const { token } = await callerWith(['applications:write'])
     const application = await createApplication()
 
@@ -267,7 +279,8 @@ describe('PATCH /admin/applications/:id', () => {
     })
 
     const [row] = await db().select().from(applications).where(eq(applications.id, application.id))
-    expect(row?.clientSecretHash).toBeNull()
+    expect(row?.tokenEndpointAuthMethod).toBe('none')
+    await expect(findSecrets(application.id)).resolves.toEqual([])
   })
 
   it('answers 404 for an unknown application', async () => {

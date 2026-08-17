@@ -5,14 +5,19 @@ import * as v from 'valibot'
 import { getDb } from '@/db/client'
 import { oauthStates } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { CODE_CHALLENGE_METHOD, TTL } from '@/lib/config'
-import { generateId, randomToken, sha256 } from '@/lib/crypto'
+import { CODE_CHALLENGE_METHOD } from '@/lib/config'
+import { sha256 } from '@/lib/crypto'
 import { buildErrorRedirect, OAuthException, RedirectValidationException } from '@/lib/errors'
-import { createPkcePair } from '@/lib/pkce'
-import { buildAuthorizationUrl, exchangeAuthorizationCode, googleProvider, verifyIdToken } from '@/providers/google'
-import { getApplication, normalizeScope, resolveClient, validatePkceParameters } from '@/services/applications'
+import { exchangeAuthorizationCode, googleProvider, verifyIdToken } from '@/providers/google'
+import {
+  assertGrantAllowed,
+  getApplication,
+  normalizeScope,
+  resolveClient,
+  validatePkceParameters,
+} from '@/services/applications'
 import { getRequestContext, recordAudit } from '@/services/audit'
-import { completeAuthentication } from '@/services/authorization'
+import { completeAuthentication, startGoogleFlow } from '@/services/authorization'
 
 const app = new Hono<AppEnv>()
 
@@ -20,7 +25,8 @@ const authorizeSchema = v.object({
   client_id: v.pipe(v.string(), v.minLength(1)),
   redirect_uri: v.pipe(v.string(), v.url('redirect_uri must be an absolute URL')),
   state: v.optional(v.string()),
-  code_challenge: v.pipe(v.string(), v.minLength(1)),
+  nonce: v.optional(v.string()),
+  code_challenge: v.optional(v.string()),
   code_challenge_method: v.optional(v.literal(CODE_CHALLENGE_METHOD)),
   scope: v.optional(v.string()),
   login_hint: v.optional(v.string()),
@@ -30,7 +36,7 @@ app.get(
   '/oauth/google/authorize',
   describeRoute({
     description:
-      'Starts a Google OAuth 2.0 sign-in by redirecting the browser to Google. The client application\'s own PKCE challenge, state and redirect URI are stored server-side and resumed on the callback.',
+      "Starts a Google sign-in directly, skipping the provider chooser at `/oauth/authorize`. It takes the same parameters as that endpoint and behaves identically from Google's redirect onwards; `/oauth/authorize?provider=google` is the equivalent through the general entry point.",
     tags: ['Google'],
     responses: {
       302: { description: "Redirect to Google's authorization endpoint" },
@@ -53,43 +59,23 @@ app.get(
     // From here on the redirect URI is trusted, so failures are reported to the client application
     // in the redirect instead of being rendered to the user.
     try {
-      const pkce = validatePkceParameters(query.code_challenge, query.code_challenge_method)
-      const scope = normalizeScope(query.scope)
-
-      const state = randomToken(32)
-      const providerPkce = await createPkcePair()
-      const nonce = randomToken(16)
-
-      await db.insert(oauthStates).values({
-        id: generateId(),
-        provider: 'google',
-        stateHash: await sha256(state),
-        applicationId: application.id,
-        redirectUri,
-        clientState: query.state ?? null,
-        codeChallenge: pkce.codeChallenge,
-        codeChallengeMethod: pkce.codeChallengeMethod,
-        scope,
-        providerCodeVerifier: providerPkce.codeVerifier,
-        nonce,
-        expiresAt: new Date(Date.now() + TTL.oauthState * 1000),
-        requestIp: context.ip,
-        userAgent: context.userAgent,
-      })
-
-      await recordAudit(db, {
-        event: 'oauth.authorize.started',
-        applicationId: application.id,
-        ...context,
-        metadata: { provider: 'google' },
-      })
+      assertGrantAllowed(application, 'authorization_code')
+      const pkce = validatePkceParameters(application, query.code_challenge, query.code_challenge_method)
+      const scope = normalizeScope(query.scope, application)
 
       return c.redirect(
-        buildAuthorizationUrl(c.env, {
-          state,
-          codeChallenge: providerPkce.codeChallenge,
-          nonce,
+        await startGoogleFlow(db, c.env, {
+          request: {
+            application,
+            redirectUri,
+            state: query.state ?? null,
+            nonce: query.nonce ?? null,
+            codeChallenge: pkce.codeChallenge,
+            codeChallengeMethod: pkce.codeChallengeMethod,
+            scope,
+          },
           loginHint: query.login_hint ?? null,
+          ...context,
         }),
         302,
       )
@@ -182,6 +168,7 @@ app.get(
           application,
           redirectUri: state.redirectUri,
           state: state.clientState,
+          nonce: state.clientNonce,
           codeChallenge: state.codeChallenge,
           codeChallengeMethod: state.codeChallengeMethod,
           scope: state.scope ?? '',

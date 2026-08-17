@@ -34,8 +34,11 @@ type AuthorizationRequest = {
   application: Application
   redirectUri: string
   state: string | null
-  codeChallenge: string
-  codeChallengeMethod: string
+  /** OIDC `nonce`, echoed into the id_token minted at the end of the flow. */
+  nonce: string | null
+  /** Null only for a confidential client that opted out of PKCE — see `validatePkceParameters`. */
+  codeChallenge: string | null
+  codeChallengeMethod: string | null
   scope: string
 }
 

@@ -63,6 +63,13 @@ describe('CORS origin allowlist', () => {
     expect(await allowOriginFor('https://evil.com', '/cms/content/projects')).toBe(FALLBACK_ORIGIN)
   })
 
+  it('leaves the auth module to answer for itself, whatever the origin', async () => {
+    // Its clients live on domains registered in its own database, which this allowlist cannot
+    // describe — see `ownsCors` in src/services.ts.
+    expect(await allowOriginFor('https://franciscosolis.cl', '/auth/thing')).toBeNull()
+    expect(await allowOriginFor('https://evil.com', '/auth/thing')).toBeNull()
+  })
+
   it('applies the same allowlist to 404s', async () => {
     const response = await gateway('/nope', { headers: { Origin: 'https://evil.com' } })
 
@@ -104,14 +111,14 @@ describe('CORS preflight', () => {
     })
 
   it('answers 204 with no body', async () => {
-    const response = await preflight('/auth/oauth/token', 'POST')
+    const response = await preflight('/cms/content/projects', 'POST')
 
     expect(response.status).toBe(204)
     await expect(response.text()).resolves.toBe('')
   })
 
   it('allows the write verbs the auth and cms modules need', async () => {
-    const response = await preflight('/auth/oauth/token', 'POST')
+    const response = await preflight('/cms/content/projects', 'POST')
 
     expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PATCH,DELETE,OPTIONS')
   })
@@ -123,19 +130,19 @@ describe('CORS preflight', () => {
   })
 
   it('allows only Content-Type and Authorization as request headers', async () => {
-    const response = await preflight('/auth/oauth/token', 'POST')
+    const response = await preflight('/cms/content/projects', 'POST')
 
     expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type,Authorization')
   })
 
   it('lets the browser cache the preflight for ten minutes', async () => {
-    const response = await preflight('/auth/oauth/token', 'POST')
+    const response = await preflight('/cms/content/projects', 'POST')
 
     expect(response.headers.get('Access-Control-Max-Age')).toBe('600')
   })
 
   it('varies on the requested headers as well as the origin', async () => {
-    const response = await preflight('/auth/oauth/token', 'POST')
+    const response = await preflight('/cms/content/projects', 'POST')
 
     expect(response.headers.get('Vary')).toBe('Origin, Access-Control-Request-Headers')
   })
@@ -149,14 +156,14 @@ describe('CORS preflight', () => {
     ['the Vite dev server', 'http://localhost:5173'],
     ['a workers.dev preview', 'https://landing.franciscosolis.workers.dev'],
   ])('echoes %s back on the preflight', async (_label, origin) => {
-    const response = await preflight('/auth/oauth/token', 'POST', origin)
+    const response = await preflight('/cms/content/projects', 'POST', origin)
 
     expect(response.status).toBe(204)
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(origin)
   })
 
   it('applies the allowlist to a preflight for every proxied module', async () => {
-    for (const path of ['/landing/stats/github', '/auth/oauth/token', '/cms/content/projects']) {
+    for (const path of ['/landing/stats/github', '/cms/content/projects']) {
       const allowed = await preflight(path, 'POST', 'http://localhost:5173')
       const refused = await preflight(path, 'POST', 'https://evil.com')
 
@@ -166,7 +173,7 @@ describe('CORS preflight', () => {
   })
 
   it('still answers a disallowed origin, but with an origin that is not the caller', async () => {
-    const response = await preflight('/auth/oauth/token', 'POST', 'https://evil.com')
+    const response = await preflight('/cms/content/projects', 'POST', 'https://evil.com')
 
     expect(response.status).toBe(204)
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(FALLBACK_ORIGIN)
@@ -194,7 +201,7 @@ describe('CORS preflight', () => {
  * as the middleware stays in front of the `app.all` routes.
  */
 describe('OPTIONS without preflight headers', () => {
-  it.each(['landing', 'auth', 'cms'])('is answered by the gateway rather than forwarded to %s', async (module) => {
+  it.each(['landing', 'cms'])('is answered by the gateway rather than forwarded to %s', async (module) => {
     const response = await gateway(`/${module}/thing`, { method: 'OPTIONS' })
 
     expect(response.status).toBe(204)
@@ -214,5 +221,40 @@ describe('OPTIONS without preflight headers', () => {
     const response = await gateway('/nope', { method: 'OPTIONS' })
 
     expect(response.status).toBe(204)
+  })
+})
+
+/**
+ * One module answers cross-origin requests itself (`ownsCors` in src/services.ts). The gateway has
+ * to stay entirely out of the way for it — including on the preflight, which it short-circuits for
+ * every other path — or it would overwrite that module's decision with the fixed allowlist.
+ */
+describe('CORS delegated to a module', () => {
+  it('forwards a preflight to the module instead of answering it', async () => {
+    const response = await gateway('/auth/oauth/token', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://franciscosolis.cl',
+        'Access-Control-Request-Method': 'POST',
+      },
+    })
+
+    expect(response.headers.get('X-Stub-Module')).toBe('auth')
+    expect(response.headers.get('X-Stub-Method')).toBe('OPTIONS')
+  })
+
+  it('adds no CORS header of its own to a delegated response', async () => {
+    const response = await gateway('/auth/thing', { headers: { Origin: 'https://evil.com' } })
+
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
+    expect(response.headers.get('Access-Control-Expose-Headers')).toBeNull()
+  })
+
+  it('keeps answering for every module that did not delegate', async () => {
+    for (const path of ['/', '/landing/stats/github', '/cms/content/projects', '/nope']) {
+      const response = await gateway(path, { headers: { Origin: 'https://franciscosolis.cl' } })
+
+      expect(response.headers.get('Access-Control-Allow-Origin'), path).toBe('https://franciscosolis.cl')
+    }
   })
 })

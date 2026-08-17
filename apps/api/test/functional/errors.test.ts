@@ -112,11 +112,22 @@ describe('app.onError', () => {
   })
 
   it('keeps the CORS headers on an error, so the browser can read it', async () => {
-    const response = await gateway('/auth/throw', { headers: { Origin: 'https://franciscosolis.cl' } })
+    const response = await gateway('/cms/throw', { headers: { Origin: 'https://franciscosolis.cl' } })
 
     expect(response.status).toBe(500)
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://franciscosolis.cl')
     expect(response.headers.get('Access-Control-Expose-Headers')).toBe('Content-Type')
+  })
+
+  it('cannot add them for a module that owns its own CORS, and does not guess', async () => {
+    // The module never answered, so nothing here knows whether that origin is one of its clients.
+    // The browser sees a network error rather than a readable 500, which is the honest outcome:
+    // inventing an allowed origin at this point would be the gateway answering for a module
+    // precisely where it cannot know the answer.
+    const response = await gateway('/auth/throw', { headers: { Origin: 'https://franciscosolis.cl' } })
+
+    expect(response.status).toBe(500)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
   })
 })
 

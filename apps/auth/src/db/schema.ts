@@ -59,20 +59,63 @@ const identities = sqliteTable('identities', {
 ])
 
 /**
- * Client applications allowed to start a login flow. `clientSecretHash` being null marks a public
- * client (a browser SPA): it cannot keep a secret, so PKCE is the only thing binding the
- * authorization code to the client that requested it.
+ * Client applications allowed to start a login flow.
+ *
+ * `tokenEndpointAuthMethod` is what makes a client public or confidential: `none` means it cannot
+ * keep a secret (a browser SPA), so PKCE is the only thing binding the authorization code to the
+ * process that requested it. The secrets themselves live in `application_secrets`, one row per
+ * secret, so a rotation can overlap two valid secrets instead of cutting the old one off.
  */
 const applications = sqliteTable('applications', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   description: text('description'),
-  clientSecretHash: text('client_secret_hash'),
+  /** `none` | `client_secret_post` | `client_secret_basic`. See `CLIENT_AUTH_METHODS`. */
+  tokenEndpointAuthMethod: text('token_endpoint_auth_method').notNull().default('none'),
   /** JSON array of exact-match redirect URIs. No wildcards, no prefix matching. */
   redirectUris: text('redirect_uris').notNull().default('[]'),
+  /** JSON array of exact-match URIs `GET /oauth/logout` may return the browser to. */
+  postLogoutRedirectUris: text('post_logout_redirect_uris').notNull().default('[]'),
+  /** JSON array of grant types this client may use at the token endpoint. */
+  grantTypes: text('grant_types').notNull().default('["authorization_code","refresh_token"]'),
+  /** JSON array restricting the scopes this client may ask for. Empty means "every supported one". */
+  scopes: text('scopes').notNull().default('[]'),
+  /**
+   * PKCE is mandatory by default, for confidential clients too. It can only be turned off for a
+   * confidential client, and exists for off-the-shelf relying parties that never implemented it —
+   * Cloudflare Access being the reason this flag is here at all.
+   */
+  requirePkce: integer('require_pkce', { mode: 'boolean' }).notNull().default(true),
+  /** JSON array of extra browser origins allowed to call the OAuth endpoints cross-origin. */
+  allowedOrigins: text('allowed_origins').notNull().default('[]'),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
   ...timestamps,
 })
+
+/**
+ * The secrets of a confidential client. Several can be valid at once, which is the whole point:
+ * rotating means issuing a new one and giving the old one an `expiresAt` in the near future, so
+ * every deployment of the client has a window to pick the new value up before the old one dies.
+ *
+ * Only the SHA-256 hash is stored. `hint` is the first few characters of the secret, kept so an
+ * operator can tell two rows apart in a list without the plaintext being recoverable from it.
+ */
+const applicationSecrets = sqliteTable('application_secrets', {
+  id: text('id').primaryKey(),
+  applicationId: text('application_id').notNull().references(() => applications.id, { onDelete: 'cascade' }),
+  secretHash: text('secret_hash').notNull(),
+  hint: text('hint').notNull(),
+  label: text('label'),
+  /** Null means "valid until revoked"; a date is the end of a rotation's grace period. */
+  expiresAt: integer('expires_at', { mode: 'timestamp' }),
+  lastUsedAt: integer('last_used_at', { mode: 'timestamp' }),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('application_secrets_hash_unique').on(table.secretHash),
+  index('application_secrets_application_id_idx').on(table.applicationId),
+])
 
 /**
  * Roles are either global (`applicationId` null) or scoped to a single application, so the same
@@ -145,6 +188,39 @@ const invitations = sqliteTable('invitations', {
 ])
 
 /**
+ * An authorization request parked at `GET /oauth/authorize` while the user picks a provider and
+ * authenticates. It is what makes a single authorization endpoint possible: the relying party's
+ * parameters are validated and frozen here once, and the provider the user ends up choosing only
+ * has to name this row again. The browser carries an opaque handle, of which only the hash is kept.
+ *
+ * Deliberately NOT single-use, unlike every other one-time token here: a user who mistypes their
+ * address or changes their mind about the provider has to be able to come back to the same parked
+ * request. Nothing is granted by holding it — the provider still has to authenticate someone, and
+ * the code still goes to the client's registered redirect URI — so its expiry is the whole limit.
+ */
+const authorizationRequests = sqliteTable('authorization_requests', {
+  id: text('id').primaryKey(),
+  handleHash: text('handle_hash').notNull(),
+  applicationId: text('application_id').notNull().references(() => applications.id, { onDelete: 'cascade' }),
+  redirectUri: text('redirect_uri').notNull(),
+  state: text('state'),
+  /** OIDC `nonce`, echoed into the id_token issued for this request. */
+  nonce: text('nonce'),
+  /** Null for a confidential client that opted out of PKCE (`applications.require_pkce`). */
+  codeChallenge: text('code_challenge'),
+  codeChallengeMethod: text('code_challenge_method'),
+  scope: text('scope'),
+  prompt: text('prompt'),
+  loginHint: text('login_hint'),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  requestIp: text('request_ip'),
+  userAgent: text('user_agent'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  uniqueIndex('authorization_requests_handle_unique').on(table.handleHash),
+])
+
+/**
  * A pending magic link. The whole authorization request (redirect URI, PKCE challenge, client
  * state) is captured here so the emailed link only has to carry an opaque token: whatever the
  * mail client does to the URL, it cannot alter where the user is sent back to.
@@ -157,8 +233,11 @@ const magicLinkTokens = sqliteTable('magic_link_tokens', {
   tokenHash: text('token_hash').notNull(),
   redirectUri: text('redirect_uri').notNull(),
   state: text('state'),
-  codeChallenge: text('code_challenge').notNull(),
-  codeChallengeMethod: text('code_challenge_method').notNull().default('S256'),
+  /** OIDC `nonce` of the originating authorization request, echoed into the id_token. */
+  nonce: text('nonce'),
+  /** Null for a confidential client that opted out of PKCE (`applications.require_pkce`). */
+  codeChallenge: text('code_challenge'),
+  codeChallengeMethod: text('code_challenge_method'),
   scope: text('scope'),
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
   consumedAt: integer('consumed_at', { mode: 'timestamp' }),
@@ -182,8 +261,11 @@ const oauthStates = sqliteTable('oauth_states', {
   redirectUri: text('redirect_uri').notNull(),
   /** The `state` the client application asked us to echo back; unrelated to `stateHash`. */
   clientState: text('client_state'),
-  codeChallenge: text('code_challenge').notNull(),
-  codeChallengeMethod: text('code_challenge_method').notNull().default('S256'),
+  /** The client application's OIDC `nonce`; unrelated to `nonce`, which is ours towards Google. */
+  clientNonce: text('client_nonce'),
+  /** Null for a confidential client that opted out of PKCE (`applications.require_pkce`). */
+  codeChallenge: text('code_challenge'),
+  codeChallengeMethod: text('code_challenge_method'),
   scope: text('scope'),
   /** PKCE verifier for our own request to the upstream provider. */
   providerCodeVerifier: text('provider_code_verifier').notNull(),
@@ -206,8 +288,11 @@ const authorizationCodes = sqliteTable('authorization_codes', {
   /** Provider that actually authenticated the user, propagated onto the session. */
   provider: text('provider').notNull(),
   redirectUri: text('redirect_uri').notNull(),
-  codeChallenge: text('code_challenge').notNull(),
-  codeChallengeMethod: text('code_challenge_method').notNull().default('S256'),
+  /** OIDC `nonce` to echo into the id_token minted when this code is exchanged. */
+  nonce: text('nonce'),
+  /** Null for a confidential client that opted out of PKCE (`applications.require_pkce`). */
+  codeChallenge: text('code_challenge'),
+  codeChallengeMethod: text('code_challenge_method'),
   scope: text('scope'),
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
   consumedAt: integer('consumed_at', { mode: 'timestamp' }),
@@ -277,8 +362,10 @@ const auditLogs = sqliteTable('audit_logs', {
 
 export {
   applications,
+  applicationSecrets,
   auditLogs,
   authorizationCodes,
+  authorizationRequests,
   identities,
   invitations,
   magicLinkTokens,

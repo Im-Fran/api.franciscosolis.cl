@@ -6,7 +6,13 @@ import type { AppEnv } from '@/env'
 import { CODE_CHALLENGE_METHOD, TTL } from '@/lib/config'
 import { buildErrorRedirect, OAuthException, RedirectValidationException } from '@/lib/errors'
 import { consumeMagicLinkToken, requestMagicLink } from '@/providers/magic-link'
-import { getApplication, normalizeScope, resolveClient, validatePkceParameters } from '@/services/applications'
+import {
+  assertGrantAllowed,
+  getApplication,
+  normalizeScope,
+  resolveClient,
+  validatePkceParameters,
+} from '@/services/applications'
 import { getRequestContext, recordAudit } from '@/services/audit'
 import { completeAuthentication } from '@/services/authorization'
 
@@ -17,7 +23,8 @@ const requestSchema = v.object({
   client_id: v.pipe(v.string(), v.minLength(1)),
   redirect_uri: v.pipe(v.string(), v.url('redirect_uri must be an absolute URL')),
   state: v.optional(v.string()),
-  code_challenge: v.pipe(v.string(), v.minLength(1)),
+  nonce: v.optional(v.string()),
+  code_challenge: v.optional(v.string()),
   code_challenge_method: v.optional(v.literal(CODE_CHALLENGE_METHOD)),
   scope: v.optional(v.string()),
 })
@@ -51,8 +58,9 @@ app.post(
     const context = getRequestContext(c)
 
     const { application, redirectUri } = await resolveClient(db, body.client_id, body.redirect_uri)
-    const pkce = validatePkceParameters(body.code_challenge, body.code_challenge_method)
-    const scope = normalizeScope(body.scope)
+    assertGrantAllowed(application, 'authorization_code')
+    const pkce = validatePkceParameters(application, body.code_challenge, body.code_challenge_method)
+    const scope = normalizeScope(body.scope, application)
 
     const result = await requestMagicLink(db, c.env, {
       email: body.email,
@@ -60,6 +68,7 @@ app.post(
         application,
         redirectUri,
         state: body.state ?? null,
+        nonce: body.nonce ?? null,
         codeChallenge: pkce.codeChallenge,
         codeChallengeMethod: pkce.codeChallengeMethod,
         scope,
@@ -125,6 +134,7 @@ app.get(
       application,
       redirectUri: record.redirectUri,
       state: record.state,
+      nonce: record.nonce,
       codeChallenge: record.codeChallenge,
       codeChallengeMethod: record.codeChallengeMethod,
       scope: record.scope ?? '',

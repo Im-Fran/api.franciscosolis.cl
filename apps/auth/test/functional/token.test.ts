@@ -38,7 +38,8 @@ const grantCode = async (
     userId?: string
     applicationId?: string
     redirectUri?: string
-    codeChallenge?: string
+    nonce?: string | null
+    codeChallenge?: string | null
     scope?: string | null
     provider?: ProviderName
   } = {},
@@ -49,8 +50,9 @@ const grantCode = async (
     applicationId: overrides.applicationId ?? SEED.webAppId,
     provider: overrides.provider ?? 'magic_link',
     redirectUri: overrides.redirectUri ?? SEED.webRedirectUri,
-    codeChallenge: overrides.codeChallenge ?? RFC7636.challenge,
-    codeChallengeMethod: 'S256',
+    nonce: overrides.nonce ?? null,
+    codeChallenge: overrides.codeChallenge === undefined ? RFC7636.challenge : overrides.codeChallenge,
+    codeChallengeMethod: overrides.codeChallenge === null ? null : 'S256',
     scope: overrides.scope === undefined ? 'openid profile email' : overrides.scope,
   })
   return { code, userId }
@@ -105,6 +107,8 @@ describe('POST /oauth/token — authorization_code', () => {
     expect(Object.keys(body).sort()).toEqual([
       'access_token',
       'expires_in',
+      // Present because the granted scope contains `openid`, which makes this an OIDC exchange.
+      'id_token',
       'refresh_token',
       'scope',
       'session_id',
@@ -208,10 +212,10 @@ describe('POST /oauth/token — authorization_code', () => {
     })
   })
 
-  it('requires code, redirect_uri and code_verifier together', async () => {
+  it('requires code and redirect_uri together', async () => {
     const { code } = await grantCode()
 
-    for (const missing of ['code', 'redirect_uri', 'code_verifier'] as const) {
+    for (const missing of ['code', 'redirect_uri'] as const) {
       const fields: Record<string, string> = {
         grant_type: 'authorization_code',
         client_id: SEED.webAppId,
@@ -225,9 +229,26 @@ describe('POST /oauth/token — authorization_code', () => {
       expect(response.status).toBe(400)
       await expect(response.json()).resolves.toEqual({
         error: 'invalid_request',
-        error_description: 'code, redirect_uri and code_verifier are required for the authorization_code grant',
+        error_description: 'code and redirect_uri are required for the authorization_code grant',
       })
     }
+  })
+
+  it('requires the verifier when the code was minted with a challenge', async () => {
+    const { code } = await grantCode()
+
+    const response = await form({
+      grant_type: 'authorization_code',
+      client_id: SEED.webAppId,
+      code,
+      redirect_uri: SEED.webRedirectUri,
+    })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      error: 'invalid_request',
+      error_description: 'code_verifier is required for this authorization code',
+    })
   })
 
   it('refuses a malformed verifier before spending the code', async () => {
@@ -282,7 +303,7 @@ describe('POST /oauth/token — authorization_code', () => {
   it('accepts a confidential client that presents the right secret and rejects a wrong one', async () => {
     const confidential = await createApplication({
       redirectUris: ['https://confidential.test/cb'],
-      clientSecretHash: await sha256('the-secret'),
+      clientSecret: 'the-secret',
     })
     const first = await grantCode({ applicationId: confidential.id, redirectUri: 'https://confidential.test/cb' })
     const second = await grantCode({ applicationId: confidential.id, redirectUri: 'https://confidential.test/cb' })
@@ -548,10 +569,11 @@ describe('POST /oauth/token — request validation', () => {
   it('rejects a grant type the endpoint does not implement', async () => {
     const response = await form({ grant_type: 'password', client_id: SEED.webAppId })
 
-    // The picklist in the request schema rejects it before the handler runs, so this is the
-    // validator's shape rather than the RFC 6749 `unsupported_grant_type` body.
     expect(response.status).toBe(400)
-    await expect(response.json()).resolves.toMatchObject({ success: false })
+    await expect(response.json()).resolves.toEqual({
+      error: 'unsupported_grant_type',
+      error_description: 'Unsupported grant_type: password',
+    })
   })
 
   it('rejects a body with no grant_type or no client_id', async () => {

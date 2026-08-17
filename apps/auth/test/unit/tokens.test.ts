@@ -26,6 +26,7 @@ const issueCode = async (overrides: Partial<Parameters<typeof issueAuthorization
     applicationId: overrides.applicationId ?? SEED.webAppId,
     provider: overrides.provider ?? 'magic_link',
     redirectUri: overrides.redirectUri ?? SEED.webRedirectUri,
+    nonce: overrides.nonce ?? null,
     codeChallenge: overrides.codeChallenge ?? RFC7636.challenge,
     codeChallengeMethod: overrides.codeChallengeMethod ?? 'S256',
     scope: overrides.scope === undefined ? 'openid profile email' : overrides.scope,
@@ -395,7 +396,7 @@ describe('buildTokenResponse', () => {
     const [child] = await db()
       .select()
       .from(refreshTokens)
-      .where(eq(refreshTokens.tokenHash, await sha256(response.refresh_token)))
+      .where(eq(refreshTokens.tokenHash, await sha256(response.refresh_token as string)))
 
     expect(child?.parentId).toBe(parentRow?.id)
     expect(child?.sessionId).toBe(session.id)

@@ -144,6 +144,8 @@ describe('requireAuth', () => {
     const { token } = await signAccessToken(env, {
       sub: user.id,
       aud: SEED.webAppId,
+      client_id: SEED.webAppId,
+      scope: 'openid profile email',
       sid: crypto.randomUUID(),
       provider: 'magic_link',
       email: user.email,

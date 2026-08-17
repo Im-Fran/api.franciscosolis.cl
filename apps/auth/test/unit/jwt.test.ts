@@ -2,8 +2,17 @@ import { env } from 'cloudflare:test'
 import { decode, sign } from 'hono/jwt'
 import { describe, expect, it } from 'vitest'
 import { TTL } from '@/lib/config'
-import { getPublicJwks, getSigningKey, signAccessToken, toPublicJwk, verifyAccessToken } from '@/lib/jwt'
-import type { Ed25519Jwk } from '@/lib/jwt'
+import {
+  accessTokenHash,
+  getPublicJwks,
+  getSigningKey,
+  signAccessToken,
+  signIdToken,
+  toPublicJwk,
+  verifyAccessToken,
+  verifySignedToken,
+} from '@/lib/jwt'
+import type { Ed25519Jwk, IdTokenClaims } from '@/lib/jwt'
 import { testEnv } from '../helpers/env'
 
 /** The key `vitest.config.ts` injects as `JWT_PRIVATE_KEY`. */
@@ -27,6 +36,8 @@ const retiredPublicKey = () => {
 const claims = (overrides: Record<string, unknown> = {}) => ({
   sub: 'user-1',
   aud: 'franciscosolis-web',
+  client_id: 'franciscosolis-web',
+  scope: 'openid profile email',
   sid: 'session-1',
   provider: 'magic_link' as const,
   email: 'someone@example.test',
@@ -314,5 +325,103 @@ describe('verifyAccessToken', () => {
   it('refuses a string that is not a JWT at all', async () => {
     await expect(verifyAccessToken(env, 'not.a.jwt')).rejects.toThrow()
     await expect(verifyAccessToken(env, 'garbage')).rejects.toThrow()
+  })
+})
+
+const idTokenClaims = (overrides: Record<string, unknown> = {}) => ({
+  sub: 'user-1',
+  aud: 'franciscosolis-web',
+  sid: 'session-1',
+  auth_time: Math.floor(Date.now() / 1000) - 60,
+  provider: 'magic_link' as const,
+  ...overrides,
+})
+
+describe('accessTokenHash', () => {
+  it('is the base64url of the left half of the digest, per OIDC §3.1.3.6', async () => {
+    const hash = await accessTokenHash('an-access-token')
+
+    // SHA-256 is 32 bytes; half of it is 16, which is 22 base64url characters unpadded.
+    expect(hash).toMatch(/^[A-Za-z0-9\-_]{22}$/)
+  })
+
+  it('changes with the token, which is the whole point of the binding', async () => {
+    expect(await accessTokenHash('a')).not.toBe(await accessTokenHash('b'))
+    expect(await accessTokenHash('a')).toBe(await accessTokenHash('a'))
+  })
+})
+
+describe('signIdToken', () => {
+  it('stamps the issuer, the timestamps and the ID token TTL', async () => {
+    const before = Math.floor(Date.now() / 1000)
+    const { token, expiresIn } = await signIdToken(env, idTokenClaims())
+    const payload = decode(token).payload as unknown as Record<string, unknown>
+
+    expect(payload.iss).toBe(env.AUTH_ISSUER)
+    expect(payload.iat).toBeGreaterThanOrEqual(before)
+    expect(payload.exp).toBe((payload.iat as number) + TTL.idToken)
+    expect(expiresIn).toBe(TTL.idToken)
+  })
+
+  it('defaults azp to the audience, there never being a third party involved', async () => {
+    const { token } = await signIdToken(env, idTokenClaims())
+
+    expect((decode(token).payload as unknown as Record<string, unknown>).azp).toBe('franciscosolis-web')
+  })
+
+  it('is signed by the same key as the access token, so one JWKS verifies both', async () => {
+    const [id, access] = await Promise.all([signIdToken(env, idTokenClaims()), signAccessToken(env, claims())])
+
+    expect(decode(id.token).header.kid).toBe(decode(access.token).header.kid)
+    await expect(verifySignedToken(env, id.token)).resolves.toBeTruthy()
+  })
+
+  it('carries an at_hash and a nonce through when they are given', async () => {
+    const { token } = await signIdToken(env, idTokenClaims({ nonce: 'n-once', at_hash: 'abc' }))
+    const payload = decode(token).payload as unknown as IdTokenClaims
+
+    expect(payload.nonce).toBe('n-once')
+    expect(payload.at_hash).toBe('abc')
+  })
+
+  it('does not carry a claim that was not supplied', async () => {
+    const payload = decode((await signIdToken(env, idTokenClaims())).token).payload as unknown as Record<string, unknown>
+
+    expect(payload).not.toHaveProperty('nonce')
+    expect(payload).not.toHaveProperty('email')
+    expect(payload).not.toHaveProperty('groups')
+  })
+})
+
+describe('verifySignedToken', () => {
+  it('rejects an expired token by default', async () => {
+    const original = Date.now
+    Date.now = () => original() - TTL.idToken * 2000
+    const { token } = await signIdToken(env, idTokenClaims())
+    Date.now = original
+
+    await expect(verifySignedToken(env, token)).rejects.toThrow()
+  })
+
+  it('accepts one with allowExpired, which RP-initiated logout depends on', async () => {
+    const original = Date.now
+    Date.now = () => original() - TTL.idToken * 2000
+    const { token } = await signIdToken(env, idTokenClaims())
+    Date.now = original
+
+    await expect(verifySignedToken(env, token, { allowExpired: true })).resolves.toMatchObject({ sub: 'user-1' })
+  })
+
+  it('still checks the signature when the expiry is waived', async () => {
+    const { token } = await signIdToken(env, idTokenClaims())
+    const [header, payload] = token.split('.')
+
+    await expect(verifySignedToken(env, `${header}.${payload}.forged`, { allowExpired: true })).rejects.toThrow()
+  })
+
+  it('still checks the issuer when the expiry is waived', async () => {
+    const { token } = await signIdToken(testEnv({ AUTH_ISSUER: 'https://elsewhere.test' }), idTokenClaims())
+
+    await expect(verifySignedToken(env, token, { allowExpired: true })).rejects.toThrow()
   })
 })

@@ -33,6 +33,11 @@ type Env = {
 
   /** Public base URL of this Worker, e.g. `https://api.franciscosolis.cl/auth`. No trailing slash. */
   AUTH_PUBLIC_URL: string
+  /**
+   * Sign-in front-end `GET /oauth/authorize` hands the user to, with the parked request's handle
+   * appended as `?request=`. Unset means the Worker serves its own minimal page instead.
+   */
+  AUTH_LOGIN_URL?: string
   /** Value of the `iss` claim on every access token. */
   AUTH_ISSUER: string
   MAIL_FROM_EMAIL: string

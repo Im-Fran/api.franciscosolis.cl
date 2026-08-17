@@ -87,6 +87,7 @@ const requestMagicLink = async (
     tokenHash: await sha256(token),
     redirectUri: input.request.redirectUri,
     state: input.request.state,
+    nonce: input.request.nonce,
     codeChallenge: input.request.codeChallenge,
     codeChallengeMethod: input.request.codeChallengeMethod,
     scope: input.request.scope,

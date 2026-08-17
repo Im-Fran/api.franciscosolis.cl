@@ -16,14 +16,21 @@ describe('auth smoke', () => {
 
   it('seeds the two client applications as public clients', async () => {
     const { results } = await env.DB.prepare(
-      'SELECT id, client_secret_hash, is_active FROM applications ORDER BY id',
-    ).all<{ id: string; client_secret_hash: string | null; is_active: number }>()
+      'SELECT id, token_endpoint_auth_method, require_pkce, is_active FROM applications ORDER BY id',
+    ).all<{ id: string; token_endpoint_auth_method: string; require_pkce: number; is_active: number }>()
 
     expect(results.map((row) => row.id)).toEqual(['franciscosolis-cms', 'franciscosolis-web'])
-    // No client secret means PKCE is mandatory for both — that is the security property, not an
-    // incidental null.
-    expect(results.every((row) => row.client_secret_hash === null)).toBe(true)
+    // Authenticating with nothing means PKCE is mandatory for both — that is the security
+    // property, not an incidental default.
+    expect(results.every((row) => row.token_endpoint_auth_method === 'none')).toBe(true)
+    expect(results.every((row) => row.require_pkce === 1)).toBe(true)
     expect(results.every((row) => row.is_active === 1)).toBe(true)
+  })
+
+  it('leaves no client holding a secret out of the box', async () => {
+    const row = await env.DB.prepare('SELECT COUNT(*) AS total FROM application_secrets').first<{ total: number }>()
+
+    expect(row?.total).toBe(0)
   })
 
   it('grants the admin role every defined permission', async () => {

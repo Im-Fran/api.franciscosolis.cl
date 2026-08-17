@@ -72,16 +72,26 @@ There is no separate `build` script — Wrangler bundles as part of `dev`/`deplo
   `CF-Connecting-IP` for its audit trail included. Keep each module's policy when touching it.
 - **CORS allows write verbs for auth**: sign-in, token exchange and the admin API are
   POST/PATCH/DELETE. The origin allowlist is unchanged and stays locked down.
+- **One module answers CORS for itself** (`ownsCors` in `src/services.ts`, set on `auth`): the
+  gateway's middleware skips those path prefixes entirely, preflight included. The reason is that
+  the allowlist below cannot describe `auth`'s clients — they live on their own domains and are
+  registered in that Worker's database — so it decides per request instead. The consequence to
+  keep in mind: for a delegated path the gateway adds no CORS header at all, so a failure that
+  never reaches the module (a binding that throws) comes back unreadable to a browser. That is
+  preferred over the gateway inventing an allowed origin for a module.
 - **OpenAPI merge is best-effort**: if an internal module's `/openapi.json` fetch fails,
   `mergeRemoteSpecs` skips it silently instead of throwing — the combined spec should
   never 500 just because one internal Worker is down.
-- **CORS is locked down**: only `GET` from `localhost:5173`, `*.franciscosolis.workers.dev`,
-  and `*.franciscosolis.cl`; any other origin falls back to the `https://franciscosolis.cl`
-  response. Don't loosen this without being asked.
+- **CORS is locked down**: only `localhost:5173`, `*.franciscosolis.workers.dev` and
+  `*.franciscosolis.cl`; any other origin falls back to the `https://franciscosolis.cl`
+  response. Don't loosen this without being asked — a module that genuinely needs other origins
+  gets `ownsCors` and decides for itself, rather than this list growing.
 - **JSON charset middleware**: Hono's `c.json()` doesn't set a charset by default, which
   can mangle non-ASCII responses on clients that assume Latin-1. A shared middleware
   appends `; charset=UTF-8` to `application/json` responses — see the `ponytail` comment
-  in `src/index.ts` for why this exists. Don't remove it.
+  in `src/index.ts` for why this exists. Don't remove it. It rebuilds the Response rather than
+  editing its headers: one that came back over a service binding is immutable, and writing to it
+  is silently dropped.
 - **Error shape**: `app.onError` normalizes both `HTTPException` and unexpected errors
   into `{ code, error }` with the matching HTTP status — keep new error paths consistent
   with this shape.

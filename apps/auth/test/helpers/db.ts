@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { getDb } from '@/db/client'
 import {
   applications,
+  applicationSecrets,
   identities,
   invitations,
   permissions,
@@ -12,8 +13,8 @@ import {
   userRoles,
   users,
 } from '@/db/schema'
-import type { ProviderName } from '@/lib/config'
-import { generateId } from '@/lib/crypto'
+import type { ClientAuthMethod, GrantType, ProviderName } from '@/lib/config'
+import { generateId, sha256 } from '@/lib/crypto'
 import { signAccessToken } from '@/lib/jwt'
 import type { Session } from '@/services/tokens'
 import type { User } from '@/services/users'
@@ -107,23 +108,75 @@ const grant = async (userId: string, roleId: string) => {
   await db().insert(userRoles).values({ userId, roleId }).onConflictDoNothing()
 }
 
-const createApplication = async (
-  overrides: { id?: string; name?: string; redirectUris?: string[]; clientSecretHash?: string | null; isActive?: boolean } = {},
-) => {
+type CreateApplicationInput = {
+  id?: string
+  name?: string
+  redirectUris?: string[]
+  postLogoutRedirectUris?: string[]
+  tokenEndpointAuthMethod?: ClientAuthMethod
+  grantTypes?: GrantType[]
+  scopes?: string[]
+  requirePkce?: boolean
+  allowedOrigins?: string[]
+  isActive?: boolean
+  /** Plaintext of a first secret to write into `application_secrets`, hashed like the Worker does. */
+  clientSecret?: string
+}
+
+const createApplication = async (overrides: CreateApplicationInput = {}) => {
   const now = new Date()
   const application = {
     id: overrides.id ?? `app-${crypto.randomUUID().slice(0, 8)}`,
     name: overrides.name ?? 'Test application',
     description: null,
-    clientSecretHash: overrides.clientSecretHash ?? null,
+    tokenEndpointAuthMethod:
+      overrides.tokenEndpointAuthMethod ?? (overrides.clientSecret ? 'client_secret_post' : 'none'),
     redirectUris: JSON.stringify(overrides.redirectUris ?? ['https://client.test/callback']),
+    postLogoutRedirectUris: JSON.stringify(overrides.postLogoutRedirectUris ?? []),
+    grantTypes: JSON.stringify(overrides.grantTypes ?? ['authorization_code', 'refresh_token']),
+    scopes: JSON.stringify(overrides.scopes ?? []),
+    requirePkce: overrides.requirePkce ?? true,
+    allowedOrigins: JSON.stringify(overrides.allowedOrigins ?? []),
     isActive: overrides.isActive ?? true,
     createdAt: now,
     updatedAt: now,
   }
   await db().insert(applications).values(application)
+
+  if (overrides.clientSecret) {
+    await createSecret(application.id, overrides.clientSecret)
+  }
   return application
 }
+
+type CreateSecretInput = {
+  label?: string | null
+  expiresAt?: Date | null
+  revokedAt?: Date | null
+}
+
+/** Writes a client secret the same way the Worker does: hashed, with a hint, never in the clear. */
+const createSecret = async (applicationId: string, secret: string, input: CreateSecretInput = {}) => {
+  const now = nowInSeconds()
+  const record = {
+    id: generateId(),
+    applicationId,
+    secretHash: await sha256(secret),
+    hint: secret.slice(0, 6),
+    label: input.label ?? null,
+    expiresAt: input.expiresAt ?? null,
+    lastUsedAt: null,
+    revokedAt: input.revokedAt ?? null,
+    createdBy: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+  await db().insert(applicationSecrets).values(record)
+  return record
+}
+
+const findSecrets = async (applicationId: string) =>
+  db().select().from(applicationSecrets).where(eq(applicationSecrets.applicationId, applicationId))
 
 const createSessionRow = async (
   input: {
@@ -216,6 +269,8 @@ type SignInInput = {
   /** Claims baked into the token. They are deliberately allowed to disagree with the database. */
   claimedRoles?: string[]
   claimedPermissions?: string[]
+  /** Scope stamped on the token, which `/oauth/userinfo` reads to decide which claims to return. */
+  scope?: string
 }
 
 /**
@@ -233,6 +288,8 @@ const signIn = async (input: SignInInput = {}) => {
   const { token, expiresAt } = await signAccessToken(env, {
     sub: user.id,
     aud: applicationId,
+    client_id: applicationId,
+    scope: input.scope ?? 'openid profile email',
     sid: session.id,
     provider: input.provider ?? 'magic_link',
     email: user.email,
@@ -255,11 +312,13 @@ export {
   bearer,
   createApplication,
   createIdentity,
+  createSecret,
   createInvitation,
   createRole,
   createSessionRow,
   createUser,
   db,
+  findSecrets,
   findUser,
   grant,
   SEED,

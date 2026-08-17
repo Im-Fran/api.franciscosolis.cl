@@ -29,9 +29,13 @@ type AuditEvent =
   | 'invitation.accepted'
   | 'application.created'
   | 'application.updated'
-  // Only `scripts/configure-applications.mjs` writes these two: the admin API deliberately has no
-  // route that deletes a client or reads a secret back, so both are operator-only actions.
+  | 'application.secret_issued'
   | 'application.secret_rotated'
+  | 'application.secret_revoked'
+  /** A client presented credentials the token, revocation or introspection endpoint refused. */
+  | 'client.authentication_failed'
+  // Only `scripts/configure-applications.mjs` writes this one: the admin API deliberately has no
+  // route that deletes a client, so it stays an operator-only action.
   | 'application.deleted'
   | 'role.granted'
   | 'role.revoked'
