@@ -2,6 +2,7 @@
   "name": "landing",
   "type": "module",
   "license": "GPL-3.0-only",
+  "version": "0.0.1",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8788 --inspector-port 9230",
     "build": "wrangler deploy --dry-run --outdir dist",
@@ -22,7 +23,7 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "catalog:",
-    "@cloudflare/workers-types": "^5.20260730.1",
+    "@cloudflare/workers-types": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
