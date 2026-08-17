@@ -22,7 +22,8 @@ offline against its JWKS.
 ## Stack
 
 - Cloudflare Workers, Hono 4, hono-openapi + valibot, axios, Wrangler 4, TypeScript strict.
-- **Drizzle ORM** over D1 (`drizzle-orm/d1`) — the only app in the monorepo with an ORM.
+- **Drizzle ORM** over D1 (`drizzle-orm/d1`).
+- **`@franciscosolis/emails`** (workspace package) for the magic link and invitation bodies.
 - Dependency versions come from the parent workspace's pnpm `catalog` — use `catalog:`,
   never a hardcoded version.
 - `pnpm` install/deps are managed from the **monorepo root**.
@@ -106,6 +107,16 @@ offline against its JWKS.
   covers secret rotation and deletion, which the API intentionally does not expose
   (`application.secret_rotated` and `application.deleted` in `AuditEvent` exist only for it). Values
   are interpolated into SQL, so anything with control characters is refused rather than escaped.
+- **Email bodies live in `@franciscosolis/emails`, and rendering is async.** `services/email.ts`
+  is now a thin wrapper: `magicLinkTemplate` and `invitationTemplate` return *promises* of
+  `{ subject, html, text }`, so every call site awaits them. There is no `escapeHtml` here any
+  more — react-email escapes children — and no hand-written plain-text twin, because the text
+  part is derived from the rendered HTML. Add a new email as a template in that package, not as
+  a string in this Worker.
+- **Prettier is aliased out of the bundle** (`alias` in `wrangler.jsonc`, mirrored in
+  `vitest.config.ts`): `@react-email/render` imports it statically for a `pretty: true` option
+  this Worker never uses, and it is ~1.5 MB of formatter parsed on every cold start. The stub
+  (`packages/emails/src/prettier-stub.ts`) throws if it is ever actually called.
 - **The seed migration is hand-written and idempotent**: `0001_seed.sql` is not in drizzle's
   `meta/_journal.json` because it contains no DDL. Adding DDL there would desynchronise the
   drizzle snapshot — put schema changes in a generated migration instead.

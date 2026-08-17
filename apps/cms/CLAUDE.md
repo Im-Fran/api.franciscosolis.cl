@@ -30,6 +30,7 @@ account.
 
 - Cloudflare Workers, Hono 4, hono-openapi + valibot, Wrangler 4, TypeScript strict.
 - **Drizzle ORM** over D1 (`drizzle-orm/d1`), backed by the `franciscosolis_cms` database.
+- **`@franciscosolis/emails`** (workspace package) for the house layout outgoing mail is wrapped in.
 - Dependency versions come from the parent workspace's pnpm `catalog` — use `catalog:`,
   never a hardcoded version.
 - `pnpm` install/deps are managed from the **monorepo root**.
@@ -108,6 +109,18 @@ trusts the local auth Worker. Everything else lives in `wrangler.jsonc` under `v
   written to `email_messages` before it is tried and updated with the outcome.
 - **A provider failure is a 202 with `status: "failed"`**, not an HTTP error: the attempt
   was recorded either way, and the caller needs the message id to find it.
+- **Outgoing mail is wrapped in the shared house layout by default** (`applyBrandedLayout` in
+  `services/email.ts`, `ContentEmail` in `@franciscosolis/emails`), so an editorial send and a
+  sign-in link from `apps/auth` arrive looking like the same sender. Three rules hold it in
+  place: `layout: "raw"` opts out for a body that is already a complete document; a message with
+  no HTML part is never promoted to one, because that is a change of intent rather than of
+  styling; and an editor-supplied `text` always wins, with the derived plain-text alternative
+  only filling the gap for an HTML-only message that used to go out with no text part at all.
+  What is logged in `email_messages` is the *wrapped* body — the log has to be what was sent.
+- **Prettier is aliased out of the bundle** (`alias` in `wrangler.jsonc`, mirrored in
+  `vitest.config.ts`): `@react-email/render` imports it statically for a `pretty: true` option
+  this Worker never uses, and it is ~1.5 MB of formatter parsed on every cold start. The stub
+  (`packages/emails/src/prettier-stub.ts`) throws if it is ever actually called.
 - **Template variables are derived from the text**, never declared by hand, so the stored
   list cannot drift from the `{{ placeholders }}` actually used. A send missing any of them
   is refused rather than mailing "Hola ,".

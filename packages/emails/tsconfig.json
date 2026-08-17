@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "lib": [
+      "ESNext",
+      "DOM"
+    ],
+    // React, not `hono/jsx` as the Workers use. Every `.tsx` here also carries an
+    // `@jsxImportSource react` pragma, because the bundler that ends up compiling these files is
+    // the consuming Worker's — and it reads that Worker's tsconfig, not this one.
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    // No `@/*` path alias on purpose: these files are compiled by the *consuming* Worker's
+    // bundler, where `@/*` already points at that Worker's own `src/`. Imports here are relative.
+    "types": []
+  },
+  "include": [
+    "./src/**/*.ts",
+    "./src/**/*.tsx"
+  ]
+}

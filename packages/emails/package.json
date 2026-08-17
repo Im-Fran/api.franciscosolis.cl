@@ -1,0 +1,26 @@
+{
+  "name": "@franciscosolis/emails",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "preview": "email dev --dir ./src/templates --port 8791",
+    "export": "email export --dir ./src/templates --outDir ./out",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@react-email/components": "catalog:",
+    "@react-email/render": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "react-email": "catalog:",
+    "typescript": "catalog:"
+  }
+}

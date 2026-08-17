@@ -124,11 +124,12 @@ app.post(
       await sendEmail(
         c.env,
         email,
-        invitationTemplate({
+        await invitationTemplate({
           url: loginUrl,
           applicationName: application?.name ?? c.env.MAIL_FROM_NAME,
           invitedByName: actor.user.name ?? actor.user.email,
           expiresInDays: Math.round(expiresInSeconds / 86400),
+          brandName: c.env.MAIL_FROM_NAME,
         }),
       )
     }

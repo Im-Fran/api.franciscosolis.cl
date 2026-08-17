@@ -108,6 +108,9 @@ describe('POST /admin/emails — inline message', () => {
       subject: 'Hola',
       html: '<p>Body</p>',
       reply_to: 'fran@franciscosolis.cl',
+      // `raw` is the only mode where the body reaches the binding untouched; the default wraps it
+      // in the house layout and derives a plain-text part from the result.
+      layout: 'raw',
     })
 
     expect(sent).toEqual([
@@ -294,6 +297,86 @@ describe('POST /admin/emails — the sender allowlist', () => {
   })
 })
 
+describe('POST /admin/emails — the house layout', () => {
+  it('wraps an HTML body in the shared shell by default', async () => {
+    const message = await dataOf<LoggedMessage>(
+      await call('POST', '/admin/emails', { to: ['a@example.com'], subject: 'Hola', html: '<p>Body</p>' }),
+    )
+
+    expect(message.html).toContain('<!DOCTYPE html')
+    // The editor's markup survives untouched inside the shell.
+    expect(message.html).toContain('<p>Body</p>')
+    // Same footer the auth Worker's mail carries, which is the whole point of sharing the package.
+    expect(message.html).toContain('franciscosolis.cl')
+  })
+
+  it('gives an HTML-only message the plain-text alternative it used to go out without', async () => {
+    await call('POST', '/admin/emails', { to: ['a@example.com'], subject: 'Hola', html: '<p>Body</p>' })
+
+    expect(sent[0]?.text).toContain('Body')
+  })
+
+  it('never overwrites a plain-text body the editor wrote', async () => {
+    const message = await dataOf<LoggedMessage>(
+      await call('POST', '/admin/emails', {
+        to: ['a@example.com'],
+        subject: 'Hola',
+        html: '<p>Body</p>',
+        text: 'Mine',
+      }),
+    )
+
+    expect(message.text).toBe('Mine')
+  })
+
+  it('leaves a text-only message alone rather than promoting it to HTML', async () => {
+    // Adding an HTML part is a change of intent, not of styling.
+    const message = await dataOf<LoggedMessage>(
+      await call('POST', '/admin/emails', { to: ['a@example.com'], subject: 'Hola', text: 'Body' }),
+    )
+
+    expect(message.html).toBeNull()
+    expect(message.text).toBe('Body')
+  })
+
+  it('titles the card with the subject, or with `heading` when one is given', async () => {
+    const bySubject = await dataOf<LoggedMessage>(
+      await call('POST', '/admin/emails', { to: ['a@example.com'], subject: 'Hola', html: '<p>Body</p>' }),
+    )
+    const byHeading = await dataOf<LoggedMessage>(
+      await call('POST', '/admin/emails', {
+        to: ['a@example.com'],
+        subject: 'Hola',
+        heading: 'Something else',
+        html: '<p>Body</p>',
+      }),
+    )
+
+    expect(bySubject.html).toContain('>Hola</h1>')
+    expect(byHeading.html).toContain('>Something else</h1>')
+  })
+
+  it('stores the wrapped body, so the log is what was actually sent', async () => {
+    const message = await dataOf<LoggedMessage>(
+      await call('POST', '/admin/emails', { to: ['a@example.com'], subject: 'Hola', html: '<p>Body</p>' }),
+    )
+
+    expect((await rawRow(message.id))?.html).toBe(sent[0]?.html)
+  })
+
+  it('refuses a layout it does not know instead of silently defaulting', async () => {
+    const response = await call('POST', '/admin/emails', {
+      to: ['a@example.com'],
+      subject: 'Hola',
+      html: '<p>Body</p>',
+      layout: 'fancy',
+    })
+
+    expect(response.status).toBe(400)
+    expect(await countRows('email_messages')).toBe(0)
+  })
+})
+
 describe('POST /admin/emails — templates', () => {
   const template = () =>
     seedTemplate({
@@ -317,7 +400,8 @@ describe('POST /admin/emails — templates', () => {
     )
 
     expect(message.subject).toBe('Hola Fran')
-    expect(message.html).toBe('<p>Fran, welcome to franciscosolis.cl</p>')
+    // The rendered body is what ends up inside the house layout, not what is stored verbatim.
+    expect(message.html).toContain('<p>Fran, welcome to franciscosolis.cl</p>')
     expect(message.text).toBe('Hola Fran')
     expect(message.template_slug).toBe('welcome')
   })
@@ -388,7 +472,8 @@ describe('POST /admin/emails — templates', () => {
       }),
     )
 
-    expect(message.html).toBe('<p>Replaced</p>')
+    expect(message.html).toContain('<p>Replaced</p>')
+    expect(message.html).not.toContain('welcome to')
     expect(message.text).toBe('Hola Fran')
   })
 
@@ -425,7 +510,7 @@ describe('POST /admin/emails — templates', () => {
       }),
     )
 
-    expect(message.html).toBe('<p><b>Fran</b>, welcome to x</p>')
+    expect(message.html).toContain('<p><b>Fran</b>, welcome to x</p>')
   })
 })
 
@@ -562,7 +647,7 @@ describe('GET /admin/emails/:id', () => {
 
     const message = await dataOf<LoggedMessage>(await call('GET', `/admin/emails/${created.id}`))
     expect(message.id).toBe(created.id)
-    expect(message.html).toBe('<p>Body</p>')
+    expect(message.html).toContain('<p>Body</p>')
     expect(message.to).toEqual(['a@example.com'])
   })
 

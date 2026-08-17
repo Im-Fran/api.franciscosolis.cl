@@ -39,6 +39,11 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
 - **Magic link sign-in** — emailed from `FranciscoSolis <hola@mail.franciscosolis.cl>` through
   Cloudflare Email Sending. The link carries only an opaque token; the redirect target is stored
   server-side and cannot be rewritten by a mail client.
+- **Templated email bodies** — the sign-in and invitation messages are
+  [react-email](https://react.email) components in the shared
+  [`@franciscosolis/emails`](../../packages/emails/README.md) package, so interpolated values are
+  escaped by construction, the plain-text alternative is derived from the HTML instead of
+  maintained beside it, and both can be previewed in a browser without sending anything.
 - **Google OAuth 2.0** — PKCE and `nonce` on the Google leg too, with the ID token verified
   against Google's JWKS rather than trusted from the transport.
 - **Offline token verification** — EdDSA (Ed25519) keys published at `/.well-known/jwks.json`,
@@ -68,6 +73,7 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
 | Framework | [Hono](https://hono.dev) 4 |
 | Database | Cloudflare D1 (`franciscosolis_auth`) via [Drizzle ORM](https://orm.drizzle.team) |
 | Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`send_email` binding) |
+| Email templates | [react-email](https://react.email) via `@franciscosolis/emails` |
 | Validation / OpenAPI | [valibot](https://valibot.dev) + [hono-openapi](https://www.npmjs.com/package/hono-openapi) |
 | Tokens | JWT, EdDSA (Ed25519) via WebCrypto |
 | HTTP client | axios |
@@ -156,6 +162,14 @@ For local development, `.dev.vars` overrides `AUTH_PUBLIC_URL`, so also add the 
 
 Onboard `mail.franciscosolis.cl` in **Compute → Email Service → Email Sending** in the Cloudflare
 dashboard so `hola@mail.franciscosolis.cl` is allowed to send.
+
+The bodies themselves come from the shared
+[`@franciscosolis/emails`](../../packages/emails/README.md) package. To look at them without
+sending anything:
+
+```bash
+pnpm --filter @franciscosolis/emails run preview   # http://localhost:8791
+```
 
 ### 6. Run
 
