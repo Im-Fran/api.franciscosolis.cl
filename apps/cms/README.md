@@ -48,6 +48,12 @@ Reading published content is **public** — that is what the website itself call
 - **Email with templates** — `{{ variable }}` placeholders whose variable list is derived from the
   text itself, so the two can never drift. A send missing a value is refused rather than mailing a
   half-rendered message.
+- **A house layout on every message** — the HTML body is wrapped in the shared
+  [react-email](https://react.email) shell from
+  [`@franciscosolis/emails`](../../packages/emails/README.md), the same one `apps/auth`'s sign-in
+  links use, so everything from this domain arrives looking like the same sender. `layout: "raw"`
+  opts a body out, and an HTML-only message picks up a plain-text alternative derived from the
+  wrapped body.
 - **Sender allowlist, twice** — an editor may only pick from `MAIL_ALLOWED_SENDERS`, and
   Cloudflare independently enforces `allowed_sender_addresses` from `wrangler.jsonc`.
 - **Full email log** — every message is written to `email_messages` before it is attempted and
@@ -72,6 +78,7 @@ Reading published content is **public** — that is what the website itself call
 | Validation | [valibot](https://valibot.dev) |
 | Database | Cloudflare D1 (`franciscosolis_cms`) + [Drizzle ORM](https://orm.drizzle.team) |
 | Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) |
+| Email templates | [react-email](https://react.email) via `@franciscosolis/emails` |
 | Auth | EdDSA JWTs from `apps/auth`, verified offline against its JWKS |
 | Language | TypeScript (strict) |
 
@@ -209,6 +216,19 @@ curl -X POST https://api.franciscosolis.cl/cms/admin/emails \
 The response is `202` with the logged message; its `status` is `sent` or `failed`. A provider
 failure is reported in the body rather than as an HTTP error, because the attempt was recorded
 either way.
+
+The HTML body is wrapped in the shared house layout before it goes out, and the message logged in
+`email_messages` is the wrapped one — the log is meant to answer "what exactly did we send that
+person". Two fields tune it:
+
+| Field | Effect |
+|-------|--------|
+| `layout` | `branded` (default) wraps the body; `raw` sends it exactly as given, for a body that is already a complete document. |
+| `heading` | Title inside the card. Defaults to the subject. Ignored when `layout` is `raw`. |
+
+A message with only a `text` body is never promoted to HTML — that is a change of intent, not of
+styling — and a `text` you supply is never overwritten. Preview the layout with
+`pnpm --filter @franciscosolis/emails run preview`.
 
 ---
 

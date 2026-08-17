@@ -72,18 +72,52 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # Aggregate check: a single required status that turns green only when every app job did. Branch
-  # protection can require this one instead of being updated each time an app is added or renamed.
+  # `packages/emails` ships TypeScript source that each Worker bundles, so it has no build to run
+  # and no suite of its own — its rendering is exercised by the `auth` and `cms` jobs above, inside
+  # workerd, which is the only runtime that matters for it. What is left is the type check, and it
+  # is worth its own job: a break here surfaces as "the shared templates changed", not as two
+  # unrelated Workers failing at once.
+  emails:
+    name: emails
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @franciscosolis/emails run typecheck
+
+  # Aggregate check: a single required status that turns green only when every other job did.
+  # Branch protection can require this one instead of being updated each time an app is added or
+  # renamed.
   ci:
     name: ci
     runs-on: ubuntu-latest
-    needs: app
+    needs: [app, emails]
     if: always()
     steps:
-      - name: Verify every app job succeeded
+      - name: Verify every job succeeded
         run: |
           if [ "${{ needs.app.result }}" != "success" ]; then
             echo "At least one app check failed: ${{ needs.app.result }}"
             exit 1
           fi
-          echo "All app checks passed."
+          if [ "${{ needs.emails.result }}" != "success" ]; then
+            echo "The shared email package check failed: ${{ needs.emails.result }}"
+            exit 1
+          fi
+          echo "All checks passed."

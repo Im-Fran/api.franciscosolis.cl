@@ -39,9 +39,17 @@ export default defineConfig({
     }),
   ],
   resolve: {
-    // Wrangler reads the `@/*` mapping straight from tsconfig when it bundles; Vite does not, so
-    // it has to be restated here or every `@/…` import fails to resolve under test.
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    alias: {
+      // Wrangler reads the `@/*` mapping straight from tsconfig when it bundles; Vite does not, so
+      // it has to be restated here or every `@/…` import fails to resolve under test.
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // Mirrors the `alias` block in wrangler.jsonc, which keeps Prettier out of the deployed
+      // bundle. Restating it here is what makes the suite exercise the Worker as it actually
+      // ships: a react-email upgrade that starts needing the formatter at render time fails a
+      // test rather than a production send.
+      'prettier/standalone': fileURLToPath(new URL('../../packages/emails/src/prettier-stub.ts', import.meta.url)),
+      'prettier/plugins/html': fileURLToPath(new URL('../../packages/emails/src/prettier-stub.ts', import.meta.url)),
+    },
   },
   test: {
     include: ['test/**/*.test.ts'],

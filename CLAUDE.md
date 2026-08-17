@@ -22,7 +22,13 @@ together four Cloudflare Workers, all living directly in this repo:
   legal pages, outgoing email), reachable through `apps/api` at `/cms/*`. Public reads of
   published content, editorial writes gated to `@franciscosolis.cl` accounts.
 
-Each app keeps its own `CLAUDE.md` and `README.md`. When working on the actual
+Alongside them, `packages/` holds the shared code the Workers import:
+
+- `packages/emails` (`@franciscosolis/emails`) — every email body in the monorepo, written as
+  react-email components. Imported by `apps/auth` and `apps/cms`; no Worker builds mail markup
+  itself.
+
+Each app and package keeps its own `CLAUDE.md` and `README.md`. When working on the actual
 implementation of a Worker, read/edit inside `apps/api`, `apps/landing`, `apps/auth` or
 `apps/cms` — the root repo only owns workspace-wide wiring (pnpm workspace/catalog, root
 scripts).
@@ -34,7 +40,8 @@ scripts).
 - Every Worker uses Hono + hono-openapi + valibot + axios + Wrangler, all pinned via a
   shared pnpm `catalog` in `pnpm-workspace.yaml` — do not add per-app version pins for
   those deps, add/bump them in the catalog instead. `apps/auth` and `apps/cms` additionally
-  use drizzle-orm/drizzle-kit, also catalogued.
+  use drizzle-orm/drizzle-kit, and react + react-email through `@franciscosolis/emails`, all
+  catalogued too.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
   on `dev`/`deploy`.
 - Vitest running inside `workerd` via `@cloudflare/vitest-pool-workers`, also catalogued.
@@ -52,7 +59,13 @@ scripts).
 - `pnpm run cf-typegen` — regenerates Cloudflare binding types (`CloudflareBindings`) in
   every app after a `wrangler.jsonc` change.
 
+- `pnpm --filter @franciscosolis/emails run preview` — react-email preview server on :8791.
+
 Individual apps can also be run from their own directory (`cd apps/api && pnpm run dev`).
+
+`packages/emails` has no `dev`/`build`/`deploy`/`test` script, so the root `-r` scripts skip it —
+it ships TypeScript source that each Worker bundles, and its rendering is covered by the `auth` and
+`cms` suites, which run inside `workerd`.
 
 ## Testing
 
@@ -129,6 +142,13 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   one `content_entries` table discriminated by `collection`, with collection-specific fields
   validated by `apps/cms/src/lib/collections.ts`. Adding a collection is a registry entry,
   not a migration.
+- **Email bodies are react-email components, in one shared package**: neither Worker builds
+  mail markup any more. `@franciscosolis/emails` renders `{ subject, html, text }` and the
+  Worker only hands that to its `EMAIL` binding. Two consequences worth knowing before
+  touching either: rendering is asynchronous, and both Workers alias `prettier/standalone`
+  and `prettier/plugins/html` out of their bundle (in `wrangler.jsonc` *and* in
+  `vitest.config.ts`) because `@react-email/render` imports ~1.5 MB of formatter statically
+  for an option neither uses. See `packages/emails/CLAUDE.md`.
 - **The gateway's CORS allows write verbs because of auth**: `apps/api` used to allow `GET`
   only; sign-in, token exchange and the admin API need `POST`/`PATCH`/`DELETE`. The origin
   allowlist was not touched and must stay locked down.

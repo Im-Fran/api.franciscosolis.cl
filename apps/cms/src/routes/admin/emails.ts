@@ -8,7 +8,7 @@ import { emailMessages, emailTemplates } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { EMAIL_LIMITS, PAGINATION } from '@/lib/config'
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
-import { renderTemplate, resolveSender, sendEmail, toPublicMessage } from '@/services/email'
+import { applyBrandedLayout, renderTemplate, resolveSender, sendEmail, toPublicMessage } from '@/services/email'
 
 /**
  * Outgoing mail, sent through Cloudflare Email Sending from the `mail.franciscosolis.cl` domain.
@@ -30,6 +30,13 @@ const sendSchema = v.object({
   subject: v.optional(v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(EMAIL_LIMITS.maxSubjectLength))),
   html: v.optional(v.pipe(v.string(), v.maxLength(EMAIL_LIMITS.maxBodyLength))),
   text: v.optional(v.pipe(v.string(), v.maxLength(EMAIL_LIMITS.maxBodyLength))),
+  /**
+   * `branded` (the default) wraps the HTML body in the shared react-email shell. `raw` sends the
+   * body exactly as given — the escape hatch for a body that is already a complete document.
+   */
+  layout: v.optional(v.picklist(['branded', 'raw'])),
+  /** Title inside the branded card. Defaults to the subject. Ignored when `layout` is `raw`. */
+  heading: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(EMAIL_LIMITS.maxSubjectLength))),
   /** Sender address. Must be one of `MAIL_ALLOWED_SENDERS`; defaults to `MAIL_FROM_EMAIL`. */
   from: v.optional(v.pipe(v.string(), v.trim(), v.email())),
   reply_to: v.optional(v.pipe(v.string(), v.trim(), v.email())),
@@ -42,7 +49,7 @@ app.post(
   '/emails',
   describeRoute({
     description:
-      'Sends an email, either from a stored template (`template` + `variables`) or from an inline body. A `subject` sent alongside a template overrides the template\'s own. The response carries the logged message, whose `status` is `sent` or `failed` — a provider failure is reported in the body rather than as an HTTP error, because the attempt was recorded either way.',
+      'Sends an email, either from a stored template (`template` + `variables`) or from an inline body. A `subject` sent alongside a template overrides the template\'s own. The HTML body is wrapped in the shared house layout unless `layout` is `raw`, and an HTML-only message gets a plain-text alternative derived from it. The response carries the logged message, whose `status` is `sent` or `failed` — a provider failure is reported in the body rather than as an HTTP error, because the attempt was recorded either way.',
     tags: ['Admin · Email'],
     security: [{ bearerAuth: [] }],
     responses: {
@@ -92,6 +99,10 @@ app.post(
     }
     if (!html && !text) {
       throw new HTTPException(422, { message: 'A message needs at least one of `html` or `text`' })
+    }
+
+    if ((body.layout ?? 'branded') === 'branded') {
+      ;({ html, text } = await applyBrandedLayout(c.env, { subject, heading: body.heading, html, text }))
     }
 
     const from = resolveSender(c.env, body.from)

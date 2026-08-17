@@ -27,6 +27,11 @@ is not just its own spec: it fetches each internal module's spec over its servic
 merges the paths/components under a prefix (e.g. `/landing/*`), so consumers get one combined
 API description without the internal modules needing to be public.
 
+Shared code lives under `packages/`. The one package so far is
+[`@franciscosolis/emails`](packages/emails/README.md), which holds every email body in the
+monorepo as **react-email** components, so `auth` and `cms` render mail from the same templates
+instead of assembling HTML each on their own.
+
 The workspace is managed with **pnpm workspaces**, sharing dependency versions through a
 pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 
@@ -46,6 +51,10 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   through Cloudflare Email Sending. Published content is readable publicly; editing requires an
   access token from `apps/auth` belonging to an `@franciscosolis.cl` account, verified offline
   against the auth JWKS.
+- **Shared email templates** — every message either Worker sends is a react-email component in
+  `packages/emails`, rendered to an HTML + plain-text pair at send time. Values are escaped by
+  construction, the text alternative is derived from the HTML so the two cannot drift, and the
+  whole set is previewable in a browser with `pnpm --filter @franciscosolis/emails run preview`.
 - **Merged OpenAPI spec** — `mergeRemoteSpecs` (`apps/api/src/openapi.ts`) fetches each
   internal Worker's `/openapi.json` and merges it into the root spec under its route prefix;
   an unreachable module is silently skipped instead of breaking the whole document.
@@ -64,9 +73,10 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   authenticated request so revocation is immediate, and rotates refresh tokens with reuse
   detection.
 - **Shared dependency versions** — `pnpm-workspace.yaml` pins `hono`, `hono-openapi`,
-  `valibot`, `wrangler`, `axios`, `drizzle-orm`, `drizzle-kit`, `typescript`, `vitest`,
+  `valibot`, `wrangler`, `axios`, `drizzle-orm`, `drizzle-kit`, `react`, `react-dom`,
+  `react-email`, `@react-email/components`, `@react-email/render`, `typescript`, `vitest`,
   `@cloudflare/vitest-pool-workers`, `@vitest/coverage-istanbul`, `@hono/standard-validator`
-  and `@valibot/to-json-schema` in a single `catalog` consumed by every app.
+  and `@valibot/to-json-schema` in a single `catalog` consumed by every workspace package.
 - **Tested inside the real runtime** — every app has unit and functional suites that execute in
   `workerd` through `@cloudflare/vitest-pool-workers`, against live D1 databases and real service
   bindings rather than Node stand-ins. CI runs each app as its own independent check.
@@ -82,6 +92,7 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 | Validation | [valibot](https://valibot.dev) via `@hono/standard-validator` |
 | Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth`, `apps/cms`) |
 | Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`apps/auth`, `apps/cms`) |
+| Email templates | [react-email](https://react.email) in the shared `@franciscosolis/emails` package |
 | HTTP client | axios |
 | Language | TypeScript (strict) |
 | Package manager | pnpm workspaces (11.17.0) with a shared dependency catalog |
@@ -226,7 +237,7 @@ a missing binding or code that does not bundle for the Workers runtime.
 `dev`, and on demand.
 
 It runs **one job per app**, so `api`, `landing`, `auth` and `cms` each report as an independent
-check. `fail-fast` is disabled: a failure in one app never cancels or hides the others, and the
+check, plus a small `emails` job that typechecks the shared template package. `fail-fast` is disabled: a failure in one app never cancels or hides the others, and the
 check that goes red points straight at the Worker that broke. Each job does the same three things
 for its own app:
 
@@ -234,9 +245,9 @@ for its own app:
 2. **Test** — the full suite inside `workerd`, with a coverage report uploaded as an artifact.
 3. **Build** — `wrangler deploy --dry-run`, catching config and bundling breakage the tests cannot see.
 
-A final aggregate job named `ci` turns green only when all four app jobs did, which gives branch
-protection a single status to require instead of a list that has to be edited whenever an app is
-added or renamed.
+A final aggregate job named `ci` turns green only when every one of those jobs did, which gives
+branch protection a single status to require instead of a list that has to be edited whenever an
+app is added or renamed.
 
 ---
 

@@ -141,7 +141,7 @@ describe('POST /admin/invitations', () => {
     await expect(response.json()).resolves.toMatchObject({ data: { emailed: true } })
     expect(mailbox.last().to).toEqual([email])
     expect(linkFrom(mailbox.last()).toString()).toBe('https://client.test/sign-in')
-    expect(mailbox.last().text).toContain('Ada invited you.')
+    expect(mailbox.last().text).toContain('Ada invited you to')
   })
 
   it('falls back to the origin of the application\'s first redirect URI', async () => {

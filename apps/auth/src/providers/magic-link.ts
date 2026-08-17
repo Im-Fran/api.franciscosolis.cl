@@ -101,10 +101,11 @@ const requestMagicLink = async (
   await sendEmail(
     env,
     email,
-    magicLinkTemplate({
+    await magicLinkTemplate({
       url: url.toString(),
       applicationName: input.request.application.name,
       expiresInMinutes: Math.round(TTL.magicLink / 60),
+      brandName: env.MAIL_FROM_NAME,
     }),
   )
 

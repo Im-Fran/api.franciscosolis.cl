@@ -14,6 +14,14 @@
   "placement": {
     "mode": "smart"
   },
+  // `@react-email/render` imports Prettier at the top of its module to implement an option this
+  // Worker never uses (`pretty: true`), which drags ~1.5 MB of formatter into the bundle and into
+  // every cold start. The stub throws if anything actually calls it, so the day that assumption
+  // stops holding is a loud failure rather than silently unformatted output.
+  "alias": {
+    "prettier/standalone": "../../packages/emails/src/prettier-stub.ts",
+    "prettier/plugins/html": "../../packages/emails/src/prettier-stub.ts"
+  },
   "d1_databases": [
     {
       "binding": "DB",

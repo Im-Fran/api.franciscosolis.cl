@@ -1,3 +1,4 @@
+import { renderContentEmail } from '@franciscosolis/emails'
 import { eq } from 'drizzle-orm'
 import { HTTPException } from 'hono/http-exception'
 import type { Database } from '@/db/client'
@@ -58,6 +59,40 @@ const renderTemplate = (template: RenderableTemplate, variables: Record<string, 
     html: template.html === null ? null : render(template.html, variables),
     text: template.text === null ? null : render(template.text, variables),
   }
+}
+
+type LayoutInput = {
+  subject: string
+  /** Title inside the card. Defaults to the subject, which is what an editor usually means. */
+  heading?: string | null
+  html: string | null
+  text: string | null
+}
+
+/**
+ * Wraps an editorial body in the shared react-email shell, so a newsletter and a sign-in link from
+ * `apps/auth` arrive looking like the same sender.
+ *
+ * Two deliberate limits. A message with no HTML part is left alone: promoting a plain-text send to
+ * an HTML one is a change of intent, not of styling. And an editor-supplied `text` always wins —
+ * the derived plain-text alternative only fills the gap for an HTML-only message, which used to go
+ * out with no text part at all.
+ *
+ * The body is inserted verbatim rather than parsed; see `ContentEmail` for why that is safe here.
+ */
+const applyBrandedLayout = async (env: Env, input: LayoutInput): Promise<{ html: string | null, text: string | null }> => {
+  if (!input.html) {
+    return { html: input.html, text: input.text }
+  }
+
+  const branded = await renderContentEmail({
+    subject: input.subject,
+    heading: input.heading || input.subject,
+    html: input.html,
+    brandName: env.MAIL_FROM_NAME,
+  })
+
+  return { html: branded.html, text: input.text ?? branded.text }
 }
 
 type SendInput = {
@@ -142,5 +177,5 @@ const toPublicMessage = (message: EmailMessageRow) => ({
   created_at: message.createdAt.toISOString(),
 })
 
-export { renderTemplate, resolveSender, sendEmail, toPublicMessage }
-export type { EmailMessageRow, RenderableTemplate, SendInput }
+export { applyBrandedLayout, renderTemplate, resolveSender, sendEmail, toPublicMessage }
+export type { EmailMessageRow, LayoutInput, RenderableTemplate, SendInput }
