@@ -170,12 +170,12 @@ describe('POST /magic-link', () => {
   })
 
   it('refuses an unsupported scope', async () => {
-    const response = await request({ email: uniqueEmail('bad-scope'), scope: 'openid offline_access' })
+    const response = await request({ email: uniqueEmail('bad-scope'), scope: 'openid drive.readonly' })
 
     expect(response.status).toBe(400)
     await expect(response.json()).resolves.toEqual({
       error: 'invalid_scope',
-      error_description: 'Unsupported scope: offline_access',
+      error_description: 'Unsupported scope: drive.readonly',
     })
   })
 

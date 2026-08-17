@@ -127,11 +127,11 @@ describe('GET /oauth/google/authorize', () => {
   })
 
   it('reports an unsupported scope back to the client in the same way', async () => {
-    const response = await authorize({ scope: 'openid offline_access' })
+    const response = await authorize({ scope: 'openid drive.readonly' })
     const target = new URL(response.headers.get('Location') as string)
 
     expect(target.searchParams.get('error')).toBe('invalid_scope')
-    expect(target.searchParams.get('error_description')).toBe('Unsupported scope: offline_access')
+    expect(target.searchParams.get('error_description')).toBe('Unsupported scope: drive.readonly')
   })
 
   it('answers 503 when Google is not configured on this deployment', async () => {

@@ -2,9 +2,12 @@ import { env } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import {
   ADMIN_ROLE_SLUG,
+  CLIENT_AUTH_METHODS,
   CODE_CHALLENGE_METHOD,
+  GRANT_TYPES,
   MAGIC_LINK_RATE_LIMIT,
   PROVIDERS,
+  RESPONSE_TYPE,
   TTL,
   USER_STATUS,
 } from '@/lib/config'
@@ -69,8 +72,33 @@ describe('USER_STATUS', () => {
 })
 
 describe('SUPPORTED_SCOPES', () => {
-  it('is the OIDC baseline, and the metadata document advertises the same list', () => {
-    expect([...SUPPORTED_SCOPES]).toEqual(['openid', 'profile', 'email'])
+  it('is the OIDC baseline plus the extras this server implements', () => {
+    expect([...SUPPORTED_SCOPES]).toEqual(['openid', 'profile', 'email', 'offline_access', 'roles', 'groups'])
+  })
+
+  it('starts with openid, the scope that turns the flow into OpenID Connect', () => {
+    expect(SUPPORTED_SCOPES[0]).toBe('openid')
+  })
+})
+
+describe('CLIENT_AUTH_METHODS', () => {
+  it('names `none` first, so a client that registers nothing is public rather than broken', () => {
+    expect(CLIENT_AUTH_METHODS[0]).toBe('none')
+    expect([...CLIENT_AUTH_METHODS]).toEqual(['none', 'client_secret_post', 'client_secret_basic'])
+  })
+})
+
+describe('GRANT_TYPES', () => {
+  it('covers the three grants the token endpoint implements, and no legacy ones', () => {
+    expect([...GRANT_TYPES]).toEqual(['authorization_code', 'refresh_token', 'client_credentials'])
+    expect(GRANT_TYPES).not.toContain('password')
+    expect(GRANT_TYPES).not.toContain('implicit')
+  })
+})
+
+describe('RESPONSE_TYPE', () => {
+  it('is `code` alone: the implicit and hybrid flows are deliberately not implemented', () => {
+    expect(RESPONSE_TYPE).toBe('code')
   })
 })
 

@@ -6,7 +6,8 @@ import { TTL } from '@/lib/config'
 import type { ProviderName } from '@/lib/config'
 import { generateId, randomToken, sha256 } from '@/lib/crypto'
 import { OAuthException } from '@/lib/errors'
-import { signAccessToken } from '@/lib/jwt'
+import { accessTokenHash, signAccessToken, signIdToken } from '@/lib/jwt'
+import { hasScope } from '@/services/applications'
 import { getUserAuthorization } from '@/services/users'
 import type { User } from '@/services/users'
 
@@ -21,8 +22,9 @@ type IssueCodeInput = {
   applicationId: string
   provider: ProviderName
   redirectUri: string
-  codeChallenge: string
-  codeChallengeMethod: string
+  nonce: string | null
+  codeChallenge: string | null
+  codeChallengeMethod: string | null
   scope: string | null
 }
 
@@ -36,6 +38,7 @@ const issueAuthorizationCode = async (db: Database, input: IssueCodeInput) => {
     applicationId: input.applicationId,
     provider: input.provider,
     redirectUri: input.redirectUri,
+    nonce: input.nonce,
     codeChallenge: input.codeChallenge,
     codeChallengeMethod: input.codeChallengeMethod,
     scope: input.scope,
@@ -182,14 +185,16 @@ type TokenResponse = {
   access_token: string
   token_type: 'Bearer'
   expires_in: number
-  refresh_token: string
+  refresh_token?: string
+  /** Present when the granted scope contains `openid`, i.e. when this is an OIDC flow. */
+  id_token?: string
   scope: string | null
-  session_id: string
+  session_id?: string
 }
 
 /**
  * Builds the token endpoint's response: a freshly signed access token carrying the user's roles and
- * permissions, plus the next refresh token in the chain.
+ * permissions, the next refresh token in the chain, and — for an OIDC request — an id_token.
  */
 const buildTokenResponse = async (
   db: Database,
@@ -201,13 +206,18 @@ const buildTokenResponse = async (
     provider: ProviderName
     scope: string | null
     parentRefreshTokenId?: string | null
+    /** Only set on the authorization code exchange; a refresh never re-plays the original nonce. */
+    nonce?: string | null
   },
 ): Promise<TokenResponse> => {
   const authorization = await getUserAuthorization(db, input.user.id, input.applicationId)
+  const scope = input.scope
 
   const { token: accessToken, expiresIn: accessTokenTtl } = await signAccessToken(env, {
     sub: input.user.id,
     aud: input.applicationId,
+    client_id: input.applicationId,
+    scope: scope ?? '',
     sid: input.session.id,
     provider: input.provider,
     email: input.user.email,
@@ -227,13 +237,87 @@ const buildTokenResponse = async (
 
   await db.update(sessions).set({ lastSeenAt: new Date() }).where(eq(sessions.id, input.session.id))
 
-  return {
+  const response: TokenResponse = {
     access_token: accessToken,
     token_type: 'Bearer',
     expires_in: accessTokenTtl,
     refresh_token: refreshToken,
-    scope: input.scope,
+    scope,
     session_id: input.session.id,
+  }
+
+  if (hasScope(scope, 'openid')) {
+    const { token: idToken } = await signIdToken(env, {
+      sub: input.user.id,
+      aud: input.applicationId,
+      sid: input.session.id,
+      // The sign-in, not this exchange: a refresh must not make an old authentication look fresh.
+      auth_time: Math.floor(input.session.createdAt.getTime() / 1000),
+      nonce: input.nonce ?? undefined,
+      at_hash: await accessTokenHash(accessToken),
+      provider: input.provider,
+      ...userClaims(input.user, scope),
+      ...roleClaims(authorization, scope),
+    })
+    response.id_token = idToken
+  }
+
+  return response
+}
+
+/**
+ * The profile claims a scope entitles the holder to, shared by the id_token and `/oauth/userinfo`
+ * so the two can never describe the same user differently.
+ */
+const userClaims = (user: User, scope: string | null) => ({
+  ...(hasScope(scope, 'email')
+    ? { email: user.email, email_verified: user.emailVerifiedAt !== null }
+    : {}),
+  ...(hasScope(scope, 'profile')
+    ? {
+        name: user.name,
+        given_name: user.givenName,
+        family_name: user.familyName,
+        picture: user.picture,
+        locale: user.locale,
+      }
+    : {}),
+})
+
+/**
+ * Role claims, under both names: `roles` is this API's own vocabulary, `groups` is what relying
+ * parties doing group-based access control read. Permissions ride along with `roles` because a
+ * consumer that asked for one invariably wants the other.
+ */
+const roleClaims = (authorization: { roles: string[]; permissions: string[] }, scope: string | null) => ({
+  ...(hasScope(scope, 'roles') ? { roles: authorization.roles, permissions: authorization.permissions } : {}),
+  ...(hasScope(scope, 'groups') ? { groups: authorization.roles } : {}),
+})
+
+/**
+ * The client credentials grant (RFC 6749 §4.4): the application authenticates as itself, with no
+ * user behind it. There is no session, no refresh token and no id_token — nobody was authenticated,
+ * so there is nothing to make a statement about. `sub` is the client id, which is what a resource
+ * server needs to tell a machine caller from a person.
+ */
+const buildClientTokenResponse = async (
+  env: Env,
+  input: { applicationId: string; scope: string | null },
+): Promise<TokenResponse> => {
+  const { token: accessToken, expiresIn: accessTokenTtl } = await signAccessToken(env, {
+    sub: input.applicationId,
+    aud: input.applicationId,
+    client_id: input.applicationId,
+    scope: input.scope ?? '',
+    roles: [],
+    permissions: [],
+  })
+
+  return {
+    access_token: accessToken,
+    token_type: 'Bearer',
+    expires_in: accessTokenTtl,
+    scope: input.scope,
   }
 }
 
@@ -251,6 +335,7 @@ const toPublicSession = (session: Session, currentSessionId?: string) => ({
 })
 
 export {
+  buildClientTokenResponse,
   buildTokenResponse,
   consumeAuthorizationCode,
   consumeRefreshToken,
@@ -258,6 +343,8 @@ export {
   issueAuthorizationCode,
   issueRefreshToken,
   revokeSession,
+  roleClaims,
   toPublicSession,
+  userClaims,
 }
 export type { AuthorizationCode, RefreshToken, Session, TokenResponse }

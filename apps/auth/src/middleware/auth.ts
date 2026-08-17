@@ -53,6 +53,13 @@ const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
     throw new HTTPException(401, { message: `Invalid access token: ${(error as Error).message}` })
   }
 
+  // A client credentials token authenticates an application, not a person: it has no session and no
+  // roles, so every route behind this middleware — all of which act on behalf of a user — refuses
+  // it outright rather than falling through to an empty permission set.
+  if (!claims.sid) {
+    throw new HTTPException(403, { message: 'This endpoint requires an access token issued for a user' })
+  }
+
   const db = getDb(c.env)
 
   const user = await findUserById(db, claims.sub)

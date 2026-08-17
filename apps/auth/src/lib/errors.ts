@@ -1,17 +1,23 @@
 import { HTTPException } from 'hono/http-exception'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 
-/** Error codes defined by RFC 6749 §5.2 / §4.1.2.1 that this Worker can return. */
+/**
+ * Error codes defined by RFC 6749 §5.2 / §4.1.2.1 that this Worker can return, plus the two from
+ * OpenID Connect Core §3.1.2.6 that a `prompt` this server cannot satisfy has to be reported with.
+ */
 type OAuthErrorCode =
   | 'invalid_request'
   | 'invalid_client'
   | 'invalid_grant'
   | 'unauthorized_client'
   | 'unsupported_grant_type'
+  | 'unsupported_response_type'
   | 'invalid_scope'
   | 'access_denied'
   | 'server_error'
   | 'temporarily_unavailable'
+  | 'login_required'
+  | 'interaction_required'
 
 /**
  * An error that must be rendered in the OAuth 2.0 shape (`{ error, error_description }`) rather

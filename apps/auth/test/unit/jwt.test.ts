@@ -27,6 +27,8 @@ const retiredPublicKey = () => {
 const claims = (overrides: Record<string, unknown> = {}) => ({
   sub: 'user-1',
   aud: 'franciscosolis-web',
+  client_id: 'franciscosolis-web',
+  scope: 'openid profile email',
   sid: 'session-1',
   provider: 'magic_link' as const,
   email: 'someone@example.test',

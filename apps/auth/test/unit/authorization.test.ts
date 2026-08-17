@@ -13,6 +13,7 @@ const authorizationRequest = async (overrides: Partial<AuthorizationRequest> = {
   application: (await getApplication(db(), SEED.webAppId)) as Application,
   redirectUri: SEED.webRedirectUri,
   state: 'client-state',
+  nonce: null,
   codeChallenge: RFC7636.challenge,
   codeChallengeMethod: 'S256',
   scope: 'openid profile email',
