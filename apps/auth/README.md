@@ -51,8 +51,9 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
 - **Per-client policy** — authentication method (`none`, `client_secret_post`,
   `client_secret_basic`), allowed grants, allowed scopes, post-logout redirect URIs, extra CORS
   origins, and whether PKCE is required. PKCE can only be waived for a confidential client.
-- **Cross-domain by design** — the OAuth endpoints answer CORS from any origin a registered client
-  actually uses, so an application on its own domain needs no gateway change to sign in.
+- **Cross-domain by design** — the OAuth endpoints, the account endpoints and the admin API answer
+  CORS from any origin a registered client actually uses, so an application on its own domain needs
+  no gateway change to sign in or to administer this service.
 - **Client credentials grant** — for a backend acting as itself rather than for a person.
 - **Authorization code + PKCE for every provider** — the browser only ever carries a one-time
   `code`; tokens are fetched with a separate `POST /oauth/token` bound to the client's

@@ -84,17 +84,53 @@ describe('cross-origin access to the OAuth endpoints', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
   })
 
-  it('does not open the admin API to other origins', async () => {
+  it('opens the admin API too, since the sign-in front-end is also the admin front-end', async () => {
     const response = await preflight('/admin/applications', 'https://franciscosolis.cl')
 
+    expect(response.status).toBe(204)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://franciscosolis.cl')
+  })
+
+  it('still refuses the admin API to an origin no client registered', async () => {
+    const response = await preflight('/admin/applications', 'https://evil.test')
+
+    expect(response.status).toBe(403)
     expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
   })
 
   it('covers the endpoints a browser client actually calls', async () => {
-    for (const path of ['/oauth/token', '/oauth/revoke', '/oauth/introspect', '/oauth/userinfo', '/me', '/magic-link']) {
+    const paths = [
+      '/',
+      '/oauth/token',
+      '/oauth/revoke',
+      '/oauth/introspect',
+      '/oauth/userinfo',
+      '/oauth/logout',
+      '/me',
+      '/me/sessions',
+      '/logout',
+      '/magic-link',
+      '/admin/users',
+      '/.well-known/openid-configuration',
+    ]
+
+    for (const path of paths) {
       const response = await preflight(path, 'https://franciscosolis.cl')
       expect(response.status, path).toBe(204)
     }
+  })
+
+  it('leaves the endpoints a browser navigates to out of it', async () => {
+    for (const path of ['/oauth/authorize', '/oauth/google/callback', '/magic-link/callback']) {
+      const response = await preflight(path, 'https://franciscosolis.cl')
+      expect(response.headers.get('Access-Control-Allow-Origin'), path).toBeNull()
+    }
+  })
+
+  it('matches on segment boundaries, so a longer path is not read as being inside a shorter one', async () => {
+    const response = await preflight('/oauth/tokenizer', 'https://franciscosolis.cl')
+
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
   })
 
   it('still serves the seeded local development origin', async () => {

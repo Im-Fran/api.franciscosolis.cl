@@ -19,13 +19,19 @@ import { signAccessToken } from '@/lib/jwt'
 import type { Session } from '@/services/tokens'
 import type { User } from '@/services/users'
 
-/** Ids written by `0001_seed.sql` / `0002_cms_application.sql`, pinned so a change to them is loud. */
+/**
+ * Ids written by `0001_seed.sql` / `0002_cms_application.sql` and repaired by
+ * `0005_repair_client_config.sql`, pinned so a change to them is loud.
+ */
 const SEED = {
   webAppId: 'franciscosolis-web',
   cmsAppId: 'franciscosolis-cms',
   webRedirectUri: 'https://franciscosolis.cl/auth/callback',
   webLocalRedirectUri: 'http://localhost:5173/auth/callback',
   cmsRedirectUri: 'https://cms.franciscosolis.cl/auth/callback',
+  /* Where the CMS front-end really lives: a route of the site's own single-page application. */
+  cmsSiteRedirectUri: 'https://franciscosolis.cl/apps/cms/callback',
+  cmsSiteLocalRedirectUri: 'http://localhost:5173/apps/cms/callback',
   adminRoleId: '8e7a797c-5012-4a96-a9a2-e8b5bdaeb802',
   userRoleId: 'e159f911-541f-4d48-806e-aaa94971c9a9',
 } as const
