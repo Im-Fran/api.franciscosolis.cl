@@ -41,8 +41,24 @@ const collectAllowedOrigins = async (c: { env: AppEnv['Bindings'] }): Promise<Se
   return origins
 }
 
-/** Paths a browser client legitimately calls cross-origin. */
-const CORS_PATHS = [
+/**
+ * Endpoints a browser client legitimately calls cross-origin: everything a front-end reaches with
+ * `fetch` rather than by navigating to it. `CORS_SUBTREES` covers the areas whose paths carry an
+ * identifier or a document name; `CORS_ENDPOINTS` is matched exactly.
+ *
+ * The admin API is here because the sign-in front-end also *is* the administration front-end, on
+ * its own domain. Nothing in this Worker authenticates ambiently — every one of these endpoints
+ * wants a bearer token or a client secret, never a cookie — so letting an origin send the request
+ * buys an attacker nothing it could not already do from curl. The guard that matters is
+ * `requirePermission`, not the origin.
+ *
+ * Absent, and deliberately so, is everything the browser *navigates* to: `/oauth/authorize` and
+ * the two provider callbacks answer with a redirect carrying a one-time code, and a top-level
+ * navigation is not a cross-origin request, so CORS on them would only invite someone to try
+ * reading that redirect with `fetch`.
+ */
+const CORS_ENDPOINTS = [
+  '/',
   '/oauth/token',
   '/oauth/revoke',
   '/oauth/introspect',
@@ -51,10 +67,13 @@ const CORS_PATHS = [
   '/me',
   '/logout',
   '/magic-link',
-  '/.well-known/',
 ]
 
-const isCorsPath = (pathname: string) => CORS_PATHS.some((path) => pathname === path || pathname.startsWith(path))
+/** Areas whose every path is called with `fetch`, matched on a segment boundary. */
+const CORS_SUBTREES = ['/me', '/admin', '/.well-known']
+
+const isCorsPath = (pathname: string) =>
+  CORS_ENDPOINTS.includes(pathname) || CORS_SUBTREES.some((prefix) => pathname.startsWith(`${prefix}/`))
 
 const clientCors = createMiddleware<AppEnv>(async (c, next) => {
   const origin = c.req.header('Origin')
