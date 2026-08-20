@@ -72,8 +72,22 @@ const CORS_ENDPOINTS = [
 /** Areas whose every path is called with `fetch`, matched on a segment boundary. */
 const CORS_SUBTREES = ['/me', '/admin', '/.well-known']
 
+/**
+ * The two parked-request endpoints the sign-in front-end drives with `fetch` from its own origin:
+ * reading what the pending request is, and submitting an address for a magic link. This Worker
+ * renders no sign-in screen of its own any more, so that front-end is always cross-origin and these
+ * two always need CORS.
+ *
+ * Matched by pattern rather than by adding `/oauth/authorize/` to `CORS_SUBTREES`, because their
+ * sibling `/oauth/authorize/:handle/google` must stay off the list — the browser navigates to it
+ * and it answers with a redirect, exactly like `/oauth/authorize` itself.
+ */
+const CORS_PARKED_REQUEST = /^\/oauth\/authorize\/[^/]+(?:\/magic-link)?$/
+
 const isCorsPath = (pathname: string) =>
-  CORS_ENDPOINTS.includes(pathname) || CORS_SUBTREES.some((prefix) => pathname.startsWith(`${prefix}/`))
+  CORS_ENDPOINTS.includes(pathname) ||
+  CORS_SUBTREES.some((prefix) => pathname.startsWith(`${prefix}/`)) ||
+  CORS_PARKED_REQUEST.test(pathname)
 
 const clientCors = createMiddleware<AppEnv>(async (c, next) => {
   const origin = c.req.header('Origin')

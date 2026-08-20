@@ -46,6 +46,10 @@
     "AUTH_PUBLIC_URL": "https://api.franciscosolis.cl/auth",
     // `iss` claim of every issued access token, and the issuer of the OIDC discovery doc.
     "AUTH_ISSUER": "https://api.franciscosolis.cl/auth",
+    // Sign-in front-end. This Worker is an API and renders no pages, so `GET /oauth/authorize`
+    // parks the request and redirects the browser here with `?request=<handle>`; the front-end
+    // reads /oauth/authorize/:handle and drives the providers from there.
+    "AUTH_LOGIN_URL": "https://franciscosolis.cl/apps/auth",
     "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
     "MAIL_FROM_NAME": "FranciscoSolis"
   },

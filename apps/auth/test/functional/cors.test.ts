@@ -112,6 +112,9 @@ describe('cross-origin access to the OAuth endpoints', () => {
       '/magic-link',
       '/admin/users',
       '/.well-known/openid-configuration',
+      /* The sign-in front-end lives on another origin, so the parked-request pair needs CORS. */
+      '/oauth/authorize/some-handle',
+      '/oauth/authorize/some-handle/magic-link',
     ]
 
     for (const path of paths) {
@@ -121,7 +124,13 @@ describe('cross-origin access to the OAuth endpoints', () => {
   })
 
   it('leaves the endpoints a browser navigates to out of it', async () => {
-    for (const path of ['/oauth/authorize', '/oauth/google/callback', '/magic-link/callback']) {
+    for (const path of [
+      '/oauth/authorize',
+      '/oauth/google/callback',
+      '/magic-link/callback',
+      /* Resuming a parked request through a provider is a navigation, like /oauth/authorize. */
+      '/oauth/authorize/some-handle/google',
+    ]) {
       const response = await preflight(path, 'https://franciscosolis.cl')
       expect(response.headers.get('Access-Control-Allow-Origin'), path).toBeNull()
     }
