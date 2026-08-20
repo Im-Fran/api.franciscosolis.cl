@@ -16,6 +16,7 @@ GOOGLE_CLIENT_SECRET=
 AUTH_PUBLIC_URL=http://localhost:8787/auth
 AUTH_ISSUER=http://localhost:8787/auth
 
-# Optional: sign-in front-end GET /oauth/authorize hands the user to, with the parked request's
-# handle appended as ?request=. Leave unset to serve the Worker's own minimal sign-in page.
-# AUTH_LOGIN_URL=http://localhost:5173/sign-in
+# Sign-in front-end GET /oauth/authorize hands the user to, with the parked request's handle
+# appended as ?request=. This Worker renders no pages, so leaving it unset falls back to the
+# production front-end (https://franciscosolis.cl/apps/auth) rather than to a local screen.
+AUTH_LOGIN_URL=http://localhost:5173/apps/auth

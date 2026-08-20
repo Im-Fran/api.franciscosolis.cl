@@ -3,9 +3,8 @@ import { describeRoute, resolver, validator } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
 import type { AppEnv } from '@/env'
-import { CODE_CHALLENGE_METHOD, RESPONSE_TYPE, TTL } from '@/lib/config'
-import { buildErrorRedirect, OAuthException, RedirectValidationException } from '@/lib/errors'
-import { renderLoginPage } from '@/lib/login-page'
+import { CODE_CHALLENGE_METHOD, DEFAULT_LOGIN_URL, RESPONSE_TYPE, TTL } from '@/lib/config'
+import { buildErrorRedirect, OAuthException } from '@/lib/errors'
 import { googleProvider } from '@/providers/google'
 import { getAvailableProviders } from '@/providers'
 import { requestMagicLink } from '@/providers/magic-link'
@@ -41,12 +40,21 @@ const authorizeSchema = v.object({
   provider: v.optional(v.string()),
 })
 
-/** Where the browser is sent to sign in: a configured front-end, or the built-in page. */
+/**
+ * Where the browser is sent to sign in, with the parked request's handle appended.
+ *
+ * This Worker answers nothing but JSON and redirects, so the one step of an OAuth flow that has to
+ * show the user something belongs to a front-end. `AUTH_LOGIN_URL` names it and `DEFAULT_LOGIN_URL`
+ * is where it lives on this deployment; a value that is not a URL falls back to the default rather
+ * than taking sign-in down, because there is no page here to fail over to any more.
+ */
 const loginTarget = (loginUrl: string | undefined, handle: string) => {
-  if (!loginUrl) {
-    return null
+  let url: URL
+  try {
+    url = new URL(loginUrl || DEFAULT_LOGIN_URL)
+  } catch {
+    url = new URL(DEFAULT_LOGIN_URL)
   }
-  const url = new URL(loginUrl)
   url.searchParams.set('request', handle)
   return url.toString()
 }
@@ -55,11 +63,10 @@ app.get(
   '/oauth/authorize',
   describeRoute({
     description:
-      "The authorization endpoint (RFC 6749 §3.1, OpenID Connect Core §3.1.2.1). Validates the request, parks it, and puts the user in front of a sign-in screen; whichever provider they pick resumes this same request and redirects back to `redirect_uri` with a single-use `code`. Pass `provider=google` to skip the chooser. `prompt=none` is answered with `login_required`: this server keeps no session of its own, so it can never authenticate a user without interaction.",
+      'The authorization endpoint (RFC 6749 §3.1, OpenID Connect Core §3.1.2.1). Validates the request, parks it, and redirects the browser to the sign-in front-end (`AUTH_LOGIN_URL`) with the parked handle as `?request=`; whichever provider the user picks there resumes this same request and redirects back to `redirect_uri` with a single-use `code`. Pass `provider=google` to skip the front-end and go straight to Google. `prompt=none` is answered with `login_required`: this server keeps no session of its own, so it can never authenticate a user without interaction.',
     tags: ['OAuth'],
     responses: {
-      200: { description: 'The built-in sign-in page' },
-      302: { description: 'Redirect to the configured sign-in front-end, to a provider, or back to the client with `error`' },
+      302: { description: 'Redirect to the sign-in front-end, to a provider, or back to the client with `error`' },
       400: { description: 'Unknown client_id or unregistered redirect_uri' },
     },
   }),
@@ -127,20 +134,7 @@ app.get(
         )
       }
 
-      const target = loginTarget(c.env.AUTH_LOGIN_URL, handle)
-      if (target) {
-        return c.redirect(target, 302)
-      }
-
-      return c.html(
-        renderLoginPage({
-          env: c.env,
-          handle,
-          applicationName: application.name,
-          providers: getAvailableProviders(c.env),
-          loginHint: query.login_hint ?? null,
-        }),
-      )
+      return c.redirect(loginTarget(c.env.AUTH_LOGIN_URL, handle), 302)
     } catch (error) {
       // Past `resolveClient` the redirect URI is trusted, so a failure is the client's to handle.
       if (error instanceof OAuthException) {
@@ -242,7 +236,7 @@ app.get(
   },
 )
 
-const magicLinkFormSchema = v.object({
+const magicLinkBodySchema = v.object({
   email: v.pipe(v.string(), v.trim(), v.email('A valid email address is required')),
 })
 
@@ -258,10 +252,9 @@ app.post(
   '/oauth/authorize/:handle/magic-link',
   describeRoute({
     description:
-      'Continues a parked authorization request by emailing a magic link. Accepts either a form post (from the built-in sign-in page, answered with HTML) or JSON (from a custom front-end, answered with JSON). Like `POST /magic-link`, it always reports the same thing regardless of whether the address can actually sign in.',
+      'Continues a parked authorization request by emailing a magic link. This is what the sign-in front-end calls when the user submits their address. Like `POST /magic-link`, it always reports the same thing regardless of whether the address can actually sign in.',
     tags: ['OAuth'],
     responses: {
-      200: { description: 'The built-in sign-in page, confirming the link was requested' },
       202: {
         description: 'The request was accepted',
         content: { 'application/json': { schema: resolver(magicLinkResponseSchema) } },
@@ -274,28 +267,12 @@ app.post(
     const context = getRequestContext(c)
     const { record, application } = await loadAuthorizationRequest(db, c.req.param('handle'))
 
-    const contentType = c.req.header('Content-Type') ?? ''
-    const isForm = contentType.includes('form-urlencoded') || contentType.includes('multipart/form-data')
-    const payload = isForm ? await c.req.parseBody() : await c.req.json().catch(() => ({}))
-    const parsed = v.safeParse(magicLinkFormSchema, { email: payload.email })
-
-    const renderForm = (error: string | null, notice: string | null) =>
-      c.html(
-        renderLoginPage({
-          env: c.env,
-          handle: c.req.param('handle'),
-          applicationName: application.name,
-          providers: getAvailableProviders(c.env),
-          loginHint: typeof payload.email === 'string' ? payload.email : record.loginHint,
-          error,
-          notice,
-        }),
-        error ? 400 : 200,
-      )
+    const payload = await c.req.json().catch(() => ({}))
+    const parsed = v.safeParse(magicLinkBodySchema, { email: payload.email })
 
     if (!parsed.success) {
       const message = parsed.issues[0]?.message ?? 'A valid email address is required'
-      return isForm ? renderForm(message, null) : c.json({ code: 400, error: message }, 400)
+      return c.json({ code: 400, error: message }, 400)
     }
 
     const result = await requestMagicLink(db, c.env, {
@@ -317,9 +294,6 @@ app.post(
       metadata: { email: parsed.output.email, sent: result.sent },
     })
 
-    if (isForm) {
-      return renderForm(null, MAGIC_LINK_NOTICE)
-    }
     return c.json({ code: 202, data: { message: MAGIC_LINK_NOTICE, expires_in: TTL.magicLink } }, 202)
   },
 )

@@ -62,6 +62,16 @@ type GrantType = (typeof GRANT_TYPES)[number]
 /** The only `response_type` this server issues. Implicit and hybrid flows are deliberately absent. */
 const RESPONSE_TYPE = 'code'
 
+/**
+ * Sign-in front-end used when `AUTH_LOGIN_URL` is not set.
+ *
+ * This Worker is an API and renders no pages, so the one step of an OAuth flow that has to put
+ * something in front of the user is delegated: `GET /oauth/authorize` parks the request and
+ * redirects here with its handle. The front-end reads `GET /oauth/authorize/:handle` for the
+ * client name and the providers, and drives the same endpoints from there.
+ */
+const DEFAULT_LOGIN_URL = 'https://franciscosolis.cl/apps/auth'
+
 /** Slug of the global role granted to bootstrap administrators on their first sign-in. */
 const ADMIN_ROLE_SLUG = 'admin'
 
@@ -69,6 +79,7 @@ export {
   ADMIN_ROLE_SLUG,
   CLIENT_AUTH_METHODS,
   CODE_CHALLENGE_METHOD,
+  DEFAULT_LOGIN_URL,
   GRANT_TYPES,
   MAGIC_LINK_RATE_LIMIT,
   PROVIDERS,

@@ -26,8 +26,17 @@ const authorize = (params: Record<string, string>) =>
     { redirect: 'manual' },
   )
 
-/** The authorization endpoint renders the sign-in page only once the request is fully accepted. */
-const isAccepted = (response: Response) => response.status === 200
+/**
+ * The authorization endpoint hands the browser to the sign-in front-end only once the request is
+ * fully accepted; a rejected one is a redirect back to the client carrying `error`, and an
+ * unregistered redirect URI is a 400. So an accepted request is the redirect that carries a parked
+ * handle.
+ */
+const isAccepted = (response: Response) => {
+  if (response.status !== 302) return false
+  const target = new URL(response.headers.get('Location') as string)
+  return target.searchParams.has('request') && !target.searchParams.has('error')
+}
 
 describe('the client applications the front-end signs in with', () => {
   it.each([
@@ -39,7 +48,7 @@ describe('the client applications the front-end signs in with', () => {
   ])('accepts an authorization request for %s', async (_label, clientId, redirectUri) => {
     const response = await authorize({ client_id: clientId, redirect_uri: redirectUri })
 
-    expect(isAccepted(response), await response.text()).toBe(true)
+    expect(isAccepted(response), response.headers.get('Location') ?? `${response.status}`).toBe(true)
   })
 
   it.each([

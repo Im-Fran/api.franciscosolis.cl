@@ -47,8 +47,9 @@ plain OIDC — another application on its own domain, or Cloudflare Access — c
 `.dev.vars` (gitignored, copy from `.dev.vars.example`) holds the secrets:
 `JWT_PRIVATE_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, plus local overrides of
 `AUTH_PUBLIC_URL` / `AUTH_ISSUER`. Non-secret config (`AUTH_PUBLIC_URL`, `AUTH_ISSUER`,
-`MAIL_FROM_*`) lives in `wrangler.jsonc` under `vars`. `AUTH_LOGIN_URL` is optional: set it to
-hand `/oauth/authorize` to a real sign-in front-end instead of the built-in page.
+`MAIL_FROM_*`) lives in `wrangler.jsonc` under `vars`. `AUTH_LOGIN_URL` names the sign-in
+front-end `/oauth/authorize` hands the browser to; it is set in `wrangler.jsonc` and falls back to
+`DEFAULT_LOGIN_URL` in `lib/config.ts`. There is no in-Worker page to fall back to.
 
 ## Source layout
 
@@ -58,7 +59,7 @@ hand `/oauth/authorize` to a real sign-in front-end instead of the built-in page
   client.
 - `src/lib/` — `crypto.ts` (tokens, hashing, constant-time compare), `jwt.ts` (EdDSA signing,
   access and ID tokens, JWKS), `pkce.ts`, `errors.ts` (`OAuthException`), `config.ts` (TTLs,
-  grants, client authentication methods), `login-page.ts` (the built-in sign-in screen).
+  grants, client authentication methods, `DEFAULT_LOGIN_URL`).
 - `src/providers/` — `types.ts` defines `ProviderProfile` / `AuthorizationRequest`;
   `magic-link.ts` and `google.ts` implement them; `index.ts` is the registry.
 - `src/services/` — `applications.ts` (clients, redirect URIs, scopes, secrets, client
@@ -75,12 +76,20 @@ hand `/oauth/authorize` to a real sign-in front-end instead of the built-in page
 
 ## Architecture notes (non-obvious)
 
+- **This Worker renders no HTML at all.** It answers JSON and redirects, nothing else — the whole
+  monorepo behind `api.franciscosolis.cl` is a backend. The one step of an OAuth flow that has to
+  put something in front of a human is delegated: `GET /oauth/authorize` parks the request and
+  redirects to the sign-in front-end (`AUTH_LOGIN_URL`, defaulting to `DEFAULT_LOGIN_URL` =
+  `https://franciscosolis.cl/apps/auth`) with `?request=<handle>`. A value that does not parse as a
+  URL falls back to the default rather than failing, because there is no page here to fail over to.
+  Do not reintroduce a `c.html()` anywhere in this Worker.
 - **One authorization endpoint, and two older ones that still work**: `GET /oauth/authorize` is
   the entry point a relying party discovers. It validates the request once, parks it in
-  `authorization_requests`, and hands the browser a screen; the provider the user picks resumes
-  that row. `POST /magic-link` and `GET /oauth/google/authorize` take the same parameters and
-  remain the direct route in — the parked request is a place to *hold* a validated request, not a
-  new protocol. Both entries into Google go through `startGoogleFlow`, so they cannot drift.
+  `authorization_requests`, and sends the browser to the sign-in front-end; the provider the user
+  picks there resumes that row. `POST /magic-link` and `GET /oauth/google/authorize` take the same
+  parameters and remain the direct route in — the parked request is a place to *hold* a validated
+  request, not a new protocol. Both entries into Google go through `startGoogleFlow`, so they
+  cannot drift.
 - **The parked request is deliberately not single-use**, unlike every other one-time token here. A
   user who mistypes their address or changes their mind about the provider has to be able to come
   back to it. Holding it grants nothing: a provider still has to authenticate someone, and the code
@@ -111,7 +120,10 @@ hand `/oauth/authorize` to a real sign-in front-end instead of the built-in page
   `fetch`, while `/oauth/authorize` and the two provider callbacks are off it because the browser
   navigates to them and their answer is a redirect carrying a one-time code. Opening the admin API
   costs nothing — every route behind it still needs a bearer token and a permission, and no request
-  here carries ambient authority for an origin to abuse.
+  here carries ambient authority for an origin to abuse. `GET /oauth/authorize/:handle` and its
+  `/magic-link` sibling are matched by `CORS_PARKED_REQUEST` rather than by a subtree, because the
+  sign-in front-end reads and posts to them with `fetch` from another origin while their third
+  sibling, `/oauth/authorize/:handle/google`, is a navigation and must stay off the list.
 - **A client credentials token has no `sid`**, because no one was authenticated. `requireAuth`
   refuses it outright rather than letting it through with an empty permission set, so every route
   that acts on behalf of a user stays user-only.

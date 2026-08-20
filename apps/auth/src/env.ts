@@ -35,7 +35,8 @@ type Env = {
   AUTH_PUBLIC_URL: string
   /**
    * Sign-in front-end `GET /oauth/authorize` hands the user to, with the parked request's handle
-   * appended as `?request=`. Unset means the Worker serves its own minimal page instead.
+   * appended as `?request=`. This Worker renders no pages, so there is no in-Worker fallback:
+   * unset means `DEFAULT_LOGIN_URL` from `lib/config.ts`.
    */
   AUTH_LOGIN_URL?: string
   /** Value of the `iss` claim on every access token. */

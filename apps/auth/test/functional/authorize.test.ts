@@ -27,31 +27,39 @@ const authorize = (params: Record<string, string> = {}) =>
     { redirect: 'manual' },
   )
 
-/** Runs a real authorize leg and recovers the opaque handle out of the page it renders. */
+/** Runs a real authorize leg and recovers the opaque handle out of the sign-in redirect. */
 const park = async (params: Record<string, string> = {}) => {
   const response = await authorize(params)
-  const html = await response.text()
-  const match = /\/oauth\/authorize\/([A-Za-z0-9_-]+)\//.exec(html)
-  if (!match) {
-    throw new Error(`the sign-in page carries no request handle:\n${html.slice(0, 400)}`)
+  const location = response.headers.get('Location')
+  const handle = location && new URL(location).searchParams.get('request')
+  if (!handle) {
+    throw new Error(`the authorize response carries no request handle: ${response.status} ${location}`)
   }
-  const handle = match[1]
   const [row] = await db()
     .select()
     .from(authorizationRequests)
     .where(eq(authorizationRequests.handleHash, await sha256(handle)))
-  return { handle, row, html, response }
+  return { handle, row, response }
 }
 
 describe('GET /oauth/authorize', () => {
-  it('renders a sign-in page naming the client the user is signing in to', async () => {
-    const { response, html } = await park()
+  it('hands the browser to the sign-in front-end, rendering nothing itself', async () => {
+    const { response, handle } = await park()
+    const target = new URL(response.headers.get('Location') as string)
 
-    expect(response.status).toBe(200)
-    expect(response.headers.get('Content-Type')).toContain('text/html')
-    expect(html).toContain('franciscosolis.cl')
-    expect(html).toContain('Email me a sign-in link')
-    expect(html).toContain('Continue with Google')
+    expect(response.status).toBe(302)
+    expect(response.headers.get('Content-Type') ?? '').not.toContain('text/html')
+    expect(target.origin + target.pathname).toBe('https://franciscosolis.cl/apps/auth')
+    expect(target.searchParams.get('request')).toBe(handle)
+  })
+
+  it('falls back to the default front-end when AUTH_LOGIN_URL is not a URL', async () => {
+    const response = await withWorkerEnv({ AUTH_LOGIN_URL: 'not-a-url' }, () => authorize())
+    const target = new URL(response.headers.get('Location') as string)
+
+    expect(response.status).toBe(302)
+    expect(target.origin + target.pathname).toBe('https://franciscosolis.cl/apps/auth')
+    expect(target.searchParams.get('request')).toMatch(/^[A-Za-z0-9_-]+$/)
   })
 
   it('parks the request with exactly what the client asked for, and nothing else', async () => {
@@ -102,7 +110,7 @@ describe('GET /oauth/authorize', () => {
     expect(response.headers.get('Location')).toContain('https://accounts.google.com/')
   })
 
-  it('hands the user to the configured sign-in front-end when there is one', async () => {
+  it('honours a sign-in front-end configured for this deployment', async () => {
     const response = await withWorkerEnv({ AUTH_LOGIN_URL: 'https://accounts.franciscosolis.cl/sign-in' }, () =>
       authorize(),
     )
@@ -184,7 +192,7 @@ describe('GET /oauth/authorize', () => {
       { redirect: 'manual' },
     )
 
-    expect(response.status).toBe(200)
+    expect(response.status).toBe(302)
     const [row] = await db()
       .select()
       .from(authorizationRequests)
@@ -246,8 +254,9 @@ describe('GET /oauth/authorize/:handle', () => {
         redirect_uri: 'https://later.test/cb',
         code_challenge: RFC7636.challenge,
       })}`,
+      { redirect: 'manual' },
     )
-    const handle = /\/oauth\/authorize\/([A-Za-z0-9_-]+)\//.exec(await started.text())?.[1] as string
+    const handle = new URL(started.headers.get('Location') as string).searchParams.get('request') as string
 
     const { applications } = await import('@/db/schema')
     await db().update(applications).set({ isActive: false }).where(eq(applications.id, application.id))
@@ -315,22 +324,21 @@ describe('GET /oauth/authorize/:handle/google', () => {
 })
 
 describe('POST /oauth/authorize/:handle/magic-link', () => {
-  const submit = (handle: string, body: Record<string, string>, json = false) =>
+  const submit = (handle: string, body: Record<string, string>) =>
     SELF.fetch(`https://auth.internal/oauth/authorize/${handle}/magic-link`, {
       method: 'POST',
-      headers: { 'Content-Type': json ? 'application/json' : 'application/x-www-form-urlencoded' },
-      body: json ? JSON.stringify(body) : new URLSearchParams(body).toString(),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     })
 
-  it('emails a link carrying the parked request, and confirms it on the page', async () => {
+  it('emails a link carrying the parked request, and answers JSON', async () => {
     const user = await createUser()
     const { handle, row } = await park({ state: 'client-state', nonce: 'n-once' })
 
     const response = await submit(handle, { email: user.email })
-    const html = await response.text()
 
-    expect(response.status).toBe(200)
-    expect(html).toContain('a link is on its way')
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ code: 202, data: { expires_in: TTL.magicLink } })
 
     const token = magicLinkTokenFrom(mailbox.last())
     const [stored] = await db()
@@ -347,21 +355,23 @@ describe('POST /oauth/authorize/:handle/magic-link', () => {
     })
   })
 
-  it('answers JSON to a JSON request, for a front-end driving this itself', async () => {
-    const user = await createUser()
+  it('never answers HTML, whatever the request asks for', async () => {
     const { handle } = await park()
 
-    const response = await submit(handle, { email: user.email }, true)
+    const response = await SELF.fetch(`https://auth.internal/oauth/authorize/${handle}/magic-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/html' },
+      body: new URLSearchParams({ email: (await createUser()).email }).toString(),
+    })
 
-    expect(response.status).toBe(202)
-    await expect(response.json()).resolves.toMatchObject({ code: 202, data: { expires_in: TTL.magicLink } })
+    expect(response.headers.get('Content-Type')).toContain('application/json')
   })
 
   it('says the same thing for an address that cannot sign in, so it is not an oracle', async () => {
     const { handle } = await park()
 
-    const known = await submit(handle, { email: (await createUser()).email }, true)
-    const unknown = await submit(handle, { email: uniqueEmail('stranger') }, true)
+    const known = await submit(handle, { email: (await createUser()).email })
+    const unknown = await submit(handle, { email: uniqueEmail('stranger') })
 
     expect(await known.json()).toEqual(await unknown.json())
     expect(mailbox.sent).toHaveLength(1)
@@ -372,32 +382,23 @@ describe('POST /oauth/authorize/:handle/magic-link', () => {
     await createInvitation({ email })
     const { handle } = await park()
 
-    await submit(handle, { email }, true)
+    await submit(handle, { email })
 
     expect(mailbox.sent).toHaveLength(1)
   })
 
-  it('re-renders the form with an error for a malformed address, without sending anything', async () => {
+  it('reports a malformed address as JSON, without sending anything', async () => {
     const { handle } = await park()
 
     const response = await submit(handle, { email: 'not-an-address' })
 
     expect(response.status).toBe(400)
-    expect(await response.text()).toContain('A valid email address is required')
+    await expect(response.json()).resolves.toMatchObject({ code: 400, error: 'A valid email address is required' })
     expect(mailbox.sent).toHaveLength(0)
   })
 
-  it('escapes what it echoes back into the page', async () => {
-    const { handle } = await park()
-
-    const html = await (await submit(handle, { email: '<script>alert(1)</script>' })).text()
-
-    expect(html).not.toContain('<script>alert(1)</script>')
-    expect(html).toContain('&lt;script&gt;')
-  })
-
   it('refuses an unknown handle rather than emailing anything', async () => {
-    const response = await submit('not-a-real-handle', { email: (await createUser()).email }, true)
+    const response = await submit('not-a-real-handle', { email: (await createUser()).email })
 
     expect(response.status).toBe(400)
     expect(mailbox.sent).toHaveLength(0)

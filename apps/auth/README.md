@@ -37,9 +37,10 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
 ## ✨ Features
 
 - **One authorization endpoint** — `GET /oauth/authorize` validates and parks the request, then
-  puts the user in front of a sign-in screen; whichever provider they choose resumes that same
-  request. The screen is the Worker's own minimal page unless `AUTH_LOGIN_URL` points at a
-  front-end, which drives exactly the same endpoints.
+  hands the browser to the sign-in front-end with the parked handle; whichever provider the user
+  chooses there resumes that same request. This Worker is an API and renders no pages of its own:
+  `AUTH_LOGIN_URL` names the front-end, and it defaults to
+  [`https://franciscosolis.cl/apps/auth`](https://franciscosolis.cl/apps/auth).
 - **OpenID Connect** — `id_token` with `nonce`, `at_hash`, `auth_time`, `sid` and `groups`, a
   UserInfo endpoint, token introspection, RP-initiated logout and a discovery document published
   at both `/.well-known/openid-configuration` and `/.well-known/oauth-authorization-server`.
@@ -293,7 +294,7 @@ whichever one they choose ends on the same one-time `code` at the client's redir
 2. GET /auth/oauth/authorize
      ?response_type=code&client_id&redirect_uri&scope=openid%20profile%20email
       &state&nonce&code_challenge&code_challenge_method=S256
-   → the sign-in screen (or 302 to AUTH_LOGIN_URL?request=<handle>)
+   → 302 to AUTH_LOGIN_URL?request=<handle>  (the sign-in front-end)
 
 3a. Magic link                              3b. Google
     POST /auth/oauth/authorize/<handle>         GET /auth/oauth/authorize/<handle>/google
@@ -387,9 +388,9 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/oauth/authorize` | The authorization endpoint: parks the request, shows the sign-in screen |
-| `GET` | `/oauth/authorize/:handle` | Describes a parked request, for a custom sign-in front-end |
-| `POST` | `/oauth/authorize/:handle/magic-link` | Continue a parked request by email |
+| `GET` | `/oauth/authorize` | The authorization endpoint: parks the request, redirects to the sign-in front-end |
+| `GET` | `/oauth/authorize/:handle` | Describes a parked request, for the sign-in front-end |
+| `POST` | `/oauth/authorize/:handle/magic-link` | Continue a parked request by email (JSON) |
 | `GET` | `/oauth/authorize/:handle/google` | Continue a parked request through Google |
 | `POST` | `/magic-link` | Request a magic link directly (always 202) |
 | `GET` | `/magic-link/callback` | Consume the link, redirect with an authorization code |
