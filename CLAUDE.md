@@ -168,10 +168,16 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   are rendered by `packages/emails` for a mail client, not served to a browser.
 - **The gateway's CORS allows write verbs because of auth**: `apps/api` used to allow `GET`
   only; sign-in, token exchange and the admin API need `POST`/`PATCH`/`DELETE`. The origin
-  allowlist was not touched and must stay locked down — but `/auth/*` is now excluded from it
-  entirely (`ownsCors` in `apps/api/src/services.ts`), because `apps/auth` signs in applications
-  on domains the gateway cannot enumerate and answers CORS from its own list of registered
-  clients instead.
+  allowlist must stay locked down — but `/auth/*` is excluded from it entirely (`ownsCors` in
+  `apps/api/src/services.ts`), because `apps/auth` signs in applications on domains the gateway
+  cannot enumerate and answers CORS from its own list of registered clients instead.
+- **Cloudflare preview deployments are matched by pattern, on both sides of that split**: a Worker
+  deployed from a branch or a version answers at `<alias>-<worker>.franciscosolis.workers.dev`, a
+  hostname that does not exist until the deployment does. The gateway allows subdomains of
+  `franciscosolis.workers.dev` (`apps/api/src/cors.ts`), and `apps/auth` accepts a
+  `https://*.example.com` entry in a client's `allowed_origins` (`apps/auth/src/lib/origins.ts`).
+  Both match on a dot boundary — `evilfranciscosolis.workers.dev` is a hostname anyone can take —
+  and neither loosens redirect URIs, which stay byte-for-byte exact.
 - This repo uses `dev` as its default/main branch — never target `main`/`master`.
 - `apps/landing/.dev.vars` holds the `GH_TOKEN` secret for local dev, and
   `apps/auth/.dev.vars` holds `JWT_PRIVATE_KEY` and the Google OAuth client. Neither must
