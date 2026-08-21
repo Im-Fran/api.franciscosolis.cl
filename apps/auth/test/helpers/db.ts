@@ -20,8 +20,9 @@ import type { Session } from '@/services/tokens'
 import type { User } from '@/services/users'
 
 /**
- * Ids written by `0001_seed.sql` / `0002_cms_application.sql` and repaired by
- * `0005_repair_client_config.sql`, pinned so a change to them is loud.
+ * Ids written by `0001_seed.sql` / `0002_cms_application.sql`, repaired by
+ * `0005_repair_client_config.sql` and extended by `0006_preview_origins.sql`, pinned so a change to
+ * them is loud.
  */
 const SEED = {
   webAppId: 'franciscosolis-web',
@@ -32,6 +33,10 @@ const SEED = {
   /* Where the CMS front-end really lives: a route of the site's own single-page application. */
   cmsSiteRedirectUri: 'https://franciscosolis.cl/apps/cms/callback',
   cmsSiteLocalRedirectUri: 'http://localhost:5173/apps/cms/callback',
+  /* Wildcard origin covering Cloudflare preview deployments of both front-ends. */
+  previewOriginPattern: 'https://*.franciscosolis.workers.dev',
+  /* A hostname that pattern describes: `<alias>-<worker>.<account>.workers.dev`. */
+  previewOrigin: 'https://claude-auth-testing-r0yqup-franciscosolis.franciscosolis.workers.dev',
   adminRoleId: '8e7a797c-5012-4a96-a9a2-e8b5bdaeb802',
   userRoleId: 'e159f911-541f-4d48-806e-aaa94971c9a9',
 } as const

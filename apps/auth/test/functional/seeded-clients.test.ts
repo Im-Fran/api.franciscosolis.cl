@@ -1,6 +1,8 @@
 import { SELF } from 'cloudflare:test'
+import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { SEED } from '../helpers/db'
+import { applications } from '@/db/schema'
+import { db, SEED } from '../helpers/db'
 import { RFC7636 } from '../helpers/pkce'
 
 /**
@@ -61,6 +63,28 @@ describe('the client applications the front-end signs in with', () => {
     // which is exactly what the deployed database was doing for both of them.
     expect(response.headers.get('Location') ?? '').not.toContain('error=unauthorized_client')
     expect(isAccepted(response)).toBe(true)
+  })
+
+  it.each([
+    ['the site', SEED.webAppId],
+    ['the CMS', SEED.cmsAppId],
+  ])('registers the Cloudflare preview origin on %s', async (_label, clientId) => {
+    const [row] = await db().select().from(applications).where(eq(applications.id, clientId))
+
+    // Cross-origin access is decided from these rows, so without the pattern a preview deployment
+    // of the front-end cannot make a single call to this Worker — see `0006_preview_origins.sql`.
+    expect(JSON.parse(row?.allowedOrigins ?? '[]')).toContain(SEED.previewOriginPattern)
+  })
+
+  it('does not let the preview origin become a redirect URI', async () => {
+    const response = await authorize({
+      client_id: SEED.webAppId,
+      redirect_uri: 'https://preview-franciscosolis.franciscosolis.workers.dev/auth/callback',
+    })
+
+    // The wildcard opens CORS and stops there: where an authorization code may be sent is still an
+    // exact list, so a preview has to register its own callback before it can complete a sign-in.
+    expect(response.status).toBe(400)
   })
 
   it('still matches a redirect URI exactly, with no room for a near miss', async () => {

@@ -175,6 +175,28 @@ describe('POST /admin/applications', () => {
     // A fragment can never survive the redirect, so it would silently not match.
     expect((await create(['https://x.test/cb#token'])).status).toBe(400)
     expect((await create(['https://x.test/cb'])).status).toBe(201)
+    // The `*.` an allowed origin may carry means nothing here: a redirect URI is compared byte for
+    // byte, and storing a wildcard would read as one on where an authorization code may be sent.
+    expect((await create(['https://*.x.test/cb'])).status).toBe(400)
+  })
+
+  it('accepts a wildcard allowed origin, so a preview deployment can be registered once', async () => {
+    const { token } = await callerWith(['applications:write'])
+    const create = (allowedOrigins: string[]) =>
+      call('/applications', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          client_id: `c-${crypto.randomUUID().slice(0, 8)}`,
+          name: 'X',
+          redirect_uris: ['https://x.test/cb'],
+          allowed_origins: allowedOrigins,
+        }),
+      })
+
+    expect((await create(['https://*.previews.x.test'])).status).toBe(201)
+    // Still an origin and nothing else, and never anchored on a bare TLD.
+    expect((await create(['https://*.previews.x.test/path'])).status).toBe(400)
+    expect((await create(['https://*.test'])).status).toBe(400)
   })
 
   it('records application.created with whether a secret was issued', async () => {
