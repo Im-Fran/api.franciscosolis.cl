@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:test'
 import { sign } from 'hono/jwt'
 import { vi } from 'vitest'
 import type { AccessTokenClaims } from '@/lib/jwks'
@@ -5,9 +6,13 @@ import type { AccessTokenClaims } from '@/lib/jwks'
 /**
  * Mints the access tokens the CMS verifies offline.
  *
- * The Worker never talks to the auth service: it fetches a JWKS and checks an EdDSA signature
- * against it. So a test only needs a key pair of its own plus a stubbed `fetch` that publishes the
- * public half — no auth Worker, no service binding.
+ * The Worker never asks the auth service about a token: it reads a JWKS and checks an EdDSA
+ * signature against it. So a test only needs a key pair of its own plus a stand-in for the `AUTH`
+ * service binding that publishes the public half — no auth Worker.
+ *
+ * It has to be the binding and not global `fetch`: that is the whole point of `lib/jwks.ts` reading
+ * the key set over a binding, and a suite that stubbed `fetch` is exactly why the 522 the public
+ * URL returns in production went unnoticed.
  */
 
 type Jwk = JsonWebKey & { kid: string; alg: string }
@@ -42,14 +47,17 @@ let filePair: KeyPair | null = null
 const testKeyPair = async (): Promise<KeyPair> => (filePair ??= await generateKeyPair())
 
 /**
- * Replaces global `fetch` with a JWKS endpoint serving `keys`. Returned so a test can assert on how
- * many times the Worker actually went out for the key set.
+ * Replaces the `AUTH` service binding — the only channel `lib/jwks.ts` reads the key set through —
+ * with `handler`. Returned so a test can assert on how many times the Worker actually asked.
  */
-const stubJwks = (keys: Jwk[]) => {
-  const fetchMock = vi.fn(async () => Response.json({ keys }))
-  vi.stubGlobal('fetch', fetchMock)
+const stubJwksFetch = (handler: (url: string, init?: RequestInit) => Promise<Response>) => {
+  const fetchMock = vi.fn(handler)
+  ;(env as { AUTH: Fetcher }).AUTH = { fetch: fetchMock } as unknown as Fetcher
   return fetchMock
 }
+
+/** The common case: a binding that serves `keys` and never fails. */
+const stubJwks = (keys: Jwk[]) => stubJwksFetch(async () => Response.json({ keys }))
 
 /** Claims the auth Worker puts on an access token, with everything the CMS gate wants. */
 const editorClaims = (overrides: Partial<AccessTokenClaims> = {}): AccessTokenClaims => {
@@ -113,6 +121,7 @@ export {
   mintRawToken,
   mintToken,
   stubJwks,
+  stubJwksFetch,
   testKeyPair,
 }
 export type { Jwk, KeyPair }

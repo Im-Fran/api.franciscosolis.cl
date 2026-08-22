@@ -17,11 +17,17 @@ export default defineConfig({
       miniflare: {
         bindings: {
           TEST_MIGRATIONS: migrations,
-          // Deliberately not the production URL. Every test stubs `fetch`, so a request that
-          // escapes a stub fails against an unroutable host instead of reaching the real auth
-          // Worker.
+          // Deliberately not the production URL. Every test stubs the AUTH binding, so a request
+          // that escapes a stub fails against an unroutable host instead of reaching the real
+          // auth Worker.
           AUTH_JWKS_URL: 'https://auth.test/.well-known/jwks.json',
           AUTH_ISSUER: 'https://auth.test',
+        },
+        // The real binding points at the deployed `auth` Worker, which is not part of this
+        // project. `stubJwks` replaces `env.AUTH` per test file; this stands in so the runtime can
+        // start at all, and answers loudly rather than silently if a test forgets to stub.
+        serviceBindings: {
+          AUTH: () => new Response('the AUTH service binding was not stubbed', { status: 503 }),
         },
       },
     }),

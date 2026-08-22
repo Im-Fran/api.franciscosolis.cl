@@ -6,13 +6,21 @@ import { JWKS_CACHE_TTL } from '@/lib/config'
 /**
  * Offline verification of the access tokens issued by the auth Worker.
  *
- * The CMS deliberately has no service binding back into `auth`: tokens are EdDSA-signed and the
- * matching public keys are published at `AUTH_JWKS_URL`, so validating one is a signature check
- * plus a cached key fetch, not a call into another service.
+ * Tokens are EdDSA-signed and the matching public keys are published at `AUTH_JWKS_URL`, so
+ * validating one is a signature check plus a cached key fetch — the auth Worker is never asked
+ * about a specific token.
  *
- * The trade-off that buys: authorization data in the token (roles, permissions) is a snapshot from
- * when it was minted. Access tokens live 15 minutes, so a revoked account keeps working for at most
- * that long. The email-domain gate in `middleware/auth.ts` is what actually bounds who gets in.
+ * That key fetch goes over the `AUTH` service binding rather than over the public URL, and it has
+ * to. `api.franciscosolis.cl` is answered entirely by Workers, and a Worker's subrequest to its own
+ * zone bypasses Workers routing and is sent to the zone's origin — of which there is none. The
+ * public fetch therefore came back `522` every single time, the key set never loaded, and
+ * `requireEditor` answered `401 Invalid access token: JWKS endpoint answered 522` to every caller,
+ * valid token or not. Nothing about the request could reveal that; the CMS was simply shut.
+ *
+ * The trade-off the offline check buys: authorization data in the token (roles, permissions) is a
+ * snapshot from when it was minted. Access tokens live 15 minutes, so a revoked account keeps
+ * working for at most that long. The email-domain gate in `middleware/auth.ts` is what actually
+ * bounds who gets in.
  */
 
 /** Claims the auth Worker puts on an access token. Mirrors `AccessTokenClaims` in apps/auth. */
@@ -47,8 +55,8 @@ type CachedJwks = {
  */
 let cached: CachedJwks | null = null
 
-const fetchJwks = async (url: string): Promise<HonoJsonWebKey[]> => {
-  const response = await fetch(url, { headers: { Accept: 'application/json' } })
+const fetchJwks = async (env: Env): Promise<HonoJsonWebKey[]> => {
+  const response = await env.AUTH.fetch(env.AUTH_JWKS_URL, { headers: { Accept: 'application/json' } })
   if (!response.ok) {
     throw new Error(`JWKS endpoint answered ${response.status}`)
   }
@@ -66,7 +74,7 @@ const getJwks = async (env: Env, force = false): Promise<HonoJsonWebKey[]> => {
     return cached.keys
   }
 
-  const keys = await fetchJwks(env.AUTH_JWKS_URL)
+  const keys = await fetchJwks(env)
   cached = { url: env.AUTH_JWKS_URL, keys, expiresAt: now + JWKS_CACHE_TTL }
   return keys
 }

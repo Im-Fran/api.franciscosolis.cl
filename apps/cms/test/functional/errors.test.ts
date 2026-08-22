@@ -1,7 +1,7 @@
 import { SELF, env } from 'cloudflare:test'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearDatabase, seedEntry } from '../helpers/db'
-import { asEditor, mintToken, stubJwks, testKeyPair } from '../helpers/tokens'
+import { asEditor, mintToken, stubJwks, stubJwksFetch, testKeyPair } from '../helpers/tokens'
 
 /**
  * What the Worker says when something goes wrong that is nobody's request to fix.
@@ -115,12 +115,9 @@ describe('a non-Error thrown while verifying a token', () => {
     // reason unrelated to whatever actually broke.
     const original = env.AUTH_JWKS_URL
     env.AUTH_JWKS_URL = 'https://auth.test/string-throw.json'
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => {
-        throw 'connection reset'
-      }),
-    )
+    stubJwksFetch(async () => {
+      throw 'connection reset'
+    })
 
     let response: Response
     let body: { error: string }

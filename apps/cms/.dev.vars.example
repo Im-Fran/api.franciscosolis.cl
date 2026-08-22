@@ -1,7 +1,7 @@
 # The CMS has no secrets of its own: it verifies access tokens against the public JWKS of the
 # auth Worker, so there is no signing key or client secret to keep here.
 #
-# This file only overrides the vars declared in wrangler.jsonc so a local CMS trusts the local
-# auth Worker (through the local gateway) instead of production.
-AUTH_JWKS_URL=http://localhost:8787/auth/.well-known/jwks.json
+# The JWKS itself needs no override — it is read over the AUTH service binding, which `wrangler
+# dev` wires to the auth Worker running beside this one. Only the expected issuer has to change,
+# so a local CMS trusts tokens the local auth Worker minted instead of production's.
 AUTH_ISSUER=http://localhost:8787/auth
