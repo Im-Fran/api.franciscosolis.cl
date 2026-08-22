@@ -2,7 +2,7 @@
   "name": "cms",
   "type": "module",
   "license": "GPL-3.0-only",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8790 --inspector-port 9232",
     "build": "wrangler deploy --dry-run --outdir dist",

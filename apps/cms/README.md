@@ -98,6 +98,13 @@ pnpm run db:migrate:local     # local development
 pnpm run db:migrate:remote    # production
 ```
 
+Two migrations run: `0000_init.sql` creates the schema, and `0001_seed_landing_content.sql` fills it
+with the content franciscosolis.cl already renders — its projects, work timeline, toolbox,
+certifications and degree, plus the Terms of Service and the Privacy Policy. Every insert is an
+`INSERT OR IGNORE` keyed on the same unique indexes the API is, so applying it twice writes nothing
+and an entry an editor has since rewritten is never clobbered. Both the site and the CMS therefore
+start from the same content, and editing it here is what changes it from now on.
+
 ### 2. Point the Worker at a local auth service
 
 ```bash
