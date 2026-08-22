@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { resolveAllowedOrigin } from '@/cors'
 import type { Env } from '@/env'
 import { HTTPException } from 'hono/http-exception'
 import { describeRoute, generateSpecs, resolver } from 'hono-openapi'
@@ -12,14 +13,10 @@ import { CORS_DELEGATED_PREFIXES, SERVICE_MODULE_NAMES } from '@/services'
 const app = new Hono<{ Bindings: Env }>()
 
 const gatewayCors = cors({
-  origin: (origin) => {
-    if (origin?.endsWith('localhost:5173') || origin?.endsWith('franciscosolis.workers.dev') || origin?.endsWith('franciscosolis.cl')) {
-      return origin
-    }
-    return 'https://franciscosolis.cl'
-  },
+  // The allowlist itself lives in `src/cors.ts`, with the reasoning for each shape it accepts.
+  origin: (origin) => resolveAllowedOrigin(origin),
   // The auth module needs the write verbs: sign-in, token exchange and the admin API are all
-  // POST/PATCH/DELETE. Origins stay locked down to the list above.
+  // POST/PATCH/DELETE. Origins stay locked down to what `src/cors.ts` accepts.
   allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   exposeHeaders: ['Content-Type'],

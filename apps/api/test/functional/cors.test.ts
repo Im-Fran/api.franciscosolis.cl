@@ -41,14 +41,21 @@ describe('CORS origin allowlist', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(FALLBACK_ORIGIN)
   })
 
-  // The allowlist is a bare `endsWith`, with no separator before the allowed suffix, so a domain an
-  // attacker can register is accepted as if it were ours. Pinned as current behaviour and reported
-  // as a bug rather than fixed here.
+  // The allowed suffix is matched on a dot boundary, not with a bare `endsWith`: without the
+  // separator every one of these is a domain an attacker can register that ends with a string of
+  // ours, and each would have been echoed back as if it were ours.
   it.each([
     ['a lookalike apex domain', 'https://evilfranciscosolis.cl'],
     ['a lookalike workers.dev domain', 'https://notfranciscosolis.workers.dev'],
     ['a lookalike dev host', 'http://evil-localhost:5173'],
-  ])('currently accepts %s, which is not ours', async (_label, origin) => {
+  ])('refuses %s, which is not ours', async (_label, origin) => {
+    expect(await allowOriginFor(origin)).toBe(FALLBACK_ORIGIN)
+  })
+
+  it.each([
+    ['a versioned preview of the front-end', 'https://abc123-franciscosolis.franciscosolis.workers.dev'],
+    ['a branch preview of a Worker in this repo', 'https://my-branch-auth.franciscosolis.workers.dev'],
+  ])('echoes %s back, since only this account can deploy there', async (_label, origin) => {
     expect(await allowOriginFor(origin)).toBe(origin)
   })
 

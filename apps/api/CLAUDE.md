@@ -47,6 +47,9 @@ There is no separate `build` script — Wrangler bundles as part of `dev`/`deplo
 - `src/index.ts` — Hono app: CORS, charset middleware, `onError`, status route (`GET /`),
   a single `registerServiceProxies(app)` call, `registerBrandAssets(app)`, and the
   `/openapi.json` route. It does not name any individual module.
+- `src/cors.ts` — the origin allowlist and `resolveAllowedOrigin`, which `index.ts` hands to
+  Hono's `cors()`. Kept apart so the matching rule is one testable function rather than a
+  condition inside the middleware options.
 - `src/brand.ts` — `registerBrandAssets`, which mounts `GET /brand/lockup.png`, plus the
   base64 PNG it serves. The only content this gateway owns.
 - `src/openapi.ts` — `mergeRemoteSpecs`: fetches each internal module's `/openapi.json`
@@ -85,7 +88,13 @@ There is no separate `build` script — Wrangler bundles as part of `dev`/`deplo
 - **CORS is locked down**: only `localhost:5173`, `*.franciscosolis.workers.dev` and
   `*.franciscosolis.cl`; any other origin falls back to the `https://franciscosolis.cl`
   response. Don't loosen this without being asked — a module that genuinely needs other origins
-  gets `ownsCors` and decides for itself, rather than this list growing.
+  gets `ownsCors` and decides for itself, rather than this list growing. The allowlist lives in
+  `src/cors.ts`, not inline in `index.ts`, and each suffix is matched on a **dot boundary** over
+  HTTPS on the default port. That is not a detail: it used to be a bare `endsWith`, which accepted
+  `evilfranciscosolis.cl` and `notfranciscosolis.workers.dev` — hostnames anyone can register — as
+  if they were ours. Subdomains of `franciscosolis.workers.dev` are in because that is the account's
+  own `workers.dev` subdomain, where Cloudflare serves branch and version previews under hostnames
+  nobody can know before the deployment exists.
 - **JSON charset middleware**: Hono's `c.json()` doesn't set a charset by default, which
   can mangle non-ASCII responses on clients that assume Latin-1. A shared middleware
   appends `; charset=UTF-8` to `application/json` responses — see the `ponytail` comment

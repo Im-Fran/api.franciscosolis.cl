@@ -7,6 +7,7 @@ import { getDb } from '@/db/client'
 import { applications, applicationSecrets } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { CLIENT_AUTH_METHODS, GRANT_TYPES, TTL } from '@/lib/config'
+import { isOriginPattern, isRegisterableOrigin } from '@/lib/origins'
 import { requirePermission } from '@/middleware/auth'
 import {
   getAllowedOrigins,
@@ -67,24 +68,33 @@ app.get(
   },
 )
 
-/** Redirect URIs are matched exactly, so they must be absolute and free of fragments. */
+/**
+ * Redirect URIs are matched exactly, so they must be absolute and free of fragments — and free of
+ * the `*.` pattern `allowed_origins` accepts, which would otherwise reach CORS through the origin
+ * of the URI and, worse, read as a wildcard on where an authorization code may be sent.
+ */
 const redirectUriSchema = v.pipe(
   v.string(),
   v.url('Each redirect URI must be an absolute URL'),
   v.check((uri) => !uri.includes('#'), 'A redirect URI must not contain a fragment'),
+  v.check((uri) => !isOriginPattern(uri), 'A redirect URI is matched exactly and cannot carry a wildcard'),
 )
 
-/** An origin is a scheme and an authority, nothing else — what a browser puts in the Origin header. */
+/**
+ * An origin is a scheme and an authority, nothing else — what a browser puts in the Origin header.
+ *
+ * A leading `*.` label is also accepted, standing for any subdomain of the host it is anchored on:
+ * that is how a Cloudflare preview deployment, whose hostname only exists once it is deployed, gets
+ * to call this Worker. The wildcard has to leave at least two labels below it, and it never applies
+ * to redirect URIs — see `lib/origins.ts` for the full rule and why it stops there.
+ */
 const originSchema = v.pipe(
   v.string(),
   v.url('Each allowed origin must be an absolute URL'),
-  v.check((value) => {
-    try {
-      return new URL(value).origin === value
-    } catch {
-      return false
-    }
-  }, 'An allowed origin must be exactly scheme://host[:port], with no path'),
+  v.check(
+    isRegisterableOrigin,
+    'An allowed origin must be exactly scheme://host[:port], with no path, optionally starting with a *. label',
+  ),
 )
 
 const authMethodSchema = v.picklist(CLIENT_AUTH_METHODS)

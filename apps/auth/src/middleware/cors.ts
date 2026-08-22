@@ -3,6 +3,7 @@ import { createMiddleware } from 'hono/factory'
 import { getDb } from '@/db/client'
 import { applications } from '@/db/schema'
 import type { AppEnv } from '@/env'
+import { isOriginAllowed, isOriginPattern } from '@/lib/origins'
 import { parseStringList } from '@/services/applications'
 
 /**
@@ -14,6 +15,11 @@ import { parseStringList } from '@/services/applications'
  * origin is allowed if some active client registered a redirect URI there, or listed it explicitly
  * in `allowed_origins`. Registering a client is already the act of trusting it; this makes that one
  * decision cover CORS too, instead of a second list that can silently disagree with the first.
+ *
+ * `allowed_origins` may also hold a `https://*.example.com` pattern, which is how a Cloudflare
+ * preview deployment gets to call this Worker at all: its hostname only exists once the deployment
+ * happens. Redirect URIs contribute literal origins only — a wildcard there would be a wildcard on
+ * where an authorization code may be sent. See `lib/origins.ts`.
  *
  * Credentials are never allowed: every one of these endpoints authenticates with a bearer token or
  * a client secret in the body, never with a cookie, so `Access-Control-Allow-Credentials` would
@@ -29,7 +35,13 @@ const collectAllowedOrigins = async (c: { env: AppEnv['Bindings'] }): Promise<Se
   for (const row of rows) {
     for (const uri of parseStringList(row.redirectUris)) {
       try {
-        origins.add(new URL(uri).origin)
+        const { origin } = new URL(uri)
+        // A redirect URI contributes a literal origin and never a pattern, whatever it looks like:
+        // the admin API refuses to register one, and a row written before it did must not become a
+        // wildcard here either.
+        if (!isOriginPattern(origin)) {
+          origins.add(origin)
+        }
       } catch {
         // A redirect URI that no longer parses cannot match one at authorization time either.
       }
@@ -98,7 +110,7 @@ const clientCors = createMiddleware<AppEnv>(async (c, next) => {
     return
   }
 
-  const allowed = (await collectAllowedOrigins(c)).has(origin)
+  const allowed = isOriginAllowed(origin, await collectAllowedOrigins(c))
 
   // A preflight is answered here rather than passed on: there is no handler for OPTIONS on these
   // routes, and a 404 would tell the browser nothing useful.

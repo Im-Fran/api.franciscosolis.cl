@@ -54,7 +54,9 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
   origins, and whether PKCE is required. PKCE can only be waived for a confidential client.
 - **Cross-domain by design** — the OAuth endpoints, the account endpoints and the admin API answer
   CORS from any origin a registered client actually uses, so an application on its own domain needs
-  no gateway change to sign in or to administer this service.
+  no gateway change to sign in or to administer this service. An allowed origin may be a
+  `https://*.example.com` pattern, which is what lets a Cloudflare preview deployment — whose
+  hostname only exists once it is deployed — call this service at all.
 - **Client credentials grant** — for a backend acting as itself rather than for a person.
 - **Authorization code + PKCE for every provider** — the browser only ever carries a one-time
   `code`; tokens are fetched with a separate `POST /oauth/token` bound to the client's
@@ -340,6 +342,32 @@ pnpm run applications -- create my-app --name "My app" \
 
 Add `--allowed-origin https://console.my-app.example` for an origin that has no redirect URI of its
 own, such as a dashboard calling the API from a different subdomain.
+
+### Preview deployments
+
+An `--allowed-origin` may start with a `*.` label, meaning any subdomain of the host it is anchored
+on:
+
+```bash
+pnpm run applications -- update my-app \
+  --allowed-origin 'https://*.previews.my-app.example' --remote
+```
+
+That is there for Cloudflare previews. A Worker deployed from a branch or a version is served at
+`<alias>-<worker>.<account>.workers.dev`, a hostname that does not exist until the deployment does,
+so it cannot be registered in advance — and without it the preview's first preflight is refused and
+sign-in never starts. Both seeded clients already carry
+`https://*.franciscosolis.workers.dev`, the account's own preview subdomain.
+
+The wildcard replaces only the leftmost labels and is matched on a dot boundary, so
+`evilfranciscosolis.workers.dev` is not a subdomain of `franciscosolis.workers.dev`. It applies to
+**CORS only**: redirect URIs are still compared byte for byte, and a wildcard is refused there. A
+preview that has to complete a sign-in — not just call the API — needs its own callback registered:
+
+```bash
+pnpm run applications -- update franciscosolis-web \
+  --add-redirect-uri https://my-branch-franciscosolis.franciscosolis.workers.dev/auth/callback --remote
+```
 
 ### Cloudflare Access as a relying party
 

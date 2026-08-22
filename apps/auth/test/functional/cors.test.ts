@@ -142,6 +142,46 @@ describe('cross-origin access to the OAuth endpoints', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull()
   })
 
+  it('allows a Cloudflare preview deployment, whose hostname cannot be registered in advance', async () => {
+    const response = await preflight('/magic-link', SEED.previewOrigin)
+
+    expect(response.status).toBe(204)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(SEED.previewOrigin)
+  })
+
+  it('echoes a preview origin on the real response too, not just the preflight', async () => {
+    const response = await fetchWithOrigin('/.well-known/jwks.json', SEED.previewOrigin)
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(SEED.previewOrigin)
+  })
+
+  it.each([
+    /* Anyone can take a workers.dev subdomain that merely ends with ours; only a dot boundary
+       separates a preview of ours from one of theirs. */
+    ['a lookalike anchored on no dot', 'https://evilfranciscosolis.workers.dev'],
+    ['a preview under another account', 'https://app.someone-else.workers.dev'],
+    ['the wildcard read as a literal origin', 'https://*.franciscosolis.workers.dev'],
+  ])('refuses %s', async (_label, origin) => {
+    expect((await preflight('/magic-link', origin)).status).toBe(403)
+  })
+
+  it('matches a wildcard registered on a client, not only the seeded one', async () => {
+    await createApplication({
+      redirectUris: ['https://partner.test/cb'],
+      allowedOrigins: ['https://*.previews.partner.test'],
+    })
+
+    expect((await preflight('/oauth/token', 'https://pr-42.previews.partner.test')).status).toBe(204)
+    expect((await preflight('/oauth/token', 'https://previews.partner.test')).status).toBe(403)
+  })
+
+  it('never reads a redirect URI as a wildcard, however it was stored', async () => {
+    await createApplication({ redirectUris: ['https://*.sneaky.test/cb'] })
+
+    expect((await preflight('/oauth/token', 'https://anything.sneaky.test')).status).toBe(403)
+  })
+
   it('still serves the seeded local development origin', async () => {
     const origin = new URL(SEED.webLocalRedirectUri).origin
 

@@ -47,7 +47,8 @@ Options:
   --add-redirect-uri <url>    Add one redirect URI, keeping the existing ones (update only)
   --remove-redirect-uri <url> Drop one redirect URI (update only)
   --post-logout-uri <url>     Post-logout redirect URI; repeat to pass several
-  --allowed-origin <origin>   Extra browser origin allowed to call the OAuth endpoints; repeat
+  --allowed-origin <origin>   Extra browser origin allowed to call the OAuth endpoints; repeat.
+                              A leading *. means any subdomain, e.g. https://*.example.workers.dev
   --grant-type <name>         Grant the client may use; repeat. Replaces the whole list
   --scope <name>              Scope the client may request; repeat. Empty means every supported one
   --auth-method <method>      none | client_secret_post | client_secret_basic
@@ -316,6 +317,11 @@ const validateRedirectUri = (uri) => {
   if (parsed.href !== trimmed) {
     fail(`Redirect URI is not in its canonical form — register ${parsed.href} instead of ${trimmed}`)
   }
+  // The `*.` an allowed origin may carry has no meaning here, and storing one would read as a
+  // wildcard on where an authorization code may be sent.
+  if (parsed.hostname.includes('*')) {
+    fail(`A redirect URI is matched exactly and cannot carry a wildcard: ${trimmed}`)
+  }
   return trimmed
 }
 
@@ -328,16 +334,35 @@ const validateRedirectUris = (uris) => {
   return unique
 }
 
-/** An origin is scheme://host[:port] and nothing else — what a browser puts in the Origin header. */
+/**
+ * An origin is scheme://host[:port] and nothing else — what a browser puts in the Origin header.
+ *
+ * A leading `*.` label is also accepted and means any subdomain of the host below it, which is how
+ * a Cloudflare preview deployment gets to call the Worker at all: its hostname only exists once the
+ * deployment does. The rule mirrors `src/lib/origins.ts` — the wildcard replaces only the leftmost
+ * labels, must leave at least two below it, and never applies to a redirect URI. Change both.
+ */
+const WILDCARD_ORIGIN_PREFIX = '*.'
+const MIN_WILDCARD_ANCHOR_LABELS = 2
+
 const validateOrigin = (value) => {
+  const origin = value.trim()
   let parsed
   try {
-    parsed = new URL(value.trim())
+    parsed = new URL(origin)
   } catch {
     return fail(`Not an absolute URL: ${value}`)
   }
-  if (parsed.origin !== value.trim()) {
+  if (parsed.origin !== origin) {
     fail(`An allowed origin must be exactly scheme://host[:port] — pass ${parsed.origin} instead of ${value}`)
+  }
+  if (parsed.hostname.startsWith(WILDCARD_ORIGIN_PREFIX)) {
+    const anchor = parsed.hostname.slice(WILDCARD_ORIGIN_PREFIX.length)
+    if (anchor.split('.').filter(Boolean).length < MIN_WILDCARD_ANCHOR_LABELS) {
+      fail(`A wildcard origin must leave at least two labels below the *: ${value}`)
+    }
+  } else if (parsed.hostname.includes('*')) {
+    fail(`A * is only allowed as the leftmost label of an origin: ${value}`)
   }
   return parsed.origin
 }
