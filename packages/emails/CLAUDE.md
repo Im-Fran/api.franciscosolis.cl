@@ -45,6 +45,16 @@ package. That is deliberate on all four counts — see below.
   are compiled by the *consuming Worker's* bundler, which reads that Worker's tsconfig —
   not this package's. The per-file pragma is what makes the setting irrelevant. Dropping it
   from a new template produces `hono/jsx` elements that react-email cannot render.
+- **Components come from `react-email` itself, not `@react-email/components`.** react-email v6
+  folded the component set into the main package and deprecated `@react-email/components` (and
+  every `@react-email/<component>` package under it) on npm. Importing from the old name still
+  resolves today, but it installs 21 unmaintained packages, so do not reinstate it. `@react-email/render`
+  is the one scoped package that is still current — it is not part of that deprecation.
+  Nothing else changed: same component names, same props. The heavy extras the unified package
+  ships (`tailwindcss`, `prismjs`, `marked` behind `Tailwind`, `CodeBlock` and `Markdown`) are
+  declared `sideEffects: false` and tree-shake out, so the Worker bundles moved by ~3 KiB raw
+  and not at all after gzip. Importing one of *those* three components would drag all of it in.
+
 - **No `@/*` alias here, imports are relative.** For the same reason: in a Worker's bundle
   `@/*` already points at that Worker's own `src/`.
 - **The package ships source, not a build.** Wrangler bundles each Worker with esbuild and

@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { Body, Container, Head, Heading, Hr, Html, Img, Link, Preview, Section, Text } from '@react-email/components'
+import { Body, Container, Head, Heading, Hr, Html, Img, Link, Preview, Section, Text } from 'react-email'
 import type { ReactNode } from 'react'
 import { PLAIN_TEXT_SKIP_CLASS } from '../render'
 import { theme } from '../theme'
