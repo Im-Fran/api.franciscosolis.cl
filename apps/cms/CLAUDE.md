@@ -47,8 +47,9 @@ account.
 
 This Worker has **no secrets**. It verifies access tokens against the auth Worker's public
 JWKS, so there is no signing key and no client secret to hold. `.dev.vars` (gitignored, copy
-from `.dev.vars.example`) only overrides `AUTH_JWKS_URL` / `AUTH_ISSUER` so a local CMS
-trusts the local auth Worker. Everything else lives in `wrangler.jsonc` under `vars`.
+from `.dev.vars.example`) only overrides `AUTH_ISSUER` so a local CMS trusts the local auth
+Worker; the keys themselves arrive over the `AUTH` service binding. Everything else lives in
+`wrangler.jsonc` under `vars`.
 
 ## Source layout
 
@@ -74,11 +75,14 @@ trusts the local auth Worker. Everything else lives in `wrangler.jsonc` under `v
   routes, the listing and the OpenAPI doc pick it up automatically.
 - **Those `data` schemas are `strictObject` on purpose**: an unknown key is a 422, not a
   silently stored typo. `data` is replaced wholesale on PATCH, never merged.
-- **Tokens are verified offline, and there is deliberately no binding back into `auth`.**
-  `lib/jwks.ts` fetches the published JWKS and caches it per isolate for an hour. A `kid`
+- **Tokens are verified offline; the key set comes over the `AUTH` service binding.**
+  `lib/jwks.ts` reads the published JWKS and caches it per isolate for an hour. A `kid`
   that is not in the cached set forces one refetch before failing, which is what a key
   rotation looks like from here — without it, a rotation would break sign-in for up to an
-  hour.
+  hour. The binding is not optional: this Worker sits behind `api.franciscosolis.cl`, and a
+  Worker's subrequest to its own zone skips Workers routing and goes to the zone's origin,
+  which does not exist — the public JWKS URL answered `522` from in here, so the gate
+  refused *every* token. The suite pins this by making global `fetch` throw.
 - **The trade-off that buys**: `roles`/`permissions` on the token are a snapshot, so a
   revoked role lingers for at most the access-token lifetime (15 minutes). The
   email-domain check in `requireEditor` is the actual access rule, and it is evaluated on

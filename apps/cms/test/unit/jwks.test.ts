@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Env } from '@/env'
 import { verifyAccessToken } from '@/lib/jwks'
 import type { Jwk, KeyPair } from '../helpers/tokens'
-import { editorClaims, generateKeyPair, mintRawToken, mintToken } from '../helpers/tokens'
+import { editorClaims, generateKeyPair, mintRawToken, mintToken, stubJwksFetch } from '../helpers/tokens'
 
 /**
  * `lib/jwks.ts` memoises the fetched key set in module state that lives as long as the isolate, so
@@ -14,7 +14,7 @@ import { editorClaims, generateKeyPair, mintRawToken, mintToken } from '../helpe
 let keyA: KeyPair
 let keyB: KeyPair
 let published: Jwk[]
-let fetchMock: ReturnType<typeof vi.fn>
+let fetchMock: ReturnType<typeof stubJwksFetch>
 
 const fetchCount = () => fetchMock.mock.calls.length
 
@@ -24,8 +24,7 @@ beforeAll(async () => {
   keyA = await generateKeyPair('key-a')
   keyB = await generateKeyPair('key-b')
   published = [keyA.publicJwk]
-  fetchMock = vi.fn(async () => Response.json({ keys: published }))
-  vi.stubGlobal('fetch', fetchMock)
+  fetchMock = stubJwksFetch(async () => Response.json({ keys: published }))
 })
 
 describe('verifyAccessToken', () => {

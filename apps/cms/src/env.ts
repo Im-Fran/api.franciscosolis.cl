@@ -30,8 +30,10 @@ type Env = {
   DB: D1Database
   /** Cloudflare Email Sending binding, sending from the `mail.franciscosolis.cl` domain. */
   EMAIL: EmailSender
+  /** Service binding to the auth Worker. Used for one thing only: reading its published JWKS. */
+  AUTH: Fetcher
 
-  /** JWKS of the auth Worker. Access tokens are verified offline against it. */
+  /** Path the JWKS is read from over `AUTH`. Access tokens are verified offline against it. */
   AUTH_JWKS_URL: string
   /** Expected `iss` claim of an access token. Must match the auth Worker's `AUTH_ISSUER`. */
   AUTH_ISSUER: string

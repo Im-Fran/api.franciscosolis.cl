@@ -104,8 +104,9 @@ pnpm run db:migrate:remote    # production
 cp .dev.vars.example .dev.vars
 ```
 
-There are no secrets to fill in — the file only redirects `AUTH_JWKS_URL` and `AUTH_ISSUER` at the
-local auth Worker so tokens minted locally are accepted.
+There are no secrets to fill in — the file only redirects `AUTH_ISSUER` at the local auth Worker so
+tokens minted locally are accepted. The public keys come over the `AUTH` service binding, which
+`wrangler dev` wires to the auth Worker running beside this one, so they need no override.
 
 ### 3. Run it
 
@@ -256,15 +257,16 @@ All configuration lives in `wrangler.jsonc` under `vars`:
 
 | Variable | Purpose |
 |----------|---------|
-| `AUTH_JWKS_URL` | JWKS the access tokens are verified against |
+| `AUTH_JWKS_URL` | Path the JWKS is read from, over the `AUTH` binding |
 | `AUTH_ISSUER` | Expected `iss` claim; must match the auth Worker's issuer |
 | `CMS_ALLOWED_AUDIENCES` | Client application ids whose tokens are accepted |
 | `CMS_ALLOWED_EMAIL_DOMAINS` | Email domains allowed into the CMS |
 | `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Default sender identity |
 | `MAIL_ALLOWED_SENDERS` | Addresses an editor may send as |
 
-Bindings: `DB` (D1 `franciscosolis_cms`) and `EMAIL` (Cloudflare Email Sending, restricted by
-`allowed_sender_addresses`).
+Bindings: `DB` (D1 `franciscosolis_cms`), `EMAIL` (Cloudflare Email Sending, restricted by
+`allowed_sender_addresses`) and `AUTH` (service binding to the auth Worker, used only to read its
+published JWKS — see the note on offline verification below).
 
 ---
 

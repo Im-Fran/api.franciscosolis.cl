@@ -41,10 +41,21 @@
       ]
     }
   ],
+  "services": [
+    {
+      // Only ever asked for `/.well-known/jwks.json`. It is a binding rather than a public fetch
+      // because a Worker's subrequest to its own zone skips the Workers routing layer and is sent
+      // to the zone's origin — and `api.franciscosolis.cl` has none, so every attempt came back
+      // 522 and the gate below refused every token it was ever handed.
+      "binding": "AUTH",
+      "service": "auth"
+    }
+  ],
   "vars": {
-    // JWKS of the auth Worker. Tokens are verified offline against these keys: the CMS never
-    // calls auth, and deliberately has no service binding back into it.
-    "AUTH_JWKS_URL": "https://api.franciscosolis.cl/auth/.well-known/jwks.json",
+    // Path the JWKS is read from, over the AUTH service binding above. The host is a placeholder:
+    // a service binding routes by binding, not by DNS. Tokens are still verified offline — this
+    // fetches public keys, it does not ask auth to validate anything.
+    "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
     // Expected `iss` claim. Must match `AUTH_ISSUER` in apps/auth/wrangler.jsonc exactly.
     "AUTH_ISSUER": "https://api.franciscosolis.cl/auth",
     // Comma-separated client application ids (the `aud` claim) whose tokens may reach the CMS.
