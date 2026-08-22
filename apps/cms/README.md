@@ -101,13 +101,20 @@ only the tables need creating.
 ```bash
 pnpm run db:migrate:local     # local development
 pnpm run db:migrate:remote    # production
+pnpm run db:migrate:list      # what is still pending in production
 ```
 
-Two migrations run: `0000_init.sql` creates the schema, and `0001_seed_landing_content.sql` fills it
+In production these are applied by the repo's `Migrate` workflow on a push to `dev` that touches
+`migrations/`, not by hand — see the root README. The commands above are for local work and for a
+database that has drifted.
+
+Four migrations run. `0000_init.sql` creates the schema and `0001_seed_landing_content.sql` fills it
 with the content franciscosolis.cl already renders — its projects, work timeline, toolbox,
-certifications and degree, plus the Terms of Service and the Privacy Policy. Every insert is an
-`INSERT OR IGNORE` keyed on the same unique indexes the API is, so applying it twice writes nothing
-and an entry an editor has since rewritten is never clobbered. Both the site and the CMS therefore
+certifications and degree, plus the Terms of Service and the Privacy Policy. `0002_content_translations.sql`
+adds the `translations` column and `0003_seed_spanish_translations.sql` fills in the Spanish. Every
+insert is an `INSERT OR IGNORE` keyed on the same unique indexes the API is, and every translation
+update is guarded on an empty map, so applying them twice writes nothing and an entry an editor has
+since rewritten is never clobbered. Both the site and the CMS therefore
 start from the same content, and editing it here is what changes it from now on.
 
 ### 2. Point the Worker at a local auth service
@@ -304,8 +311,11 @@ published JWKS — see the note on offline verification below).
 
 ```bash
 pnpm run deploy
-pnpm run db:migrate:remote
 ```
+
+Migrations are not part of that: the repo's `Migrate` workflow applies them on a push to `dev` that
+touches `migrations/`, and `pnpm run db:migrate:remote` is the manual fallback. See the root README
+for the ordering caveat between the two.
 
 This Worker must be deployed under exactly the name `cms` for the gateway's `CMS` service binding
 to resolve. It needs no custom domain of its own — it is reached through

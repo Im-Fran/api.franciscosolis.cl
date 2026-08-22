@@ -41,7 +41,10 @@ account.
 - `pnpm run deploy` → `wrangler deploy --minify`
 - `pnpm run cf-typegen` → run after editing `wrangler.jsonc` bindings.
 - `pnpm run db:generate` → `drizzle-kit generate`, writes a new SQL migration.
-- `pnpm run db:migrate:local` / `pnpm run db:migrate:remote` → apply migrations with Wrangler.
+- `pnpm run db:migrate:local` / `pnpm run db:migrate:remote` → apply migrations with Wrangler,
+  and `pnpm run db:migrate:list` to see what is pending on the remote database. Production
+  migrations are applied by `.github/workflows/migrate.yml` on a push to `dev`; these are for
+  local work and for repairing a database that has drifted. See the root `CLAUDE.md`.
 
 ## Environment
 

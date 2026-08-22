@@ -277,22 +277,50 @@ cd apps/cms && pnpm run deploy
 `franciscosolis.cl`) plus the `LANDING`, `AUTH` and `CMS` service bindings, so those Workers must
 be deployed under exactly the names `landing`, `auth` and `cms` for the bindings to resolve.
 
-`apps/auth` also needs its secrets and its database migrations in production:
+`apps/auth` also needs its secrets in production:
 
 ```bash
 cd apps/auth
 pnpm exec wrangler secret put JWT_PRIVATE_KEY
 pnpm exec wrangler secret put GOOGLE_CLIENT_ID
 pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
-pnpm run db:migrate:remote
 ```
 
-`apps/cms` needs its own migrations in production, but no secrets:
+`apps/cms` needs no secrets at all.
+
+### Database migrations
+
+The two stateful Workers — `auth` and `cms` — own a D1 database each, and their migrations are
+applied by the **`Migrate` workflow** (`.github/workflows/migrate.yml`), not by hand. It runs on a
+push to `dev` that touches `apps/*/migrations/**`, one job per database, and can also be started by
+hand from the Actions tab — applying is idempotent, so a run against a database that is already
+current is a no-op.
+
+It needs two repository secrets: `CLOUDFLARE_API_TOKEN` (with the **D1:Edit** permission on the
+account) and `CLOUDFLARE_ACCOUNT_ID`. Without them the workflow stops on its first step and says so
+rather than failing later inside Wrangler.
+
+Wrangler's own behaviour is what makes this safe to automate: in a non-interactive shell it skips
+the confirmation prompt but still captures a backup first, and a migration that errors is rolled
+back with the previous one left applied. So a failed run is safe to re-run once the migration is
+fixed.
+
+Running them by hand is still there for a database that has drifted, or for a first deploy:
 
 ```bash
-cd apps/cms
-pnpm run db:migrate:remote
+pnpm run db:migrate:list      # what is pending, both databases
+pnpm run db:migrate:remote    # apply it
+pnpm run db:migrate:local     # the same, against the local dev databases
 ```
+
+**One caveat about ordering.** The Workers themselves are deployed by Cloudflare's Git integration,
+which starts from the same push, so the migration and the deploy race rather than being sequenced.
+That is tolerable because of how these Workers fail on a schema that is behind: a public read
+degrades to the pre-migration shape, while an editorial write errors outright — so the window costs
+the CMS its write path for as long as the migration takes and costs the public site nothing. If it
+ever needs to be strictly ordered, point Cloudflare's **build command** at `pnpm run
+db:migrate:remote` with `CLOUDFLARE_API_TOKEN` in the build environment; it then runs before that
+Worker's deploy, and this workflow becomes redundant.
 
 To regenerate Cloudflare binding types after editing `wrangler.jsonc`:
 
