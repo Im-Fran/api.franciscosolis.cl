@@ -145,6 +145,11 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   one `content_entries` table discriminated by `collection`, with collection-specific fields
   validated by `apps/cms/src/lib/collections.ts`. Adding a collection is a registry entry,
   not a migration.
+- **The CMS is bilingual by override, not by row**: the row holds the default locale (`en`) and
+  a `translations` column holds `{"es":{"title":"…"}}` for the rest. Public reads take `?locale`
+  and resolve it server-side, so the website reads plain `title`/`body` fields and gets a `locale`
+  telling it which language actually came back. Only prose is translated — slugs, ordering, dates
+  and the `data` blob are the same fact in every language. See `apps/cms/src/lib/locales.ts`.
 - **Email bodies are react-email components, in one shared package**: neither Worker builds
   mail markup any more. `@franciscosolis/emails` renders `{ subject, html, text }` and the
   Worker only hands that to its `EMAIL` binding. Three consequences worth knowing before

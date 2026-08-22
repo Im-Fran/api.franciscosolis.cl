@@ -10,8 +10,9 @@ import type { CollectionName } from '@/lib/collections'
 import { isCollection, parseCollectionData } from '@/lib/collections'
 import { CONTENT_STATUS, PAGINATION } from '@/lib/config'
 import { asConflict } from '@/lib/errors'
+import { serializeTranslations } from '@/lib/locales'
 import { SLUG_PATTERN, slugify } from '@/lib/slug'
-import { optionalDate, optionalText, optionalUrl, requiredText, tagList } from '@/lib/validation'
+import { contentTranslations, optionalDate, optionalText, optionalUrl, requiredText, tagList } from '@/lib/validation'
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
 import { findEntryById, listEntries, toAdminEntry } from '@/services/content'
 
@@ -156,13 +157,15 @@ const createSchema = v.object({
   tags: tagList,
   /** Collection-specific fields, validated against the collection's own schema. */
   data: v.optional(v.record(v.string(), v.unknown())),
+  /** Per-locale overrides of the prose fields; the columns above hold the default locale. */
+  translations: contentTranslations,
 })
 
 app.post(
   '/content/:collection',
   describeRoute({
     description:
-      'Creates an entry. The slug defaults to a slugified title and must be unique within the collection. `data` is validated against the collection schema, so an unknown field is rejected rather than silently stored.',
+      'Creates an entry. The slug defaults to a slugified title and must be unique within the collection. `data` is validated against the collection schema, so an unknown field is rejected rather than silently stored. `translations` carries the other locales; the entry\'s own columns are the default one.',
     tags: ['Admin · Content'],
     security: [{ bearerAuth: [] }],
     responses: {
@@ -206,6 +209,7 @@ app.post(
       imageUrl: body.image_url ?? null,
       tags: JSON.stringify(body.tags ?? []),
       data: JSON.stringify(data),
+      translations: serializeTranslations(body.translations),
       publishedAt: status === 'published' ? now : null,
       createdBy: editor.email,
       updatedBy: editor.email,
@@ -271,13 +275,15 @@ const updateSchema = v.object({
   tags: tagList,
   /** Replaces the whole blob; it is not merged field by field. */
   data: v.optional(v.record(v.string(), v.unknown())),
+  /** Replaces the whole translation map, `data`-style — send every locale you want to keep. */
+  translations: contentTranslations,
 })
 
 app.patch(
   '/content/:collection/:id',
   describeRoute({
     description:
-      'Updates an entry. Omitted fields are left alone, an explicit `null` clears one. `data` is replaced wholesale rather than merged, so send the complete object.',
+      'Updates an entry. Omitted fields are left alone, an explicit `null` clears one. `data` and `translations` are replaced wholesale rather than merged, so send the complete object.',
     tags: ['Admin · Content'],
     security: [{ bearerAuth: [] }],
     responses: {
@@ -318,6 +324,8 @@ app.patch(
       imageUrl: body.image_url === undefined ? current.imageUrl : body.image_url,
       tags: body.tags === undefined ? current.tags : JSON.stringify(body.tags),
       data: body.data === undefined ? current.data : JSON.stringify(parseCollectionDataOrThrow(collection, body.data)),
+      translations:
+        body.translations === undefined ? current.translations : serializeTranslations(body.translations),
       // Stamped the first time an entry goes live and kept from then on, so unpublishing and
       // republishing does not rewrite the date the thing was originally announced.
       publishedAt: status === 'published' ? (current.publishedAt ?? now) : current.publishedAt,
@@ -343,6 +351,7 @@ app.patch(
           imageUrl: updated.imageUrl,
           tags: updated.tags,
           data: updated.data,
+          translations: updated.translations,
           publishedAt: updated.publishedAt,
           updatedBy: updated.updatedBy,
           updatedAt: updated.updatedAt,

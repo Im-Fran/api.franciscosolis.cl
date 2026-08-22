@@ -1,15 +1,22 @@
 import { SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import { COLLECTION_NAMES, COLLECTIONS } from '@/lib/collections'
+import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
 
 describe('GET /', () => {
-  it('reports the service and the collections it manages', async () => {
+  it('reports the service, the collections it manages and the locales it publishes in', async () => {
     const response = await SELF.fetch('https://cms.internal/')
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({
       code: 200,
-      data: { message: 'Hello, CMS!', collections: [...COLLECTION_NAMES] },
+      data: {
+        message: 'Hello, CMS!',
+        collections: [...COLLECTION_NAMES],
+        // A front-end builds its language switcher from this rather than from a list of its own.
+        locales: [...LOCALES],
+        default_locale: DEFAULT_LOCALE,
+      },
     })
   })
 })

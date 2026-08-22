@@ -8,8 +8,9 @@ import { legalPages } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { CONTENT_STATUS } from '@/lib/config'
 import { asConflict } from '@/lib/errors'
+import { serializeTranslations } from '@/lib/locales'
 import { SLUG_PATTERN, slugify } from '@/lib/slug'
-import { optionalDate, optionalText, requiredText } from '@/lib/validation'
+import { legalTranslations, optionalDate, optionalText, requiredText } from '@/lib/validation'
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
 import { findPageById, toAdminPage } from '@/services/legal'
 
@@ -52,6 +53,8 @@ const createSchema = v.object({
   status: v.optional(v.picklist(CONTENT_STATUS)),
   version: optionalText(40),
   effective_at: optionalDate,
+  /** Per-locale overrides of `title`, `summary` and `body`; the columns above are the default one. */
+  translations: legalTranslations,
 })
 
 app.post(
@@ -90,6 +93,7 @@ app.post(
       status,
       version: body.version ?? null,
       effectiveAt: body.effective_at ?? null,
+      translations: serializeTranslations(body.translations),
       publishedAt: status === 'published' ? now : null,
       createdBy: editor.email,
       updatedBy: editor.email,
@@ -145,13 +149,15 @@ const updateSchema = v.object({
   status: v.optional(v.picklist(CONTENT_STATUS)),
   version: optionalText(40),
   effective_at: optionalDate,
+  /** Replaces the whole translation map — send every locale you want to keep. */
+  translations: legalTranslations,
 })
 
 app.patch(
   '/legal/:id',
   describeRoute({
     description:
-      'Updates a legal page. Omitted fields are left alone, an explicit `null` clears one. Bumping `version` and `effective_at` alongside the body is what keeps a published policy honest about when it changed.',
+      'Updates a legal page. Omitted fields are left alone, an explicit `null` clears one, and `translations` is replaced wholesale. Bumping `version` and `effective_at` alongside the body is what keeps a published policy honest about when it changed.',
     tags: ['Admin · Legal'],
     security: [{ bearerAuth: [] }],
     responses: {
@@ -183,6 +189,8 @@ app.patch(
       status,
       version: body.version === undefined ? current.version : body.version,
       effectiveAt: body.effective_at === undefined ? current.effectiveAt : body.effective_at,
+      translations:
+        body.translations === undefined ? current.translations : serializeTranslations(body.translations),
       // First publication is what `published_at` records; later edits move `updated_at` instead.
       publishedAt: status === 'published' ? (current.publishedAt ?? now) : current.publishedAt,
       updatedBy: editor.email,
@@ -200,6 +208,7 @@ app.patch(
           status: updated.status,
           version: updated.version,
           effectiveAt: updated.effectiveAt,
+          translations: updated.translations,
           publishedAt: updated.publishedAt,
           updatedBy: updated.updatedBy,
           updatedAt: updated.updatedAt,

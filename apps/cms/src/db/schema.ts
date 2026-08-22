@@ -54,6 +54,12 @@ const contentEntries = sqliteTable('content_entries', {
   tags: text('tags').notNull().default('[]'),
   /** JSON object with the collection-specific fields. Validated against the collection's schema. */
   data: text('data').notNull().default('{}'),
+  /**
+   * JSON map of locale → overrides for the prose fields, e.g. `{"es":{"title":"…"}}`. The row
+   * itself holds the default locale; see `src/lib/locales.ts` for why the model is an override
+   * map rather than a row per language.
+   */
+  translations: text('translations').notNull().default('{}'),
   publishedAt: integer('published_at', { mode: 'timestamp' }),
   createdBy: text('created_by'),
   updatedBy: text('updated_by'),
@@ -81,6 +87,8 @@ const legalPages = sqliteTable('legal_pages', {
   version: text('version'),
   /** Date the published text takes effect. May be in the future while the page is still a draft. */
   effectiveAt: integer('effective_at', { mode: 'timestamp' }),
+  /** Locale → overrides for `title`, `summary` and `body`, same shape as on `content_entries`. */
+  translations: text('translations').notNull().default('{}'),
   publishedAt: integer('published_at', { mode: 'timestamp' }),
   createdBy: text('created_by'),
   updatedBy: text('updated_by'),
