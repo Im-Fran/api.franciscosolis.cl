@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { Text } from '@react-email/components'
+import { Text } from 'react-email'
 import type { ReactNode } from 'react'
 import { theme } from '../theme'
 

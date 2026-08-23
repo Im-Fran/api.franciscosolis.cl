@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { Button, Link, Section, Text } from '@react-email/components'
+import { Button, Link, Section, Text } from 'react-email'
 import { theme } from '../theme'
 
 type ActionLinkProps = {

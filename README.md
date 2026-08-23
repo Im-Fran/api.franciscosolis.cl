@@ -77,7 +77,7 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   detection.
 - **Shared dependency versions** — `pnpm-workspace.yaml` pins `hono`, `hono-openapi`,
   `valibot`, `wrangler`, `axios`, `drizzle-orm`, `drizzle-kit`, `react`, `react-dom`,
-  `react-email`, `@react-email/components`, `@react-email/render`, `typescript`, `vitest`,
+  `react-email`, `@react-email/render`, `typescript`, `vitest`,
   `@cloudflare/vitest-pool-workers`, `@vitest/coverage-istanbul`, `@hono/standard-validator`
   and `@valibot/to-json-schema` in a single `catalog` consumed by every workspace package.
 - **Tested inside the real runtime** — every app has unit and functional suites that execute in

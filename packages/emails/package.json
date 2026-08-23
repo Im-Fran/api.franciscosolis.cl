@@ -13,14 +13,13 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@react-email/components": "catalog:",
     "@react-email/render": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "react-email": "catalog:"
   },
   "devDependencies": {
     "@types/react": "catalog:",
-    "react-email": "catalog:",
     "typescript": "catalog:"
   }
 }
