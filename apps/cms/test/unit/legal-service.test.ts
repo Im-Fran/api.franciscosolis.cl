@@ -50,6 +50,8 @@ describe('toPublicPage', () => {
       title: 'Privacy policy',
       summary: 'What we keep',
       body: '# Privacy',
+      locale: 'en',
+      available_locales: ['en'],
       version: '2026-08',
       effective_at: '2026-08-01T00:00:00.000Z',
       published_at: expect.any(String),
@@ -90,8 +92,10 @@ describe('toPublicSummary', () => {
     const summary = toPublicSummary(toPublicPage((await findPageById(db(), row.id)) as LegalPage))
 
     expect(Object.keys(summary).sort()).toEqual([
+      'available_locales',
       'effective_at',
       'id',
+      'locale',
       'published_at',
       'slug',
       'summary',

@@ -59,6 +59,9 @@ scripts).
 - `pnpm run deploy` — deploys every workspace app.
 - `pnpm run cf-typegen` — regenerates Cloudflare binding types (`CloudflareBindings`) in
   every app after a `wrangler.jsonc` change.
+- `pnpm run db:migrate:list` / `db:migrate:remote` / `db:migrate:local` — D1 migrations across
+  every app that owns a database. Production runs happen in CI (see *Deploys and migrations*);
+  these are for local work and for repairing a database that has drifted.
 
 - `pnpm --filter @franciscosolis/emails run preview` — react-email preview server on :8791.
 
@@ -100,6 +103,41 @@ independent check and a break in one does not mask the others. Each job typechec
 suite with coverage, and does a credential-free `wrangler deploy --dry-run`. An aggregate `ci`
 job is the single status branch protection should require. When adding an app, add it to the
 `matrix.app` list.
+
+## Deploys and migrations
+
+The Workers are deployed by **Cloudflare's Git integration**, not from this repo — that is what the
+"Workers Builds" checks on a PR are. Nothing here configures it, and no workflow should duplicate it.
+
+What that integration does not do is touch D1, so `.github/workflows/migrate.yml` owns that:
+it applies pending migrations for the two stateful Workers (`auth`, `cms`) on a push to `dev` that
+touches `apps/*/migrations/**`, one job per database, plus a bare `workflow_dispatch` for a manual
+run. It needs the `CLOUDFLARE_API_TOKEN` (D1:Edit) and `CLOUDFLARE_ACCOUNT_ID` repository secrets.
+Adding a third stateful app means adding it to that matrix. The dispatch deliberately takes no
+"which database" input: applying is idempotent, so picking one buys nothing, and selecting per app
+would mean building the matrix dynamically — the `matrix` context is not available in a job-level
+`if`, which is the shape that silently selects no jobs at all.
+
+Three things about it are worth not re-deriving:
+
+- **Wrangler is what makes it safe to automate.** In a non-interactive shell it skips its
+  confirmation prompt but still captures a backup first, and a migration that errors is rolled back
+  with the previous one left applied — so a failed run is re-runnable rather than a half-migrated
+  database.
+- **The migration and the deploy race**, because Cloudflare starts its build from the same push.
+  That is tolerable only because of how these Workers fail on a schema that is behind: Drizzle emits
+  an explicit column list, SQLite reads a double-quoted unknown column as a *string literal* rather
+  than erroring, and the JSON parsers here (`parseJson`, `parseTranslations`) fall back on the
+  garbage — so a public read degrades to the pre-migration shape instead of 500-ing. A write does
+  error, because that fallback does not apply to a column list or a `SET` clause. Net effect: the
+  editorial API is down for the length of the migration, the public site is not.
+- **Strict ordering is available and deliberately not used**: pointing Cloudflare's *build command*
+  at `pnpm run db:migrate:remote` would sequence it before that Worker's deploy, but it is dashboard
+  configuration this repo cannot hold or review. The workflow is the version that lives in git.
+
+`pnpm run db:migrate:remote` / `db:migrate:list` / `db:migrate:local` at the root fan out to every
+app that declares them, which is exactly `auth` and `cms` — `pnpm run -r` skips the rest, and runs
+them sequentially rather than in parallel, which is what migrations want.
 
 ## Versioning
 
@@ -145,6 +183,11 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   one `content_entries` table discriminated by `collection`, with collection-specific fields
   validated by `apps/cms/src/lib/collections.ts`. Adding a collection is a registry entry,
   not a migration.
+- **The CMS is bilingual by override, not by row**: the row holds the default locale (`en`) and
+  a `translations` column holds `{"es":{"title":"…"}}` for the rest. Public reads take `?locale`
+  and resolve it server-side, so the website reads plain `title`/`body` fields and gets a `locale`
+  telling it which language actually came back. Only prose is translated — slugs, ordering, dates
+  and the `data` blob are the same fact in every language. See `apps/cms/src/lib/locales.ts`.
 - **Email bodies are react-email components, in one shared package**: neither Worker builds
   mail markup any more. `@franciscosolis/emails` renders `{ subject, html, text }` and the
   Worker only hands that to its `EMAIL` binding. Three consequences worth knowing before

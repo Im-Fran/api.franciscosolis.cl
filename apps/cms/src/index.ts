@@ -4,6 +4,7 @@ import { describeRoute, openAPIRouteHandler, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import type { AppEnv } from '@/env'
 import { COLLECTION_NAMES } from '@/lib/collections'
+import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
 
 /* Routes */
 import admin from '@/routes/admin'
@@ -47,13 +48,15 @@ const rootResponseSchema = v.object({
   data: v.object({
     message: v.string(),
     collections: v.array(v.string()),
+    locales: v.array(v.string()),
+    default_locale: v.string(),
   }),
 })
 
 app.get(
   '/',
   describeRoute({
-    description: 'Status of the CMS service and the content collections it manages.',
+    description: 'Status of the CMS service, the content collections it manages and the locales it publishes in.',
     tags: ['General'],
     responses: {
       200: {
@@ -68,6 +71,10 @@ app.get(
       data: {
         message: 'Hello, CMS!',
         collections: [...COLLECTION_NAMES],
+        // Advertised so a front-end builds its language switcher from the API rather than from a
+        // list of its own that drifts the day a third language is added here.
+        locales: [...LOCALES],
+        default_locale: DEFAULT_LOCALE,
       },
     }),
 )
@@ -84,7 +91,7 @@ app.get(
         title: 'FranciscoSolis - CMS API',
         version: '1.0.0',
         description:
-          'Content management for franciscosolis.cl: the landing page\'s collections (projects, experience, skills, certifications, education), its legal pages, and outgoing email sent through Cloudflare Email Sending. Reads of published content are public; everything under /admin requires an access token from the auth service belonging to an allowed email domain.',
+          'Content management for franciscosolis.cl: the landing page\'s collections (projects, experience, skills, certifications, education), its legal pages, and outgoing email sent through Cloudflare Email Sending. Reads of published content are public and take an optional `?locale`; everything under /admin requires an access token from the auth service belonging to an allowed email domain.',
       },
       components: {
         securitySchemes: {

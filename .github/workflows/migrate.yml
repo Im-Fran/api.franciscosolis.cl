@@ -1,0 +1,116 @@
+name: Migrate
+
+# Applies pending D1 migrations to the production databases.
+#
+# Why this is its own workflow rather than a step of a deploy: the Workers are deployed by
+# Cloudflare's Git integration (the "Workers Builds" checks on every PR), which this repository does
+# not configure and must not duplicate. What that integration does *not* do is touch D1 — so
+# `db:migrate:remote` was a step somebody had to remember, and forgetting it ships a Worker whose
+# code expects a column the database does not have.
+#
+# The ordering caveat, stated plainly: Cloudflare starts its build from the same push this runs on,
+# so the migration and the deploy race rather than being sequenced. That is tolerable because of how
+# these Workers fail on a schema that is behind. Drizzle emits an explicit column list; SQLite reads
+# a double-quoted unknown column as a *string literal* rather than erroring, and the JSON parsers
+# here fall back on the garbage — so a public read degrades to the pre-migration shape instead of
+# 500-ing. A write does error, because that fallback does not apply to a column list or a SET
+# clause. Net effect: the editorial API is down for the length of the migration, the public site is
+# not.
+#
+# If that window ever needs closing, the fix is not here: point Cloudflare's *build command* at
+# `pnpm run db:migrate:remote` (with CLOUDFLARE_API_TOKEN in the build environment) and it runs
+# before that Worker's deploy, in order. This workflow is the version that lives in git.
+
+on:
+  push:
+    branches: [dev]
+    # Only when a migration actually lands. Applying is a no-op when nothing is pending, but a job
+    # that runs on every push is a job whose green tick stops meaning anything.
+    paths:
+      - 'apps/*/migrations/**'
+      - '.github/workflows/migrate.yml'
+  # No inputs on purpose. Applying is idempotent, so "migrate one database" and "migrate both" have
+  # the same outcome for a database that is already current — and selecting one would have to be
+  # done by building the matrix dynamically, since the `matrix` context is not available in a
+  # job-level `if`.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # One job per database. `auth` and `cms` are the only Workers that own one; `api` and `landing`
+  # are stateless, which is why this list is shorter than the CI matrix. `fail-fast: false` so one
+  # database failing never leaves the other un-migrated as a side effect.
+  migrate:
+    name: ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [auth, cms]
+
+    # Never two runs against the same database at once, and never cancel one mid-apply: an
+    # interrupted migration is the one state that is awkward to reason about afterwards.
+    concurrency:
+      group: migrate-${{ matrix.app }}
+      cancel-in-progress: false
+
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      # First, before anything installs, so a missing secret reads as a missing secret rather than
+      # as a Wrangler authentication error several minutes later.
+      - name: Check credentials
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set as repository secrets. The token needs the D1:Edit permission on this account."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Recorded before the apply because this is the only moment it is knowable: once applied,
+      # `list` reports nothing and the run's own log is the only record of what it did.
+      #
+      # Informational only — `wrangler d1 migrations list` exits 0 whether or not anything is
+      # pending, so this cannot gate. A credential or network failure surfaces from the apply step
+      # right below rather than here.
+      - name: List pending migrations
+        run: |
+          echo "## ${{ matrix.app }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '### Pending before this run' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          pnpm --filter ${{ matrix.app }} run db:migrate:list 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # Wrangler skips its confirmation prompt in a non-interactive shell, captures a backup before
+      # applying, and rolls back a migration that errors while leaving the previous one applied. So
+      # a failure here is safe to re-run once the migration itself is fixed.
+      - name: Apply migrations
+        run: pnpm --filter ${{ matrix.app }} run db:migrate:remote
+
+      - name: Record what is left
+        if: always()
+        run: |
+          echo '### Remaining after this run' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          pnpm --filter ${{ matrix.app }} run db:migrate:list 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
