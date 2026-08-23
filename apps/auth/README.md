@@ -152,7 +152,12 @@ pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
 cd apps/auth
 pnpm run db:migrate:local    # local dev database
 pnpm run db:migrate:remote   # the real franciscosolis_auth D1 database
+pnpm run db:migrate:list     # what is still pending on it
 ```
+
+In production these are applied by the repo's `Migrate` workflow on a push to `dev` that touches
+`migrations/`, not by hand — see the root README. The commands above are for local work and for a
+database that has drifted.
 
 The seed migration creates the baseline permissions, the global `admin` and `user` roles, and the
 `franciscosolis-web` client application (redirect URIs `https://franciscosolis.cl/auth/callback`
@@ -491,7 +496,7 @@ To change the schema:
 ```bash
 cd apps/auth
 pnpm run db:generate          # writes migrations/NNNN_*.sql from src/db/schema.ts
-pnpm run db:migrate:remote
+pnpm run db:migrate:local     # try it locally; production is applied by the Migrate workflow
 ```
 
 ---
@@ -534,6 +539,10 @@ New tokens carry the new `kid`; old ones keep verifying against the retired key 
 ```bash
 cd apps/auth && pnpm run deploy
 ```
+
+Migrations are not part of that: the repo's `Migrate` workflow applies them on a push to `dev` that
+touches `migrations/`, and `pnpm run db:migrate:remote` is the manual fallback. See the root README
+for the ordering caveat between the two.
 
 The Worker must be deployed under the exact name `auth` for the gateway's `AUTH` service binding
 to resolve. It needs no route or custom domain of its own.

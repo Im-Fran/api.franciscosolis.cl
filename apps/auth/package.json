@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate",
+    "db:migrate:list": "wrangler d1 migrations list franciscosolis_auth --remote",
     "db:migrate:local": "wrangler d1 migrations apply franciscosolis_auth --local",
     "db:migrate:remote": "wrangler d1 migrations apply franciscosolis_auth --remote",
     "keys:generate": "node scripts/generate-keys.mjs",

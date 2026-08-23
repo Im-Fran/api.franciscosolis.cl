@@ -43,6 +43,11 @@ Reading published content is **public** — that is what the website itself call
   everything else, so an unfinished draft is not even discoverable.
 - **Manual ordering** — `position` first, then most recent, then title, with a bulk
   `POST /admin/content/:collection/reorder` for drag-and-drop front-ends.
+- **Bilingual content** — every entry and legal page carries a `translations` map (`en` lives in
+  the row itself, other locales override it field by field). Public reads take `?locale=es` and
+  answer with the text already resolved, plus a `locale` saying which language actually came back
+  and an `available_locales` a language switcher is built from. A field nobody translated falls
+  back rather than rendering empty, so a half-translated entry still shows.
 - **Versioned legal pages** — `version` + `effective_at` alongside the body, so a published policy
   can say when it changed.
 - **Email with templates** — `{{ variable }}` placeholders whose variable list is derived from the
@@ -96,13 +101,20 @@ only the tables need creating.
 ```bash
 pnpm run db:migrate:local     # local development
 pnpm run db:migrate:remote    # production
+pnpm run db:migrate:list      # what is still pending in production
 ```
 
-Two migrations run: `0000_init.sql` creates the schema, and `0001_seed_landing_content.sql` fills it
+In production these are applied by the repo's `Migrate` workflow on a push to `dev` that touches
+`migrations/`, not by hand — see the root README. The commands above are for local work and for a
+database that has drifted.
+
+Four migrations run. `0000_init.sql` creates the schema and `0001_seed_landing_content.sql` fills it
 with the content franciscosolis.cl already renders — its projects, work timeline, toolbox,
-certifications and degree, plus the Terms of Service and the Privacy Policy. Every insert is an
-`INSERT OR IGNORE` keyed on the same unique indexes the API is, so applying it twice writes nothing
-and an entry an editor has since rewritten is never clobbered. Both the site and the CMS therefore
+certifications and degree, plus the Terms of Service and the Privacy Policy. `0002_content_translations.sql`
+adds the `translations` column and `0003_seed_spanish_translations.sql` fills in the Spanish. Every
+insert is an `INSERT OR IGNORE` keyed on the same unique indexes the API is, and every translation
+update is guarded on an empty map, so applying them twice writes nothing and an entry an editor has
+since rewritten is never clobbered. Both the site and the CMS therefore
 start from the same content, and editing it here is what changes it from now on.
 
 ### 2. Point the Worker at a local auth service
@@ -157,12 +169,12 @@ Paths below are relative to `https://api.franciscosolis.cl/cms`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Status and the list of collections |
+| `GET` | `/` | Status, the list of collections and the locales published |
 | `GET` | `/collections` | Collections with their names and descriptions |
-| `GET` | `/content/:collection` | Published entries (`featured`, `tag`, `search`, `limit`, `offset`) |
-| `GET` | `/content/:collection/:slug` | A single published entry |
-| `GET` | `/legal` | Published legal pages, without bodies |
-| `GET` | `/legal/:slug` | A single published legal page |
+| `GET` | `/content/:collection` | Published entries (`locale`, `featured`, `tag`, `search`, `limit`, `offset`) |
+| `GET` | `/content/:collection/:slug` | A single published entry (`locale`) |
+| `GET` | `/legal` | Published legal pages, without bodies (`locale`) |
+| `GET` | `/legal/:slug` | A single published legal page (`locale`) |
 | `GET` | `/openapi.json` | This Worker's OpenAPI document |
 
 ### Editorial (Bearer token required)
@@ -256,6 +268,24 @@ To add a collection, add an entry to `COLLECTIONS` in `src/lib/collections.ts` w
 schema. No migration and no new route are needed — listings, validation and the OpenAPI document
 pick it up from the registry.
 
+### Translations
+
+The columns above hold the default locale (`en`). Other languages live in a `translations` map
+that overrides prose only:
+
+```json
+{ "es": { "title": "Puerta de enlace", "summary": "Enrutado en el borde" } }
+```
+
+`title`, `subtitle`, `summary` and `body` are translatable (`title`, `summary` and `body` on a
+legal page). Slugs, ordering, dates, links, tags and `data` are not — they are the same fact in
+every language, and duplicating them per locale is how a reorder ends up applied to one language's
+list and not the other's.
+
+Editorial responses always come back in the default locale with the raw map beside them; a
+localized `title` there would be an editor saving the Spanish back over the English row. `PATCH`
+replaces the map wholesale, exactly like `data`. The published languages are listed by `GET /`.
+
 ---
 
 ## ⚙️ Configuration
@@ -281,8 +311,11 @@ published JWKS — see the note on offline verification below).
 
 ```bash
 pnpm run deploy
-pnpm run db:migrate:remote
 ```
+
+Migrations are not part of that: the repo's `Migrate` workflow applies them on a push to `dev` that
+touches `migrations/`, and `pnpm run db:migrate:remote` is the manual fallback. See the root README
+for the ordering caveat between the two.
 
 This Worker must be deployed under exactly the name `cms` for the gateway's `CMS` service binding
 to resolve. It needs no custom domain of its own — it is reached through

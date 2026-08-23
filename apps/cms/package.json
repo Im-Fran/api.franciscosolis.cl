@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate",
+    "db:migrate:list": "wrangler d1 migrations list franciscosolis_cms --remote",
     "db:migrate:local": "wrangler d1 migrations apply franciscosolis_cms --local",
     "db:migrate:remote": "wrangler d1 migrations apply franciscosolis_cms --remote"
   },

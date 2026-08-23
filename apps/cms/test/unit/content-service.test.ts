@@ -59,6 +59,8 @@ describe('toPublicEntry', () => {
       subtitle: 'Edge routing',
       summary: 'A summary',
       body: '# Body',
+      locale: 'en',
+      available_locales: ['en'],
       featured: true,
       position: 3,
       started_at: '2024-01-15T00:00:00.000Z',
