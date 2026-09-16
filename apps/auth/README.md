@@ -457,6 +457,7 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `GET` | `/admin/users/:id/identities` | `users:read` |
 | `POST` | `/admin/users/:id/roles` | `users:write` |
 | `DELETE` | `/admin/users/:id/roles/:roleId` | `users:write` |
+| `GET` | `/admin/sessions` | `sessions:read` |
 | `GET` | `/admin/users/:id/sessions` | `sessions:read` |
 | `DELETE` | `/admin/users/:id/sessions` | `sessions:revoke` |
 | `DELETE` | `/admin/sessions/:id` | `sessions:revoke` |

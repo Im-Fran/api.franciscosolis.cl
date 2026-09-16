@@ -25,6 +25,51 @@ type Row = {
   last_seen_at: string
 }
 
+describe('GET /admin/sessions', () => {
+  it('lists every live session, carrying the account and the application of each', async () => {
+    const { token } = await callerWith(['sessions:read'])
+    const user = await createUser({ name: 'Signed In' })
+    const application = await createApplication({ name: 'Somewhere else' })
+    const session = await createSessionRow({ userId: user.id, applicationId: application.id })
+
+    const body = await (await call('/sessions?limit=200', token)).json<{
+      data: (Row & { user_id: string; user_email: string | null; user_name: string | null })[]
+    }>()
+    const row = body.data.find((entry) => entry.id === session.id)
+
+    expect(row).toMatchObject({
+      user_id: user.id,
+      user_email: user.email,
+      user_name: 'Signed In',
+      application_id: application.id,
+      application_name: 'Somewhere else',
+    })
+  })
+
+  it('narrows by account and by application, and hides revoked sessions by default', async () => {
+    const { token } = await callerWith(['sessions:read'])
+    const user = await createUser()
+    const application = await createApplication()
+    const here = await createSessionRow({ userId: user.id, applicationId: application.id })
+    const elsewhere = await createSessionRow({ userId: user.id })
+    const dead = await createSessionRow({ userId: user.id, revokedAt: new Date() })
+
+    const ids = async (query: string) =>
+      (await (await call(`/sessions?${query}&limit=200`, token)).json<{ data: Row[] }>()).data.map((row) => row.id)
+
+    expect(await ids(`user_id=${user.id}`)).toEqual(expect.arrayContaining([here.id, elsewhere.id]))
+    expect(await ids(`user_id=${user.id}`)).not.toContain(dead.id)
+    expect(await ids(`user_id=${user.id}&application_id=${application.id}`)).toEqual([here.id])
+    expect(await ids(`user_id=${user.id}&include_revoked=true`)).toContain(dead.id)
+  })
+
+  it('refuses a caller without sessions:read', async () => {
+    const { token } = await callerWith(['users:read'])
+
+    expect((await call('/sessions', token)).status).toBe(403)
+  })
+})
+
 describe('GET /admin/users/:id/sessions', () => {
   it('lists the live sessions of a user, named with their application, most recent first', async () => {
     const { token } = await callerWith(['sessions:read'])
