@@ -491,12 +491,64 @@ describe('DELETE /admin/users/:id/sessions', () => {
   })
 })
 
+describe('GET /admin/users/:id/identities', () => {
+  it('lists the provider accounts linked to a user, without the raw profile', async () => {
+    const { token } = await callerWith(['users:read'])
+    const target = await createUser()
+    const identity = await createIdentity({
+      userId: target.id,
+      provider: 'google',
+      providerAccountId: `sub-${crypto.randomUUID()}`,
+      email: target.email,
+    })
+
+    const response = await call(`/users/${target.id}/identities`, token)
+    const body = await response.json<{ data: Record<string, unknown>[] }>()
+
+    expect(response.status).toBe(200)
+    expect(body.data).toHaveLength(1)
+    expect(body.data[0]).toMatchObject({ id: identity.id, provider: 'google', email: target.email })
+    expect(body.data[0]).not.toHaveProperty('profile')
+  })
+
+  it('answers an empty list for a user with none', async () => {
+    const { token } = await callerWith(['users:read'])
+    const target = await createUser()
+
+    const body = await (await call(`/users/${target.id}/identities`, token)).json<{ data: unknown[] }>()
+
+    expect(body.data).toEqual([])
+  })
+
+  it('refuses a caller without users:read', async () => {
+    const { token } = await callerWith(['roles:read'])
+    const target = await createUser()
+
+    const response = await call(`/users/${target.id}/identities`, token)
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({ error: 'Missing required permission: users:read' })
+  })
+})
+
 describe('the seeded admin role', () => {
   it('opens every admin route it is meant to', async () => {
     const { token } = await signInAsAdmin()
     const target = await createUser()
 
-    for (const path of ['/users', `/users/${target.id}`, '/roles', '/permissions', '/applications', '/invitations']) {
+    for (const path of [
+      '/me',
+      '/users',
+      `/users/${target.id}`,
+      `/users/${target.id}/identities`,
+      `/users/${target.id}/sessions`,
+      '/roles',
+      '/permissions',
+      '/applications',
+      '/invitations',
+      '/audit',
+      '/audit/events',
+    ]) {
       expect((await call(path, token)).status).toBe(200)
     }
   })

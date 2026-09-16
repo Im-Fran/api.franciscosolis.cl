@@ -450,13 +450,18 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 
 | Method | Path | Permission |
 |--------|------|------------|
+| `GET` | `/admin/me` | any — see below |
 | `GET` | `/admin/users` | `users:read` |
 | `GET` | `/admin/users/:id` | `users:read` |
 | `PATCH` | `/admin/users/:id` | `users:write` |
+| `GET` | `/admin/users/:id/identities` | `users:read` |
 | `POST` | `/admin/users/:id/roles` | `users:write` |
 | `DELETE` | `/admin/users/:id/roles/:roleId` | `users:write` |
+| `GET` | `/admin/users/:id/sessions` | `sessions:read` |
 | `DELETE` | `/admin/users/:id/sessions` | `sessions:revoke` |
+| `DELETE` | `/admin/sessions/:id` | `sessions:revoke` |
 | `GET` `POST` | `/admin/invitations` | `invitations:read` / `invitations:write` |
+| `POST` | `/admin/invitations/:id/resend` | `invitations:write` |
 | `DELETE` | `/admin/invitations/:id` | `invitations:write` |
 | `GET` `POST` | `/admin/applications` | `applications:read` / `applications:write` |
 | `PATCH` | `/admin/applications/:id` | `applications:write` |
@@ -464,9 +469,30 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `POST` | `/admin/applications/:id/secrets` | `applications:write` |
 | `DELETE` | `/admin/applications/:id/secrets/:secretId` | `applications:write` |
 | `GET` `POST` | `/admin/roles` | `roles:read` / `roles:write` |
-| `GET` | `/admin/permissions` | `roles:read` |
+| `PATCH` `DELETE` | `/admin/roles/:id` | `roles:write` |
+| `GET` `POST` | `/admin/permissions` | `roles:read` / `roles:write` |
+| `PATCH` `DELETE` | `/admin/permissions/:id` | `roles:write` |
 | `POST` | `/admin/roles/:id/permissions` | `roles:write` |
 | `DELETE` | `/admin/roles/:id/permissions/:slug` | `roles:write` |
+| `GET` | `/admin/audit` | `audit:read` |
+| `GET` | `/admin/audit/events` | `audit:read` |
+
+`GET /admin/me` is the one admin route that names no permission: it answers whether the caller
+belongs in an administration interface at all, which is the question asked before a panel has been
+picked. It admits any account holding at least one permission — every slug in the catalog is an
+administration capability — so an interface asks once instead of meeting a 403 per panel. Which
+panels the account may then use is still each route's own guard to answer.
+
+Three of the write routes refuse a request that would make the API unusable from inside itself:
+
+- `DELETE /admin/roles/:id` is refused when it is the last role anybody holds that carries
+  `roles:write`. Every other permission can be granted again afterwards; that one cannot.
+- `DELETE /admin/permissions/:id` is refused for the eleven slugs this Worker guards its own routes
+  with (`GUARDED_PERMISSIONS` in `src/lib/config.ts`). Deleting one takes no capability away from
+  anybody — it leaves a guard nothing can satisfy. Permissions created through `POST` are for other
+  services to check, since they travel in the access token, and delete freely.
+- A role's `slug` and scope, and a permission's `slug`, are immutable. They are the strings every
+  grant, guard and issued token names them by, so changing one would silently re-point all of them.
 
 ---
 

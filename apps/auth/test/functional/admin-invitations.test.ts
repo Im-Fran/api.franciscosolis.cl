@@ -319,6 +319,112 @@ describe('DELETE /admin/invitations/:id', () => {
   })
 })
 
+describe('POST /admin/invitations/:id/resend', () => {
+  it('emails a pending invitation again, without changing it', async () => {
+    const caller = await callerWith(['invitations:write'])
+    const application = await createApplication({ name: 'Resend target', redirectUris: ['https://resend.test/cb'] })
+    const invitation = await createInvitation({ email: uniqueEmail('resend'), applicationId: application.id })
+
+    const response = await call(`/invitations/${invitation.id}/resend`, caller.token, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    const body = await response.json<{ data: { id: string; status: string; expires_at: string } }>()
+
+    expect(response.status).toBe(200)
+    expect(body.data).toMatchObject({ id: invitation.id, status: 'pending' })
+    // D1 stores whole seconds, so the fixture's millisecond precision does not survive the trip.
+    expect(Date.parse(body.data.expires_at)).toBe(Math.floor(invitation.expiresAt.getTime() / 1000) * 1000)
+    expect(mailbox.last().to).toEqual([invitation.email])
+    expect(linkFrom(mailbox.last()).origin).toBe('https://resend.test')
+  })
+
+  it('sends to an explicit login URL when one is given', async () => {
+    const caller = await callerWith(['invitations:write'])
+    const invitation = await createInvitation({ email: uniqueEmail('resend-explicit') })
+
+    const response = await call(`/invitations/${invitation.id}/resend`, caller.token, {
+      method: 'POST',
+      body: JSON.stringify({ login_url: 'https://elsewhere.test/sign-in' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(linkFrom(mailbox.last()).href).toBe('https://elsewhere.test/sign-in')
+  })
+
+  it('revives an expired invitation when asked to extend it', async () => {
+    const caller = await callerWith(['invitations:write'])
+    const invitation = await createInvitation({
+      email: uniqueEmail('resend-expired'),
+      expiresAt: new Date(Date.now() - 86_400_000),
+    })
+
+    const body = await (
+      await call(`/invitations/${invitation.id}/resend`, caller.token, {
+        method: 'POST',
+        body: JSON.stringify({ login_url: 'https://elsewhere.test/sign-in', expires_in_days: 3 }),
+      })
+    ).json<{ data: { status: string; expires_at: string } }>()
+
+    expect(body.data.status).toBe('pending')
+    expect(Date.parse(body.data.expires_at)).toBeGreaterThan(Date.now())
+
+    const [stored] = await db().select().from(invitations).where(eq(invitations.id, invitation.id))
+    expect(stored?.expiresAt.getTime()).toBeGreaterThan(Date.now())
+  })
+
+  it('refuses when there is nowhere to send it', async () => {
+    const caller = await callerWith(['invitations:write'])
+    const invitation = await createInvitation({ email: uniqueEmail('resend-nowhere') })
+
+    const response = await call(`/invitations/${invitation.id}/resend`, caller.token, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+
+    expect(response.status).toBe(409)
+    expect(mailbox.sent).toHaveLength(0)
+  })
+
+  it('will not resend an invitation that is revoked or already accepted', async () => {
+    const caller = await callerWith(['invitations:write'])
+    const revoked = await createInvitation({ email: uniqueEmail('resend-revoked'), revokedAt: new Date() })
+    const accepted = await createInvitation({ email: uniqueEmail('resend-accepted'), acceptedAt: new Date() })
+
+    const body = JSON.stringify({ login_url: 'https://elsewhere.test/sign-in' })
+    expect((await call(`/invitations/${revoked.id}/resend`, caller.token, { method: 'POST', body })).status).toBe(404)
+    expect((await call(`/invitations/${accepted.id}/resend`, caller.token, { method: 'POST', body })).status).toBe(404)
+    expect(mailbox.sent).toHaveLength(0)
+  })
+
+  it('records the resend on the trail', async () => {
+    const caller = await callerWith(['invitations:write'])
+    const invitation = await createInvitation({ email: uniqueEmail('resend-audited') })
+
+    await call(`/invitations/${invitation.id}/resend`, caller.token, {
+      method: 'POST',
+      body: JSON.stringify({ login_url: 'https://elsewhere.test/sign-in' }),
+    })
+
+    const trail = await db().select().from(auditLogs).where(eq(auditLogs.userId, caller.user.id))
+    const entry = trail.find((row) => row.event === 'invitation.resent')
+
+    expect(JSON.parse(entry?.metadata ?? 'null')).toMatchObject({ email: invitation.email, extended: false })
+  })
+
+  it('refuses a caller without invitations:write', async () => {
+    const { token } = await callerWith(['invitations:read'])
+    const invitation = await createInvitation({ email: uniqueEmail('resend-forbidden') })
+
+    const response = await call(`/invitations/${invitation.id}/resend`, token, {
+      method: 'POST',
+      body: JSON.stringify({ login_url: 'https://elsewhere.test/sign-in' }),
+    })
+
+    expect(response.status).toBe(403)
+  })
+})
+
 describe('an invitation end to end', () => {
   it('turns an unknown address into an account with the invited role', async () => {
     const caller = await callerWith(['invitations:write'])
