@@ -317,6 +317,15 @@ const sessions = sqliteTable('sessions', {
   revokedReason: text('revoked_reason'),
   ip: text('ip'),
   userAgent: text('user_agent'),
+  /**
+   * Where Cloudflare placed the sign-in, taken from its own edge headers at the moment the session
+   * was opened and never refreshed afterwards: it describes the sign-in, not the current request.
+   * Both are null for a session opened before this column existed, or from a request the edge could
+   * not place (a local run, an anonymising network), and every rule that reads them treats a null
+   * as "unknown" rather than as a mismatch.
+   */
+  country: text('country'),
+  city: text('city'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => [
   index('sessions_user_id_idx').on(table.userId),
