@@ -77,7 +77,7 @@ const DEFAULT_LOGIN_URL = 'https://franciscosolis.cl/apps/auth'
  *
  * The catalog is editable at runtime because a permission is also how another service describes a
  * capability of its own — they travel in the access token, so `apps/cms` can be given one without
- * a migration here. These eleven are different: deleting one does not take a capability away, it
+ * a migration here. These are different: deleting one does not take a capability away, it
  * takes the guard off nothing and locks the administration API out of its own catalog. They are
  * refused a delete for that reason, and the list has to be kept in step with `requirePermission`.
  */
@@ -93,13 +93,41 @@ const GUARDED_PERMISSIONS = [
   'sessions:read',
   'sessions:revoke',
   'audit:read',
+  'avatars:read',
+  'avatars:review',
 ] as const
+
+/**
+ * What an uploaded avatar may be.
+ *
+ * The three formats are the ones every browser both encodes and renders; GIF and SVG are absent on
+ * purpose — an animated avatar is a nuisance a reviewer cannot un-approve fast enough, and SVG is a
+ * document with scripts in it, which is the one thing an image served from our own origin must not
+ * be. The ceiling is small because this is a 512-pixel circle: anything larger is a photo that was
+ * never resized, not a picture that needs the room.
+ */
+const AVATAR_UPLOAD = {
+  maxBytes: 2 * 1024 * 1024,
+  contentTypes: ['image/png', 'image/jpeg', 'image/webp'],
+  /** How long a browser may cache an approved avatar. It is immutable: a new one is a new id. */
+  cacheSeconds: 365 * 24 * 60 * 60,
+} as const
+
+/**
+ * Lifecycle of an uploaded avatar. `superseded` is what a row becomes when a newer upload or a
+ * newer approval displaces it, which is how "one pending and one approved per user" stays true
+ * without deleting the trail of what was reviewed.
+ */
+const AVATAR_STATUS = ['pending', 'approved', 'rejected', 'superseded'] as const
+type AvatarStatus = (typeof AVATAR_STATUS)[number]
 
 /** Slug of the global role granted to bootstrap administrators on their first sign-in. */
 const ADMIN_ROLE_SLUG = 'admin'
 
 export {
   ADMIN_ROLE_SLUG,
+  AVATAR_STATUS,
+  AVATAR_UPLOAD,
   CLIENT_AUTH_METHODS,
   CODE_CHALLENGE_METHOD,
   DEFAULT_LOGIN_URL,
@@ -111,4 +139,4 @@ export {
   TTL,
   USER_STATUS,
 }
-export type { ClientAuthMethod, GrantType, ProviderName, UserStatus }
+export type { AvatarStatus, ClientAuthMethod, GrantType, ProviderName, UserStatus }

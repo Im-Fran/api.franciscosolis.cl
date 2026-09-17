@@ -78,7 +78,24 @@ const updateMeSchema = v.object({
   name: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))),
   given_name: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))),
   family_name: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))),
-  picture: v.optional(v.nullable(v.pipe(v.string(), v.url()))),
+  /**
+   * Deliberately un-settable, and refused loudly rather than ignored.
+   *
+   * A picture on this account is either one a sign-in provider vouches for or one an administrator
+   * approved (`POST /me/avatar`). Leaving a free-form URL here would make the whole review step
+   * optional — anybody could point their avatar at any image on the internet, moderated by nobody
+   * and re-fetched from a host we do not control — so the field answers 400 with where to go
+   * instead.
+   */
+  picture: v.optional(
+    v.pipe(
+      v.any(),
+      v.check(
+        () => false,
+        'The profile picture cannot be set directly: upload one to POST /me/avatar, where it is published once a reviewer approves it',
+      ),
+    ),
+  ),
   locale: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(20)))),
 })
 
@@ -86,7 +103,7 @@ app.patch(
   '/me',
   describeRoute({
     description:
-      'Updates the profile fields the user owns. The email address is deliberately not editable here: it is the identity key providers are matched on, so changing it would re-point the account.',
+      'Updates the profile fields the user owns. Two are deliberately not among them: the email address, which is the identity key providers are matched on, and the picture, which is uploaded to `POST /me/avatar` and published only once a reviewer approves it.',
     tags: ['Me'],
     security: [{ bearerAuth: [] }],
     responses: {
@@ -109,7 +126,6 @@ app.patch(
       name: body.name === undefined ? actor.user.name : body.name,
       givenName: body.given_name === undefined ? actor.user.givenName : body.given_name,
       familyName: body.family_name === undefined ? actor.user.familyName : body.family_name,
-      picture: body.picture === undefined ? actor.user.picture : body.picture,
       locale: body.locale === undefined ? actor.user.locale : body.locale,
       updatedAt: new Date(),
     }
@@ -120,7 +136,6 @@ app.patch(
         name: updated.name,
         givenName: updated.givenName,
         familyName: updated.familyName,
-        picture: updated.picture,
         locale: updated.locale,
         updatedAt: updated.updatedAt,
       })
