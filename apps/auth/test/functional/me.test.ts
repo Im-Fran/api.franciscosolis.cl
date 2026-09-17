@@ -75,16 +75,16 @@ describe('PATCH /me', () => {
 
     const response = await call('/me', token, {
       method: 'PATCH',
-      body: JSON.stringify({ name: '  Ada Lovelace  ', locale: 'en-GB', picture: 'https://p.test/ada.png' }),
+      body: JSON.stringify({ name: '  Ada Lovelace  ', locale: 'en-GB' }),
     })
 
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toMatchObject({
-      data: { user: { name: 'Ada Lovelace', locale: 'en-GB', picture: 'https://p.test/ada.png' } },
+      data: { user: { name: 'Ada Lovelace', locale: 'en-GB' } },
     })
 
     const [row] = await db().select().from(users).where(eq(users.id, user.id))
-    expect(row).toMatchObject({ name: 'Ada Lovelace', locale: 'en-GB', picture: 'https://p.test/ada.png' })
+    expect(row).toMatchObject({ name: 'Ada Lovelace', locale: 'en-GB' })
   })
 
   it('leaves an omitted field alone and clears one sent as null', async () => {
@@ -111,10 +111,24 @@ describe('PATCH /me', () => {
 
     await call('/me', token, {
       method: 'PATCH',
-      body: JSON.stringify({ given_name: null, family_name: null, picture: null }),
+      body: JSON.stringify({ given_name: null, family_name: null }),
     })
     ;[row] = await db().select().from(users).where(eq(users.id, user.id))
-    expect(row).toMatchObject({ givenName: null, familyName: null, picture: null })
+    expect(row).toMatchObject({ givenName: null, familyName: null })
+  })
+
+  it('refuses to set the picture, which only a reviewed upload may write', async () => {
+    const user = await createUser({ picture: 'https://p.test/old.png' })
+    const { token } = await signIn({ user })
+
+    const response = await call('/me', token, {
+      method: 'PATCH',
+      body: JSON.stringify({ picture: 'https://evil.test/anything.png' }),
+    })
+
+    expect(response.status).toBe(400)
+    const [row] = await db().select().from(users).where(eq(users.id, user.id))
+    expect(row?.picture).toBe('https://p.test/old.png')
   })
 
   it('refuses to change the email address, which is the identity key', async () => {

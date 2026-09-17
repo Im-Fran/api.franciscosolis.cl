@@ -59,6 +59,40 @@ const identities = sqliteTable('identities', {
 ])
 
 /**
+ * An avatar a user uploaded, and where it stands with the reviewers.
+ *
+ * The bytes live in R2 (`AVATARS`), keyed by this row's id, and the row is the only thing that
+ * decides whether they are public: `GET /avatars/:id` serves an `approved` row and nothing else.
+ * That split is the whole feature — a picture arrives from an untrusted person, so it is stored out
+ * of reach first and published by an administrator second, rather than being trusted on upload and
+ * taken down afterwards.
+ *
+ * At most one row per user is `pending` and at most one is `approved`; anything a newer upload or a
+ * newer approval displaces becomes `superseded` and has its object deleted. A `rejected` row keeps
+ * its reason and loses its object too — the record of the decision is worth keeping, the bytes are
+ * not.
+ */
+const avatarUploads = sqliteTable('avatar_uploads', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** Key of the object in the `AVATARS` bucket. Null once the object has been deleted. */
+  objectKey: text('object_key'),
+  /** Sniffed from the bytes, never taken from the upload's own `Content-Type`. */
+  contentType: text('content_type').notNull(),
+  size: integer('size').notNull(),
+  /** `pending` | `approved` | `rejected` | `superseded`. See `AVATAR_STATUS`. */
+  status: text('status').notNull().default('pending'),
+  reviewedBy: text('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+  reviewedAt: integer('reviewed_at', { mode: 'timestamp' }),
+  /** Shown to the user on a rejection, so a refusal is something they can act on. */
+  reviewNote: text('review_note'),
+  ...timestamps,
+}, (table) => [
+  index('avatar_uploads_user_id_idx').on(table.userId),
+  index('avatar_uploads_status_created_idx').on(table.status, table.createdAt),
+])
+
+/**
  * Client applications allowed to start a login flow.
  *
  * `tokenEndpointAuthMethod` is what makes a client public or confidential: `none` means it cannot
@@ -362,6 +396,7 @@ const auditLogs = sqliteTable('audit_logs', {
 
 export {
   applications,
+  avatarUploads,
   applicationSecrets,
   auditLogs,
   authorizationCodes,

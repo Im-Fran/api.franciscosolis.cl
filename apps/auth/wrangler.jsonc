@@ -30,6 +30,15 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Uploaded avatars, moderated before they are ever served. The bucket has no public access of
+  // its own: `GET /avatars/:id` reads the row in D1 first and only then hands the object back, so a
+  // picture waiting for review cannot be reached by guessing a URL.
+  "r2_buckets": [
+    {
+      "binding": "AVATARS",
+      "bucket_name": "franciscosolis-avatars"
+    }
+  ],
   "send_email": [
     {
       "name": "EMAIL",

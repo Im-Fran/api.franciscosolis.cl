@@ -30,6 +30,12 @@ type Env = {
   DB: D1Database
   /** Cloudflare Email Sending binding used for magic links and invitations. */
   EMAIL: EmailSender
+  /**
+   * R2 bucket holding uploaded avatars, moderated and unmoderated alike. Nothing here is public by
+   * way of the bucket: `GET /avatars/:id` reads the row first and serves the object only for an
+   * approved one, so a picture waiting for review is unreachable rather than merely unlinked.
+   */
+  AVATARS: R2Bucket
 
   /** Public base URL of this Worker, e.g. `https://api.franciscosolis.cl/auth`. No trailing slash. */
   AUTH_PUBLIC_URL: string

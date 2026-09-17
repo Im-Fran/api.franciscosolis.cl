@@ -3,6 +3,7 @@ import type { AppEnv } from '@/env'
 import { requireAuth } from '@/middleware/auth'
 import applications from '@/routes/admin/applications'
 import audit from '@/routes/admin/audit'
+import avatars from '@/routes/admin/avatars'
 import invitations from '@/routes/admin/invitations'
 import me from '@/routes/admin/me'
 import roles from '@/routes/admin/roles'
@@ -25,6 +26,7 @@ app.use('*', requireAuth)
 
 app.route('/', me)
 app.route('/', users)
+app.route('/', avatars)
 app.route('/', sessions)
 app.route('/', invitations)
 app.route('/', applications)

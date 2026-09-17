@@ -57,6 +57,11 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
   no gateway change to sign in or to administer this service. An allowed origin may be a
   `https://*.example.com` pattern, which is what lets a Cloudflare preview deployment — whose
   hostname only exists once it is deployed — call this service at all.
+- **Moderated avatars** — a user uploads a picture to `POST /me/avatar`; it lands in an R2 bucket
+  with no public access, and stays unreachable until an administrator approves it from the users
+  area of the console. Approving publishes it at `/avatars/:id` and writes that URL onto the
+  account, so every relying party sees it through the profile and the `id_token`. The profile's
+  `picture` field is not settable by hand for exactly that reason.
 - **Client credentials grant** — for a backend acting as itself rather than for a person.
 - **Authorization code + PKCE for every provider** — the browser only ever carries a one-time
   `code`; tokens are fetched with a separate `POST /oauth/token` bound to the client's
@@ -416,6 +421,7 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `GET` | `/.well-known/oauth-authorization-server` | RFC 8414 metadata |
 | `GET` | `/.well-known/openid-configuration` | The same document, under its OpenID Connect name |
 | `GET` | `/openapi.json` | OpenAPI 3 document |
+| `GET` | `/avatars/:id` | An **approved** avatar's image; anything else answers 404 |
 
 ### Sign-in
 
@@ -441,6 +447,9 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 |--------|------|-------------|
 | `GET` | `/me` | Profile, roles and permissions |
 | `PATCH` | `/me` | Update the profile fields the user owns |
+| `GET` | `/me/avatar` | The published, pending and last refused avatar, plus the upload limits |
+| `POST` | `/me/avatar` | Upload an avatar (`multipart/form-data`, `file` part) — 202, pending review |
+| `DELETE` | `/me/avatar` | Withdraw a pending upload and take a published one down |
 | `GET` | `/me/identities` | Linked providers |
 | `GET` | `/me/sessions` | Active sessions |
 | `DELETE` | `/me/sessions/:id` | Revoke one session |
@@ -475,6 +484,9 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `PATCH` `DELETE` | `/admin/permissions/:id` | `roles:write` |
 | `POST` | `/admin/roles/:id/permissions` | `roles:write` |
 | `DELETE` | `/admin/roles/:id/permissions/:slug` | `roles:write` |
+| `GET` | `/admin/avatars` | `avatars:read` |
+| `POST` | `/admin/avatars/:id/approve` | `avatars:review` |
+| `POST` | `/admin/avatars/:id/reject` | `avatars:review` |
 | `GET` | `/admin/audit` | `audit:read` |
 | `GET` | `/admin/audit/events` | `audit:read` |
 
@@ -488,7 +500,7 @@ Three of the write routes refuse a request that would make the API unusable from
 
 - `DELETE /admin/roles/:id` is refused when it is the last role anybody holds that carries
   `roles:write`. Every other permission can be granted again afterwards; that one cannot.
-- `DELETE /admin/permissions/:id` is refused for the eleven slugs this Worker guards its own routes
+- `DELETE /admin/permissions/:id` is refused for the thirteen slugs this Worker guards its own routes
   with (`GUARDED_PERMISSIONS` in `src/lib/config.ts`). Deleting one takes no capability away from
   anybody — it leaves a guard nothing can satisfy. Permissions created through `POST` are for other
   services to check, since they travel in the access token, and delete freely.
@@ -514,9 +526,15 @@ Three of the write routes refuse a request that would make the API unusable from
 | `oauth_states` | In-flight redirects to an external provider |
 | `authorization_codes` | One-time codes awaiting exchange |
 | `sessions` / `refresh_tokens` | Sign-ins and their rotating token chains |
+| `avatar_uploads` | Uploaded avatars and where each one stands with the reviewers |
 | `audit_logs` | Append-only trail of security-relevant events |
 
 Every user-facing token is stored only as a SHA-256 hash.
+
+The avatar images themselves live in the `AVATARS` R2 bucket (`franciscosolis-avatars`), never in
+D1. The bucket has no public access of its own: `GET /avatars/:id` reads the row first and hands the
+object back only for an `approved` one, so a picture waiting for review cannot be reached by
+guessing a URL, and one that is rejected, withdrawn or replaced has its object deleted outright.
 
 To change the schema:
 

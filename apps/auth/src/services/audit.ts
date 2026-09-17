@@ -50,6 +50,11 @@ const AUDIT_EVENTS = [
   'permission.created',
   'permission.updated',
   'permission.deleted',
+  /** Avatar moderation: a user uploaded or withdrew one, a reviewer published or refused one. */
+  'avatar.uploaded',
+  'avatar.withdrawn',
+  'avatar.approved',
+  'avatar.rejected',
 ] as const
 
 type AuditEvent = (typeof AUDIT_EVENTS)[number]

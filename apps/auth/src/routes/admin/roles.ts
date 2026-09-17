@@ -354,7 +354,7 @@ app.post(
   '/permissions',
   describeRoute({
     description:
-      'Defines a permission. The eleven this Worker guards its own routes with are seeded by a migration; one created here is for somebody else to check — permissions travel in the access token, so another service can be given a capability of its own without a migration in this repo. Creating one grants nothing on its own: it has to be attached to a role.',
+      'Defines a permission. The ones this Worker guards its own routes with are seeded by a migration; one created here is for somebody else to check — permissions travel in the access token, so another service can be given a capability of its own without a migration in this repo. Creating one grants nothing on its own: it has to be attached to a role.',
     tags: ['Admin'],
     security: [{ bearerAuth: [] }],
     responses: {

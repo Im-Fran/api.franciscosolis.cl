@@ -10,8 +10,8 @@ describe('auth smoke', () => {
   it('applies the schema and the permission seed', async () => {
     const row = await env.DB.prepare('SELECT COUNT(*) AS total FROM permissions').first<{ total: number }>()
 
-    // 0001_seed.sql inserts the eleven baseline permissions.
-    expect(row?.total).toBe(11)
+    // 0001_seed.sql inserts the eleven baseline permissions, 0007 the two avatar ones.
+    expect(row?.total).toBe(13)
   })
 
   it('seeds the two client applications as public clients', async () => {

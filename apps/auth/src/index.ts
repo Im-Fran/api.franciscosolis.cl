@@ -11,6 +11,7 @@ import { clientCors } from '@/middleware/cors'
 /* Routes */
 import admin from '@/routes/admin'
 import authorize from '@/routes/authorize'
+import avatars from '@/routes/avatars'
 import google from '@/routes/google'
 import introspect from '@/routes/introspect'
 import logout from '@/routes/logout'
@@ -107,6 +108,7 @@ app.route('/', userinfo)
 app.route('/', introspect)
 app.route('/', logout)
 app.route('/', me)
+app.route('/', avatars)
 app.route('/admin', admin)
 
 app.get(

@@ -185,9 +185,17 @@ describe('GET /admin/permissions', () => {
 
     const body = await (await call('/permissions', token)).json<{ data: { slug: string }[] }>()
 
-    expect(body.data).toHaveLength(11)
+    expect(body.data).toHaveLength(13)
     expect(body.data.map((permission) => permission.slug)).toEqual(
-      expect.arrayContaining(['users:read', 'users:write', 'roles:read', 'sessions:revoke', 'audit:read']),
+      expect.arrayContaining([
+        'users:read',
+        'users:write',
+        'roles:read',
+        'sessions:revoke',
+        'audit:read',
+        'avatars:read',
+        'avatars:review',
+      ]),
     )
   })
 

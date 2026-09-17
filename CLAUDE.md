@@ -203,6 +203,12 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   An email cannot carry a logo any other way — Gmail blocks `data:` URIs and strips inline
   SVG — and the gateway owns the only public hostname in the repo. Renaming that path breaks
   the logo in every inbox already delivered, so `theme.logo.src` and the route move together.
+- **`apps/auth` owns an R2 bucket too, and moderation is what the bucket is for**: uploaded avatars
+  go into `AVATARS` (`franciscosolis-avatars`) with no public access of their own, and
+  `GET /auth/avatars/:id` serves one only once an administrator has approved its row in
+  `avatar_uploads`. Approving writes the URL onto `users.picture`, which is why `PATCH /me` refuses
+  a `picture` field outright — a free-form URL there would make the review step optional. See
+  `apps/auth/CLAUDE.md`.
 - **Nothing in this repo renders HTML.** `api.franciscosolis.cl` is a backend end to end: every
   Worker answers JSON, a redirect or a binary asset (`apps/api/src/brand.ts`), and nothing else.
   The one place that used to break the rule was `apps/auth`'s built-in sign-in screen; it is gone,
