@@ -242,6 +242,7 @@ const toPublicUser = (user: User) => ({
 })
 
 export {
+  assertUserActive,
   findUserByEmail,
   findUserById,
   getDefaultRoles,

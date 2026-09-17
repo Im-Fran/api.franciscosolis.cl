@@ -10,12 +10,15 @@ import {
   rolePermissions,
   roles,
   sessions,
+  ssoSessions,
   userRoles,
   users,
 } from '@/db/schema'
 import type { ClientAuthMethod, GrantType, ProviderName } from '@/lib/config'
 import { generateId, sha256 } from '@/lib/crypto'
 import { signAccessToken } from '@/lib/jwt'
+import { TTL } from '@/lib/config'
+import type { SsoSession } from '@/services/sso'
 import type { Session } from '@/services/tokens'
 import type { User } from '@/services/users'
 
@@ -198,6 +201,8 @@ const createSessionRow = async (
     revokedAt?: Date | null
     /** Explicit value for the column `/me/sessions` orders on. Truncated, like every timestamp. */
     lastSeenAt?: Date
+    /** When the user authenticated, which is not necessarily when the session was opened. */
+    authTime?: Date
     createdAt?: Date
     ip?: string | null
     userAgent?: string | null
@@ -212,6 +217,7 @@ const createSessionRow = async (
     applicationId: input.applicationId ?? SEED.webAppId,
     provider: input.provider ?? 'magic_link',
     scope: input.scope ?? 'openid profile email',
+    authTime: input.authTime ?? input.createdAt ?? now,
     lastSeenAt: input.lastSeenAt ?? now,
     revokedAt: input.revokedAt ?? null,
     revokedReason: input.revokedAt ? 'test' : null,
@@ -326,6 +332,42 @@ const signInAsAdmin = async (input: SignInInput = {}) => signIn({ ...input, role
 
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` })
 
+/**
+ * An SSO session with a known cookie value, for the cases a real sign-in cannot build: one that
+ * authenticated days ago, one that has expired, one that was revoked. The raw token is returned
+ * because only its hash is stored — exactly as the Worker does it.
+ */
+const createSsoSession = async (
+  input: {
+    userId: string
+    provider?: ProviderName
+    authenticatedAt?: Date
+    expiresAt?: Date
+    revokedAt?: Date | null
+  },
+): Promise<{ session: SsoSession; token: string }> => {
+  const now = nowInSeconds()
+  const token = generateId()
+  const session: SsoSession = {
+    id: generateId(),
+    userId: input.userId,
+    tokenHash: await sha256(token),
+    provider: input.provider ?? 'magic_link',
+    authenticatedAt: input.authenticatedAt ?? now,
+    lastSeenAt: now,
+    expiresAt: input.expiresAt ?? new Date(now.getTime() + TTL.ssoSession * 1000),
+    revokedAt: input.revokedAt ?? null,
+    revokedReason: input.revokedAt ? 'test' : null,
+    ip: null,
+    userAgent: null,
+    country: null,
+    city: null,
+    createdAt: input.authenticatedAt ?? now,
+  }
+  await db().insert(ssoSessions).values(session)
+  return { session, token }
+}
+
 export {
   bearer,
   createApplication,
@@ -334,6 +376,7 @@ export {
   createInvitation,
   createRole,
   createSessionRow,
+  createSsoSession,
   createUser,
   db,
   findSecrets,

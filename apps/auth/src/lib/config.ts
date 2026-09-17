@@ -19,6 +19,14 @@ const TTL = {
   oauthState: 10 * 60,
   /** A parked authorization request: how long the user has to pick a provider and authenticate. */
   authorizationRequest: 30 * 60,
+  /**
+   * The browser's SSO session with this server, i.e. how long "authorize" can stand in for "sign
+   * in". Absolute rather than idle: using it moves `last_seen_at` and never `expires_at`, so a
+   * browser is asked to authenticate again a fortnight after it did, however busy it was. It is
+   * deliberately shorter than a refresh token, which is bound to one application and to a client
+   * that can be revoked; this one hands out new sessions.
+   */
+  ssoSession: 14 * 24 * 60 * 60,
   /** Invitation validity. */
   invitation: 7 * 24 * 60 * 60,
   /** Default grace period given to the previous secrets of a client when one is rotated. */
@@ -61,6 +69,25 @@ type GrantType = (typeof GRANT_TYPES)[number]
 
 /** The only `response_type` this server issues. Implicit and hybrid flows are deliberately absent. */
 const RESPONSE_TYPE = 'code'
+
+/**
+ * Cookie naming the browser's SSO session (`sso_sessions`).
+ *
+ * The `__Secure-` prefix is a browser-enforced invariant, not decoration: a cookie with this name
+ * can only be set over HTTPS, so a plaintext sibling origin cannot plant one. `__Host-` would be
+ * stronger still and is not usable — it requires `Path=/`, and this Worker is served under
+ * `/auth` on the gateway's hostname, which is exactly the subtree the cookie should be scoped to.
+ */
+const SSO_COOKIE_NAME = '__Secure-auth-session'
+
+/**
+ * `prompt` values this server can actually satisfy, which is now all four of the ones OpenID
+ * Connect Core §3.1.2.1 defines. `none` became answerable when SSO sessions arrived — before them
+ * there was never a state in which a user could be authenticated without interaction. `consent` is
+ * accepted rather than implemented: every registered client is first-party, so nobody is asked to
+ * approve a scope, and the authorization screen the user already sees is the whole of it.
+ */
+const PROMPT_VALUES = ['none', 'login', 'consent', 'select_account'] as const
 
 /**
  * Sign-in front-end used when `AUTH_LOGIN_URL` is not set.
@@ -134,8 +161,10 @@ export {
   GRANT_TYPES,
   GUARDED_PERMISSIONS,
   MAGIC_LINK_RATE_LIMIT,
+  PROMPT_VALUES,
   PROVIDERS,
   RESPONSE_TYPE,
+  SSO_COOKIE_NAME,
   TTL,
   USER_STATUS,
 }

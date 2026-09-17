@@ -11,6 +11,7 @@ import type { IdTokenClaims } from '@/lib/jwt'
 import { verifySignedToken } from '@/lib/jwt'
 import { getApplication, getPostLogoutRedirectUris } from '@/services/applications'
 import { getRequestContext, recordAudit } from '@/services/audit'
+import { clearSsoCookie, readSsoSession, revokeSsoSession } from '@/services/sso'
 import { revokeSession } from '@/services/tokens'
 
 const app = new Hono<AppEnv>()
@@ -31,8 +32,10 @@ const logoutSchema = v.object({
  * exactly against the list registered for the client, for the same reason `redirect_uri` is: an
  * unvalidated one is an open redirect, and this endpoint is reachable without any credential.
  *
- * There is no browser session of this server's own to end — every sign-in goes out to a provider —
- * so logging out here does not log the user out of Google. That is deliberate and documented.
+ * The browser's own SSO session goes too, when the request carries its cookie: that is what stops
+ * the next application from being authorized without a sign-in, and it is the difference between
+ * signing out of one application and signing out of this server. It still does not sign the user out
+ * of Google — that session is Google's, and ending it is not ours to do.
  */
 const handleLogout = async (c: Context<AppEnv>, params: v.InferOutput<typeof logoutSchema>) => {
   const db = getDb(c.env)
@@ -66,6 +69,23 @@ const handleLogout = async (c: Context<AppEnv>, params: v.InferOutput<typeof log
     }
   }
 
+  // The cookie only reaches this endpoint on a navigation; a cross-origin `fetch` from a front-end
+  // sends none, and then there is simply nothing of this browser's to close here.
+  const sso = await readSsoSession(c, db)
+  if (sso) {
+    await revokeSsoSession(db, sso.session.id, 'rp_initiated_logout')
+    await recordAudit(db, {
+      event: 'sso_session.revoked',
+      userId: sso.user.id,
+      applicationId: application?.id ?? null,
+      ...context,
+      metadata: { sso_session_id: sso.session.id, reason: 'rp_initiated_logout' },
+    })
+  }
+  // Cleared even when no session was found, so a cookie naming an expired or already revoked one
+  // stops being sent back.
+  clearSsoCookie(c)
+
   if (!params.post_logout_redirect_uri) {
     return c.json({ code: 200, data: { message: 'Signed out.' } })
   }
@@ -82,7 +102,7 @@ const handleLogout = async (c: Context<AppEnv>, params: v.InferOutput<typeof log
 }
 
 const description =
-  'RP-initiated logout (OpenID Connect RP-Initiated Logout 1.0). Revokes the session identified by `id_token_hint` — an expired hint is accepted, since the token usually has expired by the time a user signs out — and optionally redirects to a `post_logout_redirect_uri` registered for the client. It does not sign the user out of the upstream provider they authenticated with.'
+  'RP-initiated logout (OpenID Connect RP-Initiated Logout 1.0). Revokes the session identified by `id_token_hint` — an expired hint is accepted, since the token usually has expired by the time a user signs out — and, when the browser navigates here with its cookie, the SSO session too, so the next application asks for a sign-in again. Optionally redirects to a `post_logout_redirect_uri` registered for the client. It does not sign the user out of the upstream provider they authenticated with.'
 
 app.get(
   '/oauth/logout',

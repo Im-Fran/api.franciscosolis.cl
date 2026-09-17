@@ -9,6 +9,7 @@ import type { AppEnv } from '@/env'
 import { USER_STATUS } from '@/lib/config'
 import { requirePermission } from '@/middleware/auth'
 import { getRequestContext, recordAudit } from '@/services/audit'
+import { revokeUserSsoSessions } from '@/services/sso'
 import { revokeSession, toPublicSession } from '@/services/tokens'
 import { findUserById, toPublicUser } from '@/services/users'
 
@@ -150,6 +151,10 @@ app.patch(
       for (const session of userSessions) {
         await revokeSession(db, session.id, 'user_disabled')
       }
+      // And the browser's session with this server, which is not one of those: leaving it alive
+      // would put a re-enabled account one "Authorize" click away from a token on a browser that
+      // was never asked to sign in again.
+      await revokeUserSsoSessions(db, user.id, 'user_disabled')
     }
 
     await recordAudit(db, {

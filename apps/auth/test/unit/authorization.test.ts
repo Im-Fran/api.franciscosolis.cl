@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { auditLogs } from '@/db/schema'
 import type { Application } from '@/services/applications'
@@ -6,6 +6,7 @@ import { getApplication } from '@/services/applications'
 import { completeAuthentication } from '@/services/authorization'
 import { consumeAuthorizationCode } from '@/services/tokens'
 import type { AuthorizationRequest, ProviderProfile } from '@/providers/types'
+import { testContext } from '../helpers/context'
 import { createInvitation, createUser, db, SEED, uniqueEmail } from '../helpers/db'
 import { RFC7636 } from '../helpers/pkce'
 
@@ -27,11 +28,16 @@ const profileFor = (email: string): ProviderProfile => ({
   emailVerified: true,
 })
 
-const latestAudit = async (userId: string) => {
+/**
+ * The named event for a user, latest first. Filtering by event rather than taking the newest row
+ * outright: a completed authentication writes two, and `created_at` is whole seconds, so which one
+ * comes back "last" is a coin toss.
+ */
+const latestAudit = async (userId: string, event: string) => {
   const [row] = await db()
     .select()
     .from(auditLogs)
-    .where(eq(auditLogs.userId, userId))
+    .where(and(eq(auditLogs.userId, userId), eq(auditLogs.event, event)))
     .orderBy(desc(auditLogs.createdAt))
     .limit(1)
   return row ?? null
@@ -41,7 +47,7 @@ describe('completeAuthentication', () => {
   it('sends the browser back to the client with a code and the echoed state', async () => {
     const user = await createUser({ email: uniqueEmail('complete') })
 
-    const result = await completeAuthentication(db(), {
+    const result = await completeAuthentication(await testContext(), db(), {
       request: await authorizationRequest(),
       profile: profileFor(user.email),
       ip: null,
@@ -59,7 +65,7 @@ describe('completeAuthentication', () => {
   it('omits state when the client did not send one', async () => {
     const user = await createUser({ email: uniqueEmail('nostate') })
 
-    const result = await completeAuthentication(db(), {
+    const result = await completeAuthentication(await testContext(), db(), {
       request: await authorizationRequest({ state: null }),
       profile: profileFor(user.email),
       ip: null,
@@ -72,7 +78,7 @@ describe('completeAuthentication', () => {
   it('binds the issued code to the application, redirect URI and PKCE challenge of the request', async () => {
     const user = await createUser({ email: uniqueEmail('bind') })
 
-    const result = await completeAuthentication(db(), {
+    const result = await completeAuthentication(await testContext(), db(), {
       request: await authorizationRequest({ redirectUri: SEED.webLocalRedirectUri, scope: 'openid' }),
       profile: profileFor(user.email),
       ip: null,
@@ -93,20 +99,20 @@ describe('completeAuthentication', () => {
 
   it('records a sign-in as oauth.callback.succeeded and a sign-up as user.created', async () => {
     const returning = await createUser({ email: uniqueEmail('returning') })
-    await completeAuthentication(db(), {
+    await completeAuthentication(await testContext(), db(), {
       request: await authorizationRequest(),
       profile: profileFor(returning.email),
       ip: '203.0.113.1',
       userAgent: 'probe/4.0',
     })
 
-    const signIn = await latestAudit(returning.id)
+    const signIn = await latestAudit(returning.id, 'oauth.callback.succeeded')
     expect(signIn).toMatchObject({ event: 'oauth.callback.succeeded', ip: '203.0.113.1', userAgent: 'probe/4.0' })
     expect(JSON.parse(signIn?.metadata ?? 'null')).toEqual({ provider: 'magic_link' })
 
     const email = uniqueEmail('brand-new')
     await createInvitation({ email })
-    const created = await completeAuthentication(db(), {
+    const created = await completeAuthentication(await testContext(), db(), {
       request: await authorizationRequest(),
       profile: profileFor(email),
       ip: null,
@@ -114,13 +120,13 @@ describe('completeAuthentication', () => {
     })
 
     expect(created.isNewUser).toBe(true)
-    expect((await latestAudit(created.user.id))?.event).toBe('user.created')
+    expect(await latestAudit(created.user.id, 'user.created')).toBeTruthy()
   })
 
   it('preserves a query string the client registered on its redirect URI', async () => {
     const user = await createUser({ email: uniqueEmail('query') })
 
-    const result = await completeAuthentication(db(), {
+    const result = await completeAuthentication(await testContext(), db(), {
       request: await authorizationRequest({ redirectUri: `${SEED.webRedirectUri}?next=%2Fdashboard` }),
       profile: profileFor(user.email),
       ip: null,
@@ -137,7 +143,7 @@ describe('completeAuthentication', () => {
     const before = await db().select().from(auditLogs)
 
     await expect(
-      completeAuthentication(db(), {
+      completeAuthentication(await testContext(), db(), {
         request: await authorizationRequest(),
         profile: profileFor(email),
         ip: null,
@@ -152,7 +158,7 @@ describe('completeAuthentication', () => {
   it('propagates the provider onto the code so the session records how the user signed in', async () => {
     const user = await createUser({ email: uniqueEmail('provider') })
 
-    const result = await completeAuthentication(db(), {
+    const result = await completeAuthentication(await testContext(), db(), {
       request: await authorizationRequest(),
       profile: { ...profileFor(user.email), provider: 'google', providerAccountId: 'sub-provider' },
       ip: null,

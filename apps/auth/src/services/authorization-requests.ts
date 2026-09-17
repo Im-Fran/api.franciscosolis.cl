@@ -20,6 +20,8 @@ type CreateInput = {
   scope: string
   prompt: string | null
   loginHint: string | null
+  /** The SSO session the browser presented, if any. A hint for the sign-in front-end — see schema. */
+  ssoSessionId?: string | null
   ip: string | null
   userAgent: string | null
 }
@@ -46,6 +48,7 @@ const createAuthorizationRequest = async (db: Database, input: CreateInput) => {
     scope: input.scope,
     prompt: input.prompt,
     loginHint: input.loginHint,
+    ssoSessionId: input.ssoSessionId ?? null,
     expiresAt: new Date(Date.now() + TTL.authorizationRequest * 1000),
     requestIp: input.ip,
     userAgent: input.userAgent,

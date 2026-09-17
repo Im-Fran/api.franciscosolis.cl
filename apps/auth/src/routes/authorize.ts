@@ -3,7 +3,7 @@ import { describeRoute, resolver, validator } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
 import type { AppEnv } from '@/env'
-import { CODE_CHALLENGE_METHOD, DEFAULT_LOGIN_URL, RESPONSE_TYPE, TTL } from '@/lib/config'
+import { CODE_CHALLENGE_METHOD, DEFAULT_LOGIN_URL, PROMPT_VALUES, RESPONSE_TYPE, TTL } from '@/lib/config'
 import { buildErrorRedirect, OAuthException } from '@/lib/errors'
 import { googleProvider } from '@/providers/google'
 import { getAvailableProviders } from '@/providers'
@@ -20,7 +20,9 @@ import {
   loadAuthorizationRequest,
   toAuthorizationRequest,
 } from '@/services/authorization-requests'
-import { startGoogleFlow } from '@/services/authorization'
+import { authorizeFromSsoSession, startGoogleFlow } from '@/services/authorization'
+import { getSsoSessionById, readSsoSession } from '@/services/sso'
+import type { ResolvedSsoSession } from '@/services/sso'
 
 const app = new Hono<AppEnv>()
 
@@ -33,8 +35,10 @@ const authorizeSchema = v.object({
   nonce: v.optional(v.string()),
   code_challenge: v.optional(v.string()),
   code_challenge_method: v.optional(v.string()),
-  /** OIDC `prompt`. Only `login` and `select_account` are satisfiable here — see below. */
+  /** OIDC `prompt`, a space-delimited set. All four values are satisfiable — see `PROMPT_VALUES`. */
   prompt: v.optional(v.string()),
+  /** OIDC `max_age`: how old, in seconds, the user's authentication may be for this request. */
+  max_age: v.optional(v.string()),
   login_hint: v.optional(v.string()),
   /** Extension: skips the provider chooser and goes straight into the named provider. */
   provider: v.optional(v.string()),
@@ -59,11 +63,65 @@ const loginTarget = (loginUrl: string | undefined, handle: string) => {
   return url.toString()
 }
 
+/**
+ * `prompt` as the set it is. OIDC Core §3.1.2.1 defines it as space-delimited, and `none` is
+ * defined to be mutually exclusive with everything else — a request asking both to skip and to
+ * force interaction has no reading, so it is refused rather than resolved in someone's favour.
+ */
+const parsePrompt = (prompt: string | undefined) => {
+  const values = new Set((prompt ?? '').split(/\s+/).filter(Boolean))
+  for (const value of values) {
+    if (!(PROMPT_VALUES as readonly string[]).includes(value)) {
+      throw new OAuthException(400, 'invalid_request', `Unsupported prompt value: ${value}`)
+    }
+  }
+  if (values.has('none') && values.size > 1) {
+    throw new OAuthException(400, 'invalid_request', 'prompt=none cannot be combined with another prompt value')
+  }
+  return values
+}
+
+/** `max_age` in seconds, or null when the client did not ask. Anything else is a bad request. */
+const parseMaxAge = (maxAge: string | undefined) => {
+  if (maxAge === undefined) {
+    return null
+  }
+  if (!/^\d+$/.test(maxAge)) {
+    throw new OAuthException(400, 'invalid_request', 'max_age must be a non-negative number of seconds')
+  }
+  return Number(maxAge)
+}
+
+/**
+ * Whether an SSO session still satisfies what the client asked for.
+ *
+ * `prompt=login` and `prompt=select_account` both mean "authenticate again", and `max_age` means
+ * "not if it was longer ago than this" — measured from `authenticated_at`, which a reuse never
+ * moves, so a client asking for a recent authentication gets one rather than a session that has
+ * merely been busy.
+ */
+const isSsoSessionAcceptable = (
+  session: ResolvedSsoSession | null,
+  prompts: Set<string>,
+  maxAge: number | null,
+): session is ResolvedSsoSession => {
+  if (!session) {
+    return false
+  }
+  if (prompts.has('login') || prompts.has('select_account')) {
+    return false
+  }
+  if (maxAge !== null) {
+    return Date.now() - session.session.authenticatedAt.getTime() <= maxAge * 1000
+  }
+  return true
+}
+
 app.get(
   '/oauth/authorize',
   describeRoute({
     description:
-      'The authorization endpoint (RFC 6749 §3.1, OpenID Connect Core §3.1.2.1). Validates the request, parks it, and redirects the browser to the sign-in front-end (`AUTH_LOGIN_URL`) with the parked handle as `?request=`; whichever provider the user picks there resumes this same request and redirects back to `redirect_uri` with a single-use `code`. Pass `provider=google` to skip the front-end and go straight to Google. `prompt=none` is answered with `login_required`: this server keeps no session of its own, so it can never authenticate a user without interaction.',
+      'The authorization endpoint (RFC 6749 §3.1, OpenID Connect Core §3.1.2.1). Validates the request, parks it, and redirects the browser to the sign-in front-end (`AUTH_LOGIN_URL`) with the parked handle as `?request=`; whichever provider the user picks there resumes this same request and redirects back to `redirect_uri` with a single-use `code`. A browser that already holds an SSO session with this server carries it on the parked request, so the front-end offers to authorize the application instead of asking for a sign-in, and `prompt=none` is answered straight away with a code. `prompt=login`/`select_account` and an exceeded `max_age` force a fresh authentication; `prompt=none` without a usable session is still `login_required`. Pass `provider=google` to skip the front-end and go straight to Google.',
     tags: ['OAuth'],
     responses: {
       302: { description: 'Redirect to the sign-in front-end, to a provider, or back to the client with `error`' },
@@ -94,10 +152,49 @@ app.get(
       const pkce = validatePkceParameters(application, query.code_challenge, query.code_challenge_method)
       const scope = normalizeScope(query.scope, application)
 
-      // This server has no session of its own — every sign-in goes out to a provider — so there is
-      // no state in which it could answer a request that forbids interaction.
-      if (query.prompt === 'none') {
-        throw new OAuthException(400, 'login_required', 'This authorization server cannot authenticate without interaction')
+      const prompts = parsePrompt(query.prompt)
+      const maxAge = parseMaxAge(query.max_age)
+
+      // The cookie is the only thing that says this browser is signed in. It arrives because this
+      // endpoint is navigated to, which is also why the front-end cannot read it: it calls this
+      // Worker cross-origin with `fetch`, where no cookie is sent. Hence the stamp on the parked
+      // row below.
+      const sso = await readSsoSession(c, db)
+      const authenticated = isSsoSessionAcceptable(sso, prompts, maxAge) ? sso : null
+
+      // `prompt=none` forbids interaction, so there is nothing to park and nobody to show a screen
+      // to: either this browser is already signed in, or the client is told so.
+      if (prompts.has('none')) {
+        if (!authenticated) {
+          throw new OAuthException(
+            400,
+            'login_required',
+            'No active session satisfies this request; the user has to authenticate',
+          )
+        }
+
+        await recordAudit(db, {
+          event: 'oauth.authorize.started',
+          applicationId: application.id,
+          ...context,
+          metadata: { provider: authenticated.session.provider, scope, prompt: 'none' },
+        })
+
+        const { redirectUrl } = await authorizeFromSsoSession(db, {
+          request: {
+            application,
+            redirectUri,
+            state,
+            nonce: query.nonce ?? null,
+            codeChallenge: pkce.codeChallenge,
+            codeChallengeMethod: pkce.codeChallengeMethod,
+            scope,
+          },
+          session: authenticated.session,
+          user: authenticated.user,
+          ...context,
+        })
+        return c.redirect(redirectUrl, 302)
       }
 
       const { handle, record } = await createAuthorizationRequest(db, {
@@ -110,6 +207,7 @@ app.get(
         scope,
         prompt: query.prompt ?? null,
         loginHint: query.login_hint ?? null,
+        ssoSessionId: authenticated?.session.id ?? null,
         ...context,
       })
 
@@ -117,7 +215,7 @@ app.get(
         event: 'oauth.authorize.started',
         applicationId: application.id,
         ...context,
-        metadata: { provider: query.provider ?? null, scope },
+        metadata: { provider: query.provider ?? null, scope, authenticated: authenticated !== null },
       })
 
       if (query.provider === 'google') {
@@ -154,6 +252,17 @@ const pendingRequestSchema = v.object({
     scope: v.nullable(v.string()),
     login_hint: v.nullable(v.string()),
     expires_at: v.string(),
+    /** Who this browser is already signed in as, or null when it has to authenticate. */
+    authenticated: v.nullable(
+      v.object({
+        sub: v.string(),
+        email: v.string(),
+        name: v.nullable(v.string()),
+        picture: v.nullable(v.string()),
+        auth_time: v.string(),
+        continue_url: v.string(),
+      }),
+    ),
     providers: v.array(
       v.object({
         name: v.string(),
@@ -169,7 +278,7 @@ app.get(
   '/oauth/authorize/:handle',
   describeRoute({
     description:
-      'Describes a parked authorization request. This is what a sign-in front-end configured through `AUTH_LOGIN_URL` reads to know which application the user is signing in to and which providers it may offer. It deliberately exposes nothing about the request that the browser holding the handle did not already send.',
+      'Describes a parked authorization request. This is what a sign-in front-end configured through `AUTH_LOGIN_URL` reads to know which application the user is signing in to and which providers it may offer. When the browser that started the request was already signed in, `authenticated` names the account and carries the `continue_url` an "Authorize" button navigates to; otherwise it is null and the providers are the only way on. It deliberately exposes nothing else about the request that the browser holding the handle did not already send.',
     tags: ['OAuth'],
     responses: {
       200: {
@@ -185,6 +294,13 @@ app.get(
     const { record, application } = await loadAuthorizationRequest(db, handle)
 
     const base = `${c.env.AUTH_PUBLIC_URL}/oauth/authorize/${encodeURIComponent(handle)}`
+
+    // Read off the row rather than off a cookie: the front-end calls this cross-origin with
+    // `fetch`, which carries none. That is a hint and not an authority — the handle is enough to
+    // learn who the browser that started this request was signed in as, and nothing more:
+    // `/continue` asks for the cookie again before it mints anything.
+    const sso = record.ssoSessionId ? await getSsoSessionById(db, record.ssoSessionId) : null
+
     return c.json({
       code: 200,
       data: {
@@ -194,6 +310,16 @@ app.get(
         scope: record.scope,
         login_hint: record.loginHint,
         expires_at: record.expiresAt.toISOString(),
+        authenticated: sso
+          ? {
+              sub: sso.user.id,
+              email: sso.user.email,
+              name: sso.user.name,
+              picture: sso.user.picture,
+              auth_time: sso.session.authenticatedAt.toISOString(),
+              continue_url: `${base}/continue`,
+            }
+          : null,
         providers: getAvailableProviders(c.env).map((provider) => ({
           name: provider.name,
           display_name: provider.displayName,
@@ -202,6 +328,51 @@ app.get(
         })),
       },
     })
+  },
+)
+
+app.get(
+  '/oauth/authorize/:handle/continue',
+  describeRoute({
+    description:
+      'Completes a parked authorization request from the SSO session the browser already holds — the "Authorize" button of the sign-in front-end, which navigates here rather than calling it with `fetch`. The session cookie is what authorizes this, not the handle: a browser without it, or with one naming a different session than the one that started the request, is sent to the sign-in front-end to authenticate instead. Answers with the same redirect back to the client as a fresh sign-in, carrying a single-use `code`.',
+    tags: ['OAuth'],
+    responses: {
+      302: { description: 'Redirect to the client with `code`, or back to the sign-in front-end' },
+      400: { description: 'The handle is unknown or expired' },
+    },
+  }),
+  async (c) => {
+    const handle = c.req.param('handle')
+    const db = getDb(c.env)
+    const context = getRequestContext(c)
+    const { record, application } = await loadAuthorizationRequest(db, handle)
+
+    const sso = await readSsoSession(c, db)
+
+    // The stamp on the row is only a hint for the front-end; the cookie is the authority. A session
+    // that ended, or one belonging to a browser other than the one that parked this request, is not
+    // an error — it is somebody who has to sign in, so they are sent back to do exactly that.
+    if (!sso || (record.ssoSessionId && record.ssoSessionId !== sso.session.id)) {
+      return c.redirect(loginTarget(c.env.AUTH_LOGIN_URL, handle), 302)
+    }
+
+    try {
+      const { redirectUrl } = await authorizeFromSsoSession(db, {
+        request: toAuthorizationRequest(record, application),
+        session: sso.session,
+        user: sso.user,
+        ...context,
+      })
+      return c.redirect(redirectUrl, 302)
+    } catch (error) {
+      // The redirect URI was validated when the request was parked, so a failure past this point is
+      // the client's to handle rather than a dead end for the user.
+      if (error instanceof OAuthException) {
+        return c.redirect(buildErrorRedirect(record.redirectUri, error.code, error.description, record.state), 302)
+      }
+      throw error
+    }
   },
 )
 

@@ -215,6 +215,14 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   and `GET /oauth/authorize` now redirects to the sign-in front-end at
   `https://franciscosolis.cl/apps/auth` instead. Email bodies are the only markup here, and they
   are rendered by `packages/emails` for a mail client, not served to a browser.
+- **`apps/auth` keeps a browser session, and it is the one cookie in this monorepo**: a completed
+  sign-in leaves an `__Secure-auth-session` cookie scoped to `/auth` on `api.franciscosolis.cl`, so
+  the next application asks the user to authorize rather than to sign in again. Nothing here
+  configures it — the gateway already forwards the whole Request to `auth`, cookie included, and
+  hands its response back untouched — but that is why the forwarding policy for `auth`
+  (`SERVICE_MODULES` in `apps/api/src/services.ts`) must keep forwarding the Request as it stands
+  rather than rebuilding a header list, the way `landing` does. See `apps/auth/CLAUDE.md` for why
+  the cookie is `SameSite=Lax` and why CORS there still never allows credentials.
 - **The gateway's CORS allows write verbs because of auth**: `apps/api` used to allow `GET`
   only; sign-in, token exchange and the admin API need `POST`/`PATCH`/`DELETE`. The origin
   allowlist must stay locked down — but `/auth/*` is excluded from it entirely (`ownsCors` in

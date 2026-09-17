@@ -26,6 +26,12 @@ type IssueCodeInput = {
   codeChallenge: string | null
   codeChallengeMethod: string | null
   scope: string | null
+  /**
+   * When the user authenticated. Carried onto the session so `auth_time` describes the sign-in and
+   * not the exchange. Defaults to now, which is the truth for a code minted by a provider callback;
+   * authorizing from an existing SSO session passes that session's own `authenticated_at` instead.
+   */
+  authTime?: Date
 }
 
 /** Mints the one-time code handed to the client in the redirect. Only its hash is stored. */
@@ -42,6 +48,7 @@ const issueAuthorizationCode = async (db: Database, input: IssueCodeInput) => {
     codeChallenge: input.codeChallenge,
     codeChallengeMethod: input.codeChallengeMethod,
     scope: input.scope,
+    authTime: input.authTime ?? new Date(),
     expiresAt: expiresIn(TTL.authorizationCode),
   })
   return code
@@ -81,6 +88,11 @@ type CreateSessionInput = {
   applicationId: string
   provider: ProviderName
   scope: string | null
+  /**
+   * When the user actually authenticated, off the authorization code. Null only for a code minted
+   * before the column existed, where `createdAt` is the closest thing to the truth.
+   */
+  authTime?: Date | null
   ip: string | null
   userAgent: string | null
   /** Where the edge placed this sign-in; null when it could not be placed. See `getRequestLocation`. */
@@ -96,6 +108,7 @@ const createSession = async (db: Database, input: CreateSessionInput): Promise<S
     applicationId: input.applicationId,
     provider: input.provider,
     scope: input.scope,
+    authTime: input.authTime ?? now,
     lastSeenAt: now,
     revokedAt: null,
     revokedReason: null,
@@ -256,8 +269,9 @@ const buildTokenResponse = async (
       sub: input.user.id,
       aud: input.applicationId,
       sid: input.session.id,
-      // The sign-in, not this exchange: a refresh must not make an old authentication look fresh.
-      auth_time: Math.floor(input.session.createdAt.getTime() / 1000),
+      // The sign-in, not this exchange: a refresh must not make an old authentication look fresh,
+      // and a session opened from an existing SSO session dates from that sign-in, not from itself.
+      auth_time: Math.floor((input.session.authTime ?? input.session.createdAt).getTime() / 1000),
       nonce: input.nonce ?? undefined,
       at_hash: await accessTokenHash(accessToken),
       provider: input.provider,
@@ -336,6 +350,7 @@ const toPublicSession = (session: Session, currentSessionId?: string) => ({
   country: session.country,
   city: session.city,
   current: session.id === currentSessionId,
+  authenticated_at: (session.authTime ?? session.createdAt).toISOString(),
   revoked_at: session.revokedAt?.toISOString() ?? null,
   last_seen_at: session.lastSeenAt.toISOString(),
   created_at: session.createdAt.toISOString(),
