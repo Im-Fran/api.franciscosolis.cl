@@ -31,7 +31,10 @@ const GIF_BYTES = withFiller([0x47, 0x49, 0x46, 0x38, 0x39, 0x61], 32)
 /** The uploaded part of a `multipart/form-data` body, as the account screen sends it. */
 const avatarForm = (bytes: Uint8Array, filename = 'avatar.png', type = 'image/png') => {
   const form = new FormData()
-  form.set('file', new File([bytes as BlobPart], filename, { type }))
+  // The view goes in as it stands. This suite typechecks against `@cloudflare/workers-types`, where
+  // a file's parts are `(ArrayBuffer | ArrayBufferView | string)[]` — the DOM's `BlobPart` does not
+  // exist here, and `.buffer` widens to `ArrayBufferLike`, which `SharedArrayBuffer` also satisfies.
+  form.set('file', new File([bytes], filename, { type }))
   return form
 }
 
