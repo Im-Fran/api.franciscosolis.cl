@@ -286,6 +286,166 @@ describe('DELETE /me/sessions/:id', () => {
   })
 })
 
+describe('POST /me/sessions/prune', () => {
+  const CHROME_MAC =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/141.0.0.0 Safari/537.36'
+  const SAFARI_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1'
+
+  /** Signs in and gives the current session a location, which `createSessionRow` leaves empty. */
+  const signInFrom = async (where: { ip?: string; country?: string; userAgent?: string } = {}) => {
+    const actor = await signIn()
+    await db()
+      .update(sessions)
+      .set({
+        ip: where.ip ?? '200.1.2.3',
+        country: where.country ?? 'CL',
+        city: 'Santiago',
+        userAgent: where.userAgent ?? CHROME_MAC,
+      })
+      .where(eq(sessions.id, actor.session.id))
+    return actor
+  }
+
+  const prune = (token: string, body: Record<string, unknown>) =>
+    call('/me/sessions/prune', token, { method: 'POST', body: JSON.stringify(body) })
+
+  it('closes the sessions matching a rule and leaves the rest alone', async () => {
+    const { token, user, session } = await signInFrom()
+    const abroad = await createSessionRow({ userId: user.id, country: 'DE', ip: '45.9.9.9' })
+    const home = await createSessionRow({ userId: user.id, country: 'CL', ip: '200.1.2.77' })
+
+    const response = await prune(token, { rules: { other_countries: true } })
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      data: { dry_run: false, match: 'any', matched: 1, revoked: 1, sessions: [{ id: abroad.id, country: 'DE' }] },
+    })
+
+    const rows = await db().select().from(sessions).where(eq(sessions.userId, user.id))
+    expect(rows.find((row) => row.id === abroad.id)?.revokedReason).toBe('user_prune')
+    expect(rows.find((row) => row.id === home.id)?.revokedAt).toBeNull()
+    expect(rows.find((row) => row.id === session.id)?.revokedAt).toBeNull()
+  })
+
+  it('never closes the current session, even when every rule points at it', async () => {
+    const { token, session } = await signInFrom()
+    await db().update(sessions).set({ lastSeenAt: new Date(Date.now() - 400 * 86_400_000) })
+      .where(eq(sessions.id, session.id))
+
+    const response = await prune(token, { rules: { inactive_for_days: 1, older_than_days: 1 } })
+
+    await expect(response.json()).resolves.toMatchObject({ data: { matched: 0, revoked: 0 } })
+    expect((await call('/me', token)).status).toBe(200)
+  })
+
+  it('reports what it would close without touching anything on a dry run', async () => {
+    const { token, user } = await signInFrom()
+    const phone = await createSessionRow({ userId: user.id, userAgent: SAFARI_IOS })
+
+    const response = await prune(token, { rules: { other_devices: true }, dry_run: true })
+
+    await expect(response.json()).resolves.toMatchObject({
+      data: { dry_run: true, matched: 1, revoked: 0, sessions: [{ id: phone.id }] },
+    })
+
+    const [row] = await db().select().from(sessions).where(eq(sessions.id, phone.id))
+    expect(row?.revokedAt).toBeNull()
+  })
+
+  it('combines rules with `all` as well as with `any`', async () => {
+    const { token, user } = await signInFrom()
+    const stale = new Date(Date.now() - 90 * 86_400_000)
+    const oldAbroad = await createSessionRow({ userId: user.id, country: 'DE', lastSeenAt: stale })
+    const oldHere = await createSessionRow({ userId: user.id, country: 'CL', lastSeenAt: stale })
+
+    const rules = { inactive_for_days: 30, other_countries: true }
+
+    await expect((await prune(token, { rules, match: 'all', dry_run: true })).json()).resolves.toMatchObject({
+      data: { matched: 1, sessions: [{ id: oldAbroad.id }] },
+    })
+
+    const anyRun = await (await prune(token, { rules, dry_run: true })).json<{ data: { sessions: { id: string }[] } }>()
+    expect(anyRun.data.sessions.map((row) => row.id).sort()).toEqual([oldAbroad.id, oldHere.id].sort())
+  })
+
+  it('narrows to an application or a provider when asked to', async () => {
+    const { token, user } = await signInFrom()
+    const web = await createSessionRow({ userId: user.id, applicationId: SEED.webAppId, country: 'DE' })
+    const cms = await createSessionRow({ userId: user.id, applicationId: SEED.cmsAppId, country: 'DE' })
+
+    const response = await prune(token, {
+      rules: { other_countries: true },
+      scope: { applications: [SEED.cmsAppId] },
+    })
+
+    await expect(response.json()).resolves.toMatchObject({ data: { matched: 1, sessions: [{ id: cms.id }] } })
+    const [row] = await db().select().from(sessions).where(eq(sessions.id, web.id))
+    expect(row?.revokedAt).toBeNull()
+  })
+
+  it('leaves a session the rule cannot judge alone', async () => {
+    const { token, user } = await signInFrom()
+    // Written before the location columns existed: no country, no address, no user agent.
+    const placeless = await createSessionRow({ userId: user.id })
+
+    await prune(token, { rules: { other_countries: true, other_networks: true, other_devices: true } })
+
+    const [row] = await db().select().from(sessions).where(eq(sessions.id, placeless.id))
+    expect(row?.revokedAt).toBeNull()
+  })
+
+  it('refuses a run that selected no rule rather than closing everything', async () => {
+    const { token, user } = await signInFrom()
+    const other = await createSessionRow({ userId: user.id, country: 'DE' })
+
+    const response = await prune(token, { rules: {} })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({ code: 400, error: 'Select at least one rule to prune by' })
+
+    const [row] = await db().select().from(sessions).where(eq(sessions.id, other.id))
+    expect(row?.revokedAt).toBeNull()
+  })
+
+  it('refuses a day count outside the range a person would pick', async () => {
+    const { token } = await signInFrom()
+
+    expect((await prune(token, { rules: { inactive_for_days: 0 } })).status).toBe(400)
+    expect((await prune(token, { rules: { older_than_days: 4000 } })).status).toBe(400)
+  })
+
+  it('records session.pruned once for the run, not once per session', async () => {
+    const { token, user } = await signInFrom()
+    await createSessionRow({ userId: user.id, country: 'DE' })
+    await createSessionRow({ userId: user.id, country: 'AR' })
+
+    await prune(token, { rules: { other_countries: true } })
+
+    const rows = await db().select().from(auditLogs).where(eq(auditLogs.userId, user.id))
+    const pruned = rows.filter((row) => row.event === 'session.pruned')
+    expect(pruned).toHaveLength(1)
+    expect(JSON.parse(pruned[0]?.metadata ?? 'null')).toMatchObject({ match: 'any', revoked: 2 })
+  })
+
+  it('records nothing when the run closed nothing', async () => {
+    const { token, user } = await signInFrom()
+
+    await prune(token, { rules: { other_countries: true } })
+
+    const rows = await db().select().from(auditLogs).where(eq(auditLogs.userId, user.id))
+    expect(rows.filter((row) => row.event === 'session.pruned')).toHaveLength(0)
+  })
+
+  it('needs a token', async () => {
+    const response = await call('/me/sessions/prune', undefined, {
+      method: 'POST',
+      body: JSON.stringify({ rules: { other_countries: true } }),
+    })
+
+    expect(response.status).toBe(401)
+  })
+})
+
 describe('POST /logout', () => {
   it('revokes the current session and stops the token working immediately', async () => {
     const { token, session } = await signIn()

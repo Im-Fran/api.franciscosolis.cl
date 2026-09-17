@@ -453,7 +453,40 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `GET` | `/me/identities` | Linked providers |
 | `GET` | `/me/sessions` | Active sessions |
 | `DELETE` | `/me/sessions/:id` | Revoke one session |
+| `POST` | `/me/sessions/prune` | Close every session matching the rules selected |
 | `POST` | `/logout` | Revoke the current session |
+
+#### Pruning sessions
+
+`POST /me/sessions/prune` is the bulk counterpart of `DELETE /me/sessions/:id`: closing a long list
+of devices one row at a time is a chore nobody finishes, so the account screen offers rules instead.
+
+```jsonc
+{
+  "rules": {
+    "inactive_for_days": 30,   // not seen for 30 days (last_seen_at)
+    "older_than_days": 365,    // opened more than a year ago (created_at)
+    "other_countries": true,   // signed in from a country other than this session's
+    "other_networks": true,    // outside this session's /24 (IPv4) or /48 (IPv6)
+    "other_devices": true      // a different browser or platform than this one
+  },
+  "scope": { "applications": ["franciscosolis-cms"], "providers": ["google"] },
+  "match": "any",              // "all" requires every rule at once
+  "dry_run": true              // answer with the same list, revoking nothing
+}
+```
+
+Every rule is relative to the session the access token belongs to — the one session the caller is
+demonstrably holding, and therefore the only thing that can stand for "known" without asking them to
+enumerate their own countries, networks and devices first. Three guarantees are worth knowing:
+
+- **The current session is never closed.** Signing out here stays `POST /logout`.
+- **Unknown is never a match.** A session with no country, no address or no user agent — every row
+  written before `0007_session_location.sql`, and every request Cloudflare could not place — is
+  skipped by the rule that reads that field, rather than swept up by it.
+- **A request selecting no rule is a 400**, not "close everything".
+
+`scope` narrows which sessions are considered at all and is always ANDed on top of `match`.
 
 ### Admin (permission-gated)
 

@@ -28,6 +28,8 @@ const AUDIT_EVENTS = [
   'token.reuse_detected',
   'token.revoked',
   'session.revoked',
+  /** A `POST /me/sessions/prune` run that revoked at least one session. */
+  'session.pruned',
   'invitation.created',
   'invitation.revoked',
   'invitation.resent',
@@ -95,5 +97,24 @@ const getRequestContext = (c: Context<AppEnv>) => ({
   userAgent: c.req.header('User-Agent') ?? null,
 })
 
-export { AUDIT_EVENTS, getRequestContext, recordAudit }
+/**
+ * Where Cloudflare placed the request. Kept apart from `getRequestContext` because `audit_logs` has
+ * no columns for it: only a session stores a location, and only at the moment it is opened.
+ *
+ * `request.cf` is absent outside Cloudflare's edge (a local `wrangler dev` run, the test harness),
+ * and `CF-IPCountry` can read `XX`/`T1` for a request the edge could not place or one arriving over
+ * Tor. All of those collapse to null, which every rule downstream treats as "unknown".
+ */
+const getRequestLocation = (c: Context<AppEnv>) => {
+  const cf = c.req.raw.cf as { country?: string; city?: string } | undefined
+  const country = cf?.country ?? c.req.header('CF-IPCountry') ?? null
+  const city = cf?.city ?? null
+
+  return {
+    country: country && !['XX', 'T1'].includes(country.toUpperCase()) ? country.toUpperCase() : null,
+    city: city || null,
+  }
+}
+
+export { AUDIT_EVENTS, getRequestContext, getRequestLocation, recordAudit }
 export type { AuditEvent, AuditInput }

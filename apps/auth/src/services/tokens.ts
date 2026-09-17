@@ -83,6 +83,9 @@ type CreateSessionInput = {
   scope: string | null
   ip: string | null
   userAgent: string | null
+  /** Where the edge placed this sign-in; null when it could not be placed. See `getRequestLocation`. */
+  country?: string | null
+  city?: string | null
 }
 
 const createSession = async (db: Database, input: CreateSessionInput): Promise<Session> => {
@@ -98,6 +101,8 @@ const createSession = async (db: Database, input: CreateSessionInput): Promise<S
     revokedReason: null,
     ip: input.ip,
     userAgent: input.userAgent,
+    country: input.country ?? null,
+    city: input.city ?? null,
     createdAt: now,
   }
   await db.insert(sessions).values(session)
@@ -328,6 +333,8 @@ const toPublicSession = (session: Session, currentSessionId?: string) => ({
   provider: session.provider,
   ip: session.ip,
   user_agent: session.userAgent,
+  country: session.country,
+  city: session.city,
   current: session.id === currentSessionId,
   revoked_at: session.revokedAt?.toISOString() ?? null,
   last_seen_at: session.lastSeenAt.toISOString(),
