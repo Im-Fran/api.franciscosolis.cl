@@ -72,6 +72,29 @@ const RESPONSE_TYPE = 'code'
  */
 const DEFAULT_LOGIN_URL = 'https://franciscosolis.cl/apps/auth'
 
+/**
+ * Permission slugs this Worker's own routes guard themselves with.
+ *
+ * The catalog is editable at runtime because a permission is also how another service describes a
+ * capability of its own — they travel in the access token, so `apps/cms` can be given one without
+ * a migration here. These eleven are different: deleting one does not take a capability away, it
+ * takes the guard off nothing and locks the administration API out of its own catalog. They are
+ * refused a delete for that reason, and the list has to be kept in step with `requirePermission`.
+ */
+const GUARDED_PERMISSIONS = [
+  'users:read',
+  'users:write',
+  'roles:read',
+  'roles:write',
+  'invitations:read',
+  'invitations:write',
+  'applications:read',
+  'applications:write',
+  'sessions:read',
+  'sessions:revoke',
+  'audit:read',
+] as const
+
 /** Slug of the global role granted to bootstrap administrators on their first sign-in. */
 const ADMIN_ROLE_SLUG = 'admin'
 
@@ -81,6 +104,7 @@ export {
   CODE_CHALLENGE_METHOD,
   DEFAULT_LOGIN_URL,
   GRANT_TYPES,
+  GUARDED_PERMISSIONS,
   MAGIC_LINK_RATE_LIMIT,
   PROVIDERS,
   RESPONSE_TYPE,

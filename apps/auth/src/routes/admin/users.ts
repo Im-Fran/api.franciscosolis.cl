@@ -278,4 +278,38 @@ app.delete(
   },
 )
 
+const identitiesResponseSchema = v.object({
+  code: v.literal(200),
+  data: v.array(v.looseObject({ id: v.string(), provider: v.string() })),
+})
+
+app.get(
+  '/users/:id/identities',
+  describeRoute({
+    description:
+      'The provider accounts linked to one user. `GET /admin/users/{id}` already embeds these; this is the endpoint to poll when only the links changed. The raw provider profile is never returned — it is kept for backfills, not for reading.',
+    tags: ['Admin'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'Identities', content: { 'application/json': { schema: resolver(identitiesResponseSchema) } } },
+      403: { description: 'Missing the users:read permission' },
+    },
+  }),
+  requirePermission('users:read'),
+  async (c) => {
+    const rows = await getDb(c.env).select().from(identities).where(eq(identities.userId, c.req.param('id')))
+
+    return c.json({
+      code: 200,
+      data: rows.map((identity) => ({
+        id: identity.id,
+        provider: identity.provider,
+        email: identity.email,
+        last_used_at: identity.lastUsedAt?.toISOString() ?? null,
+        created_at: identity.createdAt.toISOString(),
+      })),
+    })
+  },
+)
+
 export default app

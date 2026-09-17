@@ -184,4 +184,84 @@ app.delete(
   },
 )
 
+const resendSchema = v.object({
+  /** Where the recipient should go to sign in. Defaults to the application's first redirect URI. */
+  login_url: v.optional(v.pipe(v.string(), v.url())),
+  /** Pushes the expiry out by this many days from now. Omitted leaves the original expiry alone. */
+  expires_in_days: v.optional(v.pipe(v.number(), v.minValue(1), v.maxValue(90))),
+})
+
+app.post(
+  '/invitations/:id/resend',
+  describeRoute({
+    description:
+      'Emails a pending invitation again, optionally extending it. There is no secret to re-issue — an invitation is an allowlist entry for the address, not a link that carries a credential — so this genuinely only sends the same message a second time, for the case where the first one never arrived. An expired invitation can be revived by passing `expires_in_days`.',
+    tags: ['Admin'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'The invitation, as it now stands' },
+      403: { description: 'Missing the invitations:write permission' },
+      404: { description: 'No such pending invitation' },
+      409: { description: 'Nowhere to send it: no login URL was given and none could be derived' },
+    },
+  }),
+  requirePermission('invitations:write'),
+  validator('json', resendSchema),
+  async (c) => {
+    const actor = c.get('actor')
+    const body = c.req.valid('json')
+    const db = getDb(c.env)
+
+    const [invitation] = await db
+      .select()
+      .from(invitations)
+      .where(and(eq(invitations.id, c.req.param('id')), isNull(invitations.revokedAt), isNull(invitations.acceptedAt)))
+      .limit(1)
+    if (!invitation) {
+      throw new HTTPException(404, { message: 'No pending invitation with that id' })
+    }
+
+    const application = invitation.applicationId ? await getApplication(db, invitation.applicationId) : null
+    const fallbackLoginUrl = application ? getRedirectUris(application).map((uri) => new URL(uri).origin)[0] : undefined
+    const loginUrl = body.login_url ?? fallbackLoginUrl
+    if (!loginUrl) {
+      throw new HTTPException(409, {
+        message: 'This invitation has no application to derive a login URL from; pass login_url',
+      })
+    }
+
+    const expiresAt = body.expires_in_days
+      ? new Date(Date.now() + body.expires_in_days * 86_400_000)
+      : invitation.expiresAt
+    if (body.expires_in_days) {
+      await db
+        .update(invitations)
+        .set({ expiresAt, updatedAt: new Date() })
+        .where(eq(invitations.id, invitation.id))
+    }
+
+    await sendEmail(
+      c.env,
+      invitation.email,
+      await invitationTemplate({
+        url: loginUrl,
+        applicationName: application?.name ?? c.env.MAIL_FROM_NAME,
+        invitedByName: actor.user.name ?? actor.user.email,
+        expiresInDays: Math.max(1, Math.round((expiresAt.getTime() - Date.now()) / 86_400_000)),
+        brandName: c.env.MAIL_FROM_NAME,
+      }),
+    )
+
+    await recordAudit(db, {
+      event: 'invitation.resent',
+      userId: actor.user.id,
+      applicationId: invitation.applicationId,
+      ...getRequestContext(c),
+      metadata: { email: invitation.email, extended: Boolean(body.expires_in_days) },
+    })
+
+    return c.json({ code: 200, data: toPublicInvitation({ ...invitation, expiresAt }) })
+  },
+)
+
 export default app
