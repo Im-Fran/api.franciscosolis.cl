@@ -461,6 +461,8 @@ describe('toPublicSession', () => {
 
     expect(Object.keys(published).sort()).toEqual([
       'application_id',
+      'city',
+      'country',
       'created_at',
       'current',
       'id',

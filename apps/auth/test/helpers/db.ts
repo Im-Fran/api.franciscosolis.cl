@@ -198,6 +198,11 @@ const createSessionRow = async (
     revokedAt?: Date | null
     /** Explicit value for the column `/me/sessions` orders on. Truncated, like every timestamp. */
     lastSeenAt?: Date
+    createdAt?: Date
+    ip?: string | null
+    userAgent?: string | null
+    country?: string | null
+    city?: string | null
   },
 ): Promise<Session> => {
   const now = nowInSeconds()
@@ -210,9 +215,11 @@ const createSessionRow = async (
     lastSeenAt: input.lastSeenAt ?? now,
     revokedAt: input.revokedAt ?? null,
     revokedReason: input.revokedAt ? 'test' : null,
-    ip: null,
-    userAgent: null,
-    createdAt: now,
+    ip: input.ip ?? null,
+    userAgent: input.userAgent ?? null,
+    country: input.country ?? null,
+    city: input.city ?? null,
+    createdAt: input.createdAt ?? now,
   }
   await db().insert(sessions).values(session)
   return session

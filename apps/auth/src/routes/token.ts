@@ -21,7 +21,7 @@ import {
   readClientCredentials,
 } from '@/services/applications'
 import type { Application } from '@/services/applications'
-import { getRequestContext, recordAudit } from '@/services/audit'
+import { getRequestContext, getRequestLocation, recordAudit } from '@/services/audit'
 import {
   buildClientTokenResponse,
   buildTokenResponse,
@@ -196,6 +196,8 @@ app.post(
         provider: record.provider as ProviderName,
         scope: record.scope,
         ...context,
+        // Only a session keeps a location, and only the one it was opened from.
+        ...getRequestLocation(c),
       })
 
       const response = await buildTokenResponse(db, c.env, {
