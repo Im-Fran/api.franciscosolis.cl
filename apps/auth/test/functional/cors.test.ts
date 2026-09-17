@@ -130,6 +130,8 @@ describe('cross-origin access to the OAuth endpoints', () => {
       '/magic-link/callback',
       /* Resuming a parked request through a provider is a navigation, like /oauth/authorize. */
       '/oauth/authorize/some-handle/google',
+      /* And so is authorizing from the SSO session: it needs the cookie, which no `fetch` sends. */
+      '/oauth/authorize/some-handle/continue',
     ]) {
       const response = await preflight(path, 'https://franciscosolis.cl')
       expect(response.headers.get('Access-Control-Allow-Origin'), path).toBeNull()

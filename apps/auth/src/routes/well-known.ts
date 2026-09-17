@@ -3,7 +3,7 @@ import type { Context } from 'hono'
 import { describeRoute, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import type { AppEnv } from '@/env'
-import { CLIENT_AUTH_METHODS, CODE_CHALLENGE_METHOD, GRANT_TYPES, RESPONSE_TYPE } from '@/lib/config'
+import { CLIENT_AUTH_METHODS, CODE_CHALLENGE_METHOD, GRANT_TYPES, PROMPT_VALUES, RESPONSE_TYPE } from '@/lib/config'
 import { getPublicJwks } from '@/lib/jwt'
 import { SUPPORTED_SCOPES } from '@/services/applications'
 
@@ -112,7 +112,11 @@ const buildMetadata = (env: { AUTH_ISSUER: string; AUTH_PUBLIC_URL: string }) =>
       'permissions',
     ],
     id_token_signing_alg_values_supported: ['EdDSA'],
-    // Every registered client is first-party, so nobody is ever asked to approve a scope.
+    // All four, because this server keeps a session of its own: `none` is answerable for a browser
+    // that already holds one, and `login`/`select_account` force a fresh authentication. `consent`
+    // is accepted and changes nothing — every registered client is first-party, so nobody is ever
+    // asked to approve a scope.
+    prompt_values_supported: [...PROMPT_VALUES],
     require_pushed_authorization_requests: false,
     claims_parameter_supported: false,
     request_parameter_supported: false,

@@ -195,6 +195,9 @@ app.post(
         applicationId: application.id,
         provider: record.provider as ProviderName,
         scope: record.scope,
+        // The sign-in this code came out of, which may be older than the code when the user
+        // authorized this application from an SSO session they already held.
+        authTime: record.authTime,
         ...context,
         // Only a session keeps a location, and only the one it was opened from.
         ...getRequestLocation(c),

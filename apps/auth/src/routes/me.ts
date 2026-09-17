@@ -4,11 +4,12 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, resolver, validator } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
-import { identities, sessions, users } from '@/db/schema'
+import { identities, sessions, ssoSessions, users } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { hasRules, selectSessionsToPrune } from '@/lib/prune'
 import { requireAuth } from '@/middleware/auth'
 import { getRequestContext, recordAudit } from '@/services/audit'
+import { listUserSsoSessions, revokeSsoSession, toPublicSsoSession } from '@/services/sso'
 import { revokeSession, toPublicSession } from '@/services/tokens'
 import { toPublicUser } from '@/services/users'
 
@@ -433,6 +434,88 @@ app.delete(
       applicationId: session.applicationId,
       ...getRequestContext(c),
       metadata: { session_id: session.id, self: true },
+    })
+
+    return c.body(null, 204)
+  },
+)
+
+const ssoSessionSchema = v.object({
+  id: v.string(),
+  provider: v.string(),
+  ip: v.nullable(v.string()),
+  user_agent: v.nullable(v.string()),
+  country: v.nullable(v.string()),
+  city: v.nullable(v.string()),
+  current: v.boolean(),
+  authenticated_at: v.string(),
+  last_seen_at: v.string(),
+  expires_at: v.string(),
+  created_at: v.string(),
+})
+
+const ssoSessionsResponseSchema = v.object({
+  code: v.literal(200),
+  data: v.array(ssoSessionSchema),
+})
+
+app.get(
+  '/me/sso-sessions',
+  describeRoute({
+    description:
+      "The browsers the user is signed in to this server from. These are not the sessions of `GET /me/sessions`: one of these is a browser that can authorize a new application without signing in again, and closing it does not sign the user out of the applications it already opened. `current` is always false here — this endpoint is called with a bearer token, which says nothing about which browser is asking.",
+    tags: ['Me'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description: 'Active SSO sessions',
+        content: { 'application/json': { schema: resolver(ssoSessionsResponseSchema) } },
+      },
+      401: { description: 'Missing, invalid or revoked access token' },
+    },
+  }),
+  async (c) => {
+    const actor = c.get('actor')
+    const rows = await listUserSsoSessions(getDb(c.env), actor.user.id)
+
+    return c.json({ code: 200, data: rows.map((row) => toPublicSsoSession(row)) })
+  },
+)
+
+app.delete(
+  '/me/sso-sessions/:id',
+  describeRoute({
+    description:
+      'Closes one of the browsers the user is signed in from, so it has to authenticate again before it can authorize anything. The sessions that browser already opened for applications stay alive — close those with `DELETE /me/sessions/:id`.',
+    tags: ['Me'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      204: { description: 'The SSO session was revoked' },
+      401: { description: 'Missing, invalid or revoked access token' },
+      404: { description: 'No such SSO session belongs to this user' },
+    },
+  }),
+  async (c) => {
+    const actor = c.get('actor')
+    const db = getDb(c.env)
+
+    const [session] = await db
+      .select()
+      .from(ssoSessions)
+      .where(and(eq(ssoSessions.id, c.req.param('id')), eq(ssoSessions.userId, actor.user.id)))
+      .limit(1)
+
+    if (!session) {
+      throw new HTTPException(404, { message: 'SSO session not found' })
+    }
+
+    await revokeSsoSession(db, session.id, 'user_revocation')
+    await recordAudit(db, {
+      event: 'sso_session.revoked',
+      userId: actor.user.id,
+      applicationId: actor.applicationId,
+      ...getRequestContext(c),
+      metadata: { sso_session_id: session.id, self: true },
     })
 
     return c.body(null, 204)

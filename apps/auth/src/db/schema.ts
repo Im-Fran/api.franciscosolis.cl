@@ -246,6 +246,14 @@ const authorizationRequests = sqliteTable('authorization_requests', {
   scope: text('scope'),
   prompt: text('prompt'),
   loginHint: text('login_hint'),
+  /**
+   * The SSO session the browser presented when it started this request, if any. It is what lets the
+   * sign-in front-end offer "Authorize" instead of a sign-in: the front-end reads the parked request
+   * cross-origin, where no cookie is sent, so the binding has to be on the row. It is a hint and
+   * never an authority — `/oauth/authorize/:handle/continue` demands the cookie again before it
+   * mints anything.
+   */
+  ssoSessionId: text('sso_session_id').references(() => ssoSessions.id, { onDelete: 'set null' }),
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
   requestIp: text('request_ip'),
   userAgent: text('user_agent'),
@@ -328,11 +336,53 @@ const authorizationCodes = sqliteTable('authorization_codes', {
   codeChallenge: text('code_challenge'),
   codeChallengeMethod: text('code_challenge_method'),
   scope: text('scope'),
+  /**
+   * When the user actually authenticated, carried onto the session this code opens so `auth_time`
+   * describes the sign-in and not the exchange. Null on a code minted before this column existed,
+   * where the session's own `created_at` is the closest thing available.
+   */
+  authTime: integer('auth_time', { mode: 'timestamp' }),
   expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
   consumedAt: integer('consumed_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => [
   uniqueIndex('authorization_codes_hash_unique').on(table.codeHash),
+])
+
+/**
+ * A browser's session with *this* server, as opposed to `sessions`, which is one application's.
+ *
+ * This is what makes a second sign-in unnecessary: the browser carries an opaque cookie naming this
+ * row, and `GET /oauth/authorize` answers with "authorize this application" instead of "sign in"
+ * while it is alive. It is created by whichever provider authenticated the user, and only the hash
+ * of the cookie value is stored, like every other token here.
+ *
+ * `authenticated_at` is the sign-in itself and is never moved forward by a reuse: it is what
+ * `auth_time` and `max_age` are judged against, so an hour-old SSO session cannot be made to look
+ * fresh by authorizing another application. `last_seen_at` moves, `expires_at` does not — the
+ * lifetime is absolute, so a session cannot be kept alive indefinitely by using it.
+ */
+const ssoSessions = sqliteTable('sso_sessions', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** SHA-256 of the cookie value. The raw value exists only in the browser. */
+  tokenHash: text('token_hash').notNull(),
+  /** Provider that authenticated this browser, propagated onto every session it goes on to open. */
+  provider: text('provider').notNull(),
+  authenticatedAt: integer('authenticated_at', { mode: 'timestamp' }).notNull(),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  revokedReason: text('revoked_reason'),
+  ip: text('ip'),
+  userAgent: text('user_agent'),
+  /** Where the edge placed the sign-in, stamped once, exactly like `sessions`. */
+  country: text('country'),
+  city: text('city'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  uniqueIndex('sso_sessions_token_unique').on(table.tokenHash),
+  index('sso_sessions_user_id_idx').on(table.userId),
 ])
 
 /**
@@ -346,6 +396,13 @@ const sessions = sqliteTable('sessions', {
   provider: text('provider').notNull(),
   /** Scope granted at sign-in. Refreshing re-issues the same scope; it can never be widened. */
   scope: text('scope'),
+  /**
+   * When the user authenticated, which is not when this session was opened: authorizing a second
+   * application from an existing SSO session opens a new session for an older sign-in. `auth_time`
+   * in the id_token is read from here, falling back to `created_at` for a row written before this
+   * column existed.
+   */
+  authTime: integer('auth_time', { mode: 'timestamp' }),
   lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
   revokedAt: integer('revoked_at', { mode: 'timestamp' }),
   revokedReason: text('revoked_reason'),
@@ -419,6 +476,7 @@ export {
   rolePermissions,
   roles,
   sessions,
+  ssoSessions,
   userRoles,
   users,
 }

@@ -30,6 +30,11 @@ const AUDIT_EVENTS = [
   'session.revoked',
   /** A `POST /me/sessions/prune` run that revoked at least one session. */
   'session.pruned',
+  /** A browser opened an SSO session with this server, i.e. somebody actually authenticated. */
+  'sso_session.started',
+  /** An application was authorized from an SSO session instead of a fresh sign-in. */
+  'sso_session.reused',
+  'sso_session.revoked',
   'invitation.created',
   'invitation.revoked',
   'invitation.resent',

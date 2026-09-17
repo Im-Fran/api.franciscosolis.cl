@@ -29,6 +29,13 @@
       "when": 1789667395975,
       "tag": "0007_session_location",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789680727369,
+      "tag": "0009_sso_sessions",
+      "breakpoints": true
     }
   ]
 }

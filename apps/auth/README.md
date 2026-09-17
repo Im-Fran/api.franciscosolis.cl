@@ -41,6 +41,14 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
   chooses there resumes that same request. This Worker is an API and renders no pages of its own:
   `AUTH_LOGIN_URL` names the front-end, and it defaults to
   [`https://franciscosolis.cl/apps/auth`](https://franciscosolis.cl/apps/auth).
+- **Sessions: authorize instead of signing in again** — a completed sign-in leaves the browser with
+  an SSO session of this server's own (an `HttpOnly`, `Secure`, `SameSite=Lax` cookie scoped to
+  `/auth`), so the next application asks the user to *authorize* rather than to authenticate. The
+  sign-in front-end reads who the browser is signed in as off the parked request and navigates its
+  "Authorize" button to `GET /oauth/authorize/:handle/continue`, which demands the cookie again
+  before it mints anything. `prompt=none` is answered with a code for a browser that holds one,
+  `prompt=login`/`select_account` and an exceeded `max_age` force a fresh authentication, and
+  `GET /oauth/logout` ends the session and clears the cookie.
 - **OpenID Connect** — `id_token` with `nonce`, `at_hash`, `auth_time`, `sid` and `groups`, a
   UserInfo endpoint, token introspection, RP-initiated logout and a discovery document published
   at both `/.well-known/openid-configuration` and `/.well-known/oauth-authorization-server`.
@@ -328,12 +336,38 @@ whichever one they choose ends on the same one-time `code` at the client's redir
    Sign out: GET /auth/oauth/logout?id_token_hint=…&post_logout_redirect_uri=…
 ```
 
+Step 4 also hands the browser the SSO session cookie, which is what the *second* application gets to
+skip the middle of this diagram for:
+
+```
+2. GET /auth/oauth/authorize?…            (the browser sends its session cookie)
+   → 302 to AUTH_LOGIN_URL?request=<handle>
+
+3. The front-end reads GET /auth/oauth/authorize/<handle> and finds
+
+     "authenticated": { "sub", "email", "name", "picture", "auth_time", "continue_url" }
+
+   so it shows "Continue as … / Authorize" instead of the provider chooser.
+
+4. The Authorize button navigates to continue_url
+     GET /auth/oauth/authorize/<handle>/continue
+   → 302 <redirect_uri>?code=…&state=…        (no provider, no email, no password)
+```
+
+The cookie is the authority, never the handle: `/continue` resolves the cookie again and refuses a
+handle presented by a different browser. A client that wants none of this can ask for a fresh
+authentication with `prompt=login` or a recent one with `max_age=<seconds>`, and one that wants the
+whole exchange to happen without a screen can send `prompt=none` — a code if the browser is signed
+in, `error=login_required` if it is not. `auth_time` always describes the sign-in itself, so a
+second application authorized a week later is told the authentication is a week old.
+
 `id_token` is issued whenever the granted scope contains `openid`. A client that wants to skip the
 provider chooser can pass `provider=google`, or keep calling `POST /auth/magic-link` and
 `GET /auth/oauth/google/authorize` directly — both still take the same parameters and still work.
 
 Access tokens and ID tokens live 15 minutes, refresh tokens 30 days and rotate on every use.
-Authorization codes live 2 minutes, magic links 15 minutes, a parked authorization request 30.
+Authorization codes live 2 minutes, magic links 15 minutes, a parked authorization request 30. An
+SSO session lives 14 days from the sign-in, absolutely: using it does not extend it.
 
 ---
 
@@ -431,6 +465,7 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `GET` | `/oauth/authorize/:handle` | Describes a parked request, for the sign-in front-end |
 | `POST` | `/oauth/authorize/:handle/magic-link` | Continue a parked request by email (JSON) |
 | `GET` | `/oauth/authorize/:handle/google` | Continue a parked request through Google |
+| `GET` | `/oauth/authorize/:handle/continue` | Authorize from the browser's SSO session — the "Authorize" button |
 | `POST` | `/magic-link` | Request a magic link directly (always 202) |
 | `GET` | `/magic-link/callback` | Consume the link, redirect with an authorization code |
 | `GET` | `/oauth/google/authorize` | Start the Google flow directly |
@@ -454,6 +489,8 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 | `GET` | `/me/sessions` | Active sessions |
 | `DELETE` | `/me/sessions/:id` | Revoke one session |
 | `POST` | `/me/sessions/prune` | Close every session matching the rules selected |
+| `GET` | `/me/sso-sessions` | The browsers the user is signed in to this server from |
+| `DELETE` | `/me/sso-sessions/:id` | Close one of those browsers |
 | `POST` | `/logout` | Revoke the current session |
 
 #### Pruning sessions
@@ -558,7 +595,8 @@ Three of the write routes refuse a request that would make the API unusable from
 | `magic_link_tokens` | Pending magic links with their captured authorization request |
 | `oauth_states` | In-flight redirects to an external provider |
 | `authorization_codes` | One-time codes awaiting exchange |
-| `sessions` / `refresh_tokens` | Sign-ins and their rotating token chains |
+| `sessions` / `refresh_tokens` | Sign-ins and their rotating token chains, one per application |
+| `sso_sessions` | A browser's session with this server: what "Authorize" stands on |
 | `avatar_uploads` | Uploaded avatars and where each one stands with the reviewers |
 | `audit_logs` | Append-only trail of security-relevant events |
 
