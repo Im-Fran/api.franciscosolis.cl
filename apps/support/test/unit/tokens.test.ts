@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildReplyAddress, buildTicketUrl, generateSecret, parseReplyAddress, sha256 } from '@/lib/tokens'
+import {
+  buildReplyAddress,
+  buildTicketUrl,
+  generateRoutingKey,
+  generateSecret,
+  parseReplyAddress,
+  sha256,
+} from '@/lib/tokens'
 
 describe('generateSecret', () => {
   it('is URL-safe, so it survives being pasted into a link', () => {
@@ -40,17 +47,28 @@ describe('buildTicketUrl', () => {
   })
 })
 
+describe('generateRoutingKey', () => {
+  it('is lowercase hex, so passing through mail infrastructure cannot destroy it', () => {
+    const key = generateRoutingKey()
+    expect(key).toMatch(/^[a-f0-9]{32}$/)
+    // A relay that normalises the local part of an address would silently break a base64url key.
+    expect(key).toBe(key.toLowerCase())
+  })
+})
+
 describe('reply addressing', () => {
-  it('round-trips the routing key', () => {
-    const address = buildReplyAddress('reply.franciscosolis.cl', 'abc-123_XYZ')
-    expect(address).toBe('reply+abc-123_XYZ@reply.franciscosolis.cl')
-    expect(parseReplyAddress(address)).toBe('abc-123_xyz')
+  it('round-trips the routing key through a lowercasing relay', () => {
+    const key = generateRoutingKey()
+    const address = buildReplyAddress('franciscosolis.cl', key)
+    expect(address).toBe(`reply+${key}@franciscosolis.cl`)
+    expect(parseReplyAddress(address.toUpperCase())).toBe(key)
   })
 
   it.each([
     ['a plain support address', 'soporte@franciscosolis.cl'],
-    ['a different plus tag', 'other+abc@franciscosolis.cl'],
+    ['a different plus tag', 'other+abcdef0123456789@franciscosolis.cl'],
     ['an empty key', 'reply+@franciscosolis.cl'],
+    ['a key that is not hex', 'reply+NotHexAtAll@franciscosolis.cl'],
     ['nonsense', 'not an address'],
   ])('returns null for %s', (_label, address) => {
     expect(parseReplyAddress(address)).toBeNull()

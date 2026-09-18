@@ -13,6 +13,9 @@
 /** Bytes of entropy in a generated secret. 256 bits, the same order as a session id in `apps/auth`. */
 const SECRET_BYTES = 32
 
+/** Bytes in a reply routing key. 128 bits: it names a row, it does not guard one. */
+const ROUTING_KEY_BYTES = 16
+
 const toBase64Url = (bytes: Uint8Array): string => {
   let binary = ''
   for (const byte of bytes) {
@@ -21,8 +24,22 @@ const toBase64Url = (bytes: Uint8Array): string => {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-/** A fresh URL-safe secret. Used for both the access token and the reply key. */
+/** A fresh URL-safe secret. This is the access token: it travels in a URL fragment. */
 const generateSecret = (): string => toBase64Url(crypto.getRandomValues(new Uint8Array(SECRET_BYTES)))
+
+/**
+ * A routing key for the `reply+<key>@` address, as lowercase hex.
+ *
+ * Hex rather than base64url, and this is not cosmetic. The key travels as the local part of an email
+ * address through mail infrastructure nobody here controls, and while RFC 5321 says a local part is
+ * case-sensitive, plenty of relays and mailbox providers normalise one anyway. A base64url key is
+ * silently destroyed by that; a lowercase-hex one survives it. 128 bits is ample for something whose
+ * only job is to name a row — the *credential* is the access token above.
+ */
+const generateRoutingKey = (): string =>
+  [...crypto.getRandomValues(new Uint8Array(ROUTING_KEY_BYTES))]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
 
 /** Lowercase hex SHA-256. The stored form of every secret in this Worker. */
 const sha256 = async (value: string): Promise<string> => {
@@ -58,8 +75,8 @@ const buildReplyAddress = (replyDomain: string, replyKey: string): string =>
 
 /** Pulls the routing key back out of a `reply+<key>@domain` address. Null when it is not one. */
 const parseReplyAddress = (address: string): string | null => {
-  const match = /^reply\+([A-Za-z0-9_-]+)@/.exec(address.trim().toLowerCase())
+  const match = /^reply\+([a-f0-9]{8,64})@/.exec(address.trim().toLowerCase())
   return match?.[1] ?? null
 }
 
-export { buildReplyAddress, buildTicketUrl, generateSecret, parseReplyAddress, sha256 }
+export { buildReplyAddress, buildTicketUrl, generateRoutingKey, generateSecret, parseReplyAddress, sha256 }

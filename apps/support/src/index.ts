@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import PostalMime from 'postal-mime'
 import { HTTPException } from 'hono/http-exception'
 import { describeRoute, openAPIRouteHandler, resolver } from 'hono-openapi'
 import * as v from 'valibot'
@@ -13,6 +14,10 @@ import {
 } from '@/lib/config'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
 
+import { enrichTicket, ingestEmail } from '@/services/inbound'
+import type { InboundMessage } from '@/services/inbound'
+import { readBody } from '@/lib/mime'
+import { INBOUND } from '@/lib/config'
 import { sweepNotifications } from '@/services/notifications'
 
 /* Routes */
@@ -130,6 +135,70 @@ app.get(
 )
 
 /**
+ * Mail arriving at soporte@ / support@, dispatched here by Cloudflare Email Routing.
+ *
+ * Deliberately thin. Everything that decides anything lives in `src/services/inbound.ts`, because
+ * miniflare cannot dispatch an email event: a rule that only exists inside this handler is a rule
+ * the suite cannot reach. What is left here is the part that needs a real `ForwardableEmailMessage` —
+ * the size guard, the parse, and `setReject`.
+ *
+ * The size check comes before `message.raw` is touched on purpose: the point of refusing a 40 MB
+ * message is not to store it, and buffering it to find out how big it is defeats that.
+ */
+const handleEmail: EmailExportedHandler<Env> = async (message, env, ctx) => {
+  if (message.rawSize > INBOUND.maxBytes) {
+    message.setReject('Message too large')
+    return
+  }
+
+  const inboxes = env.SUPPORT_INBOX_ADDRESSES.split(',').map((entry) => entry.trim().toLowerCase())
+  // Lowercased for the comparison below and for storage. That is safe because the reply routing key
+  // is lowercase hex — see `generateRoutingKey` — which is exactly why it is not base64url.
+  const to = message.to.trim().toLowerCase()
+  if (!inboxes.includes(to) && !to.startsWith('reply+')) {
+    message.setReject('Unknown recipient')
+    return
+  }
+
+  const parsed = await PostalMime.parse(message.raw)
+  const inbound: InboundMessage = {
+    messageId: message.headers.get('message-id') ?? parsed.messageId ?? null,
+    from: message.from,
+    to,
+    subject: parsed.subject ?? message.headers.get('subject') ?? null,
+    text: parsed.text ?? null,
+    html: parsed.html ?? null,
+    date: message.headers.get('date'),
+    inReplyTo: message.headers.get('in-reply-to') ?? parsed.inReplyTo ?? null,
+    references: [message.headers.get('references') ?? parsed.references ?? ''].filter(Boolean),
+    // Metadata only. The bytes are not stored — see `attachmentNotice` in services/inbound.ts.
+    attachments: (parsed.attachments ?? []).map((attachment) => ({
+      filename: attachment.filename ?? 'attachment',
+      mime_type: attachment.mimeType ?? 'application/octet-stream',
+      size: attachment.content instanceof ArrayBuffer ? attachment.content.byteLength : 0,
+    })),
+    rawSize: message.rawSize,
+  }
+
+  const db = getDb(env)
+  const result = await ingestEmail(db, env, inbound)
+
+  if (result.outcome === 'rejected') {
+    // Refused at SMTP level, which is the notification. An auto-reply here would be a backscatter
+    // amplifier, since `From` on a message worth refusing is usually forged.
+    message.setReject(result.reason)
+    return
+  }
+
+  if (result.outcome === 'created') {
+    // The model runs after the ticket exists, so nothing it does can lose the email.
+    ctx.waitUntil(
+      enrichTicket(db, env, result.ticket.id, result.inboundId, readBody({ text: inbound.text, html: inbound.html }).text),
+    )
+  }
+}
+
+/**
  * The deferred-reply sweep, run by the cron in `wrangler.jsonc`.
  *
  * Everything it does lives in `src/services/notifications.ts`; this is the adapter. Keeping the
@@ -158,6 +227,7 @@ const handleScheduled: ExportedHandlerScheduledHandler<Env> = async (controller,
  */
 export default {
   fetch: app.fetch,
+  email: handleEmail,
   scheduled: handleScheduled,
 } satisfies ExportedHandler<Env>
 

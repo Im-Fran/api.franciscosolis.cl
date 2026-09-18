@@ -17,7 +17,7 @@ import { parseJson } from '@/lib/json'
 import { DEFAULT_LOCALE, LABEL_TRANSLATABLE_FIELDS, localize, parseTranslations } from '@/lib/locales'
 import { formatReference } from '@/lib/references'
 import type { Locale } from '@/lib/locales'
-import { buildReplyAddress, buildTicketUrl, generateSecret, sha256 } from '@/lib/tokens'
+import { buildReplyAddress, buildTicketUrl, generateRoutingKey, generateSecret, sha256 } from '@/lib/tokens'
 
 type TicketRow = typeof tickets.$inferSelect
 type MessageRow = typeof ticketMessages.$inferSelect
@@ -147,7 +147,7 @@ const createTicket = async (db: Database, env: Env, input: CreateTicketInput): P
     assigneeUserId: null,
     accessTokenHash: await sha256(accessToken),
     accessTokenRotatedAt: null,
-    replyKey: generateSecret(),
+    replyKey: generateRoutingKey(),
     lastMessageSeq: 1,
     lastRequesterMessageAt: now,
     lastAgentMessageAt: null,
