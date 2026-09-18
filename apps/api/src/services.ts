@@ -83,6 +83,15 @@ const SERVICE_MODULES = [
     // Forwards the whole Request for the same reasons as the CMS: its editorial half reads the
     // Authorization header itself and writes CF-Connecting-IP onto its audit trail.
   },
+  {
+    name: 'support',
+    binding: 'SUPPORT',
+    tag: 'Support',
+    description: 'Proxy to the support Worker (tickets, the help centre and the deferred-reply notifications)',
+    // Forwards the whole Request for the same reasons as the CMS, plus one of its own: the public
+    // ticket form is rate limited per client IP, so `CF-Connecting-IP` has to survive the hop or the
+    // limit would count every request in the world as coming from one address.
+  },
 ] as const satisfies readonly ServiceModule[]
 
 /** A registry entry as written above, with its `binding` and `name` narrowed to the literals used. */

@@ -1,0 +1,12 @@
+# Copy to `.dev.vars` (gitignored) for local development.
+#
+# This Worker has no secrets: it verifies access tokens against the auth Worker's public JWKS, and
+# the link that lets somebody read their own ticket without an account is a per-ticket random secret
+# stored as a hash on the row, not a key held here.
+#
+# Point a local support Worker at a local auth Worker. The issuer must match the `AUTH_ISSUER` that
+# auth itself is running with, or every token is refused for a bad `iss`.
+AUTH_ISSUER=http://localhost:8787/auth
+
+# Where the local front-end serves the ticket view, so links in locally sent mail are clickable.
+SUPPORT_TICKET_URL=http://localhost:5173/tickets
