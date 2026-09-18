@@ -1,4 +1,10 @@
-import { renderInvitationEmail, renderMagicLinkEmail, type RenderedEmail } from '@franciscosolis/emails'
+import {
+  renderAccountAccessEmail,
+  renderInvitationEmail,
+  renderMagicLinkEmail,
+  type AccountAccessEmailProps,
+  type RenderedEmail,
+} from '@franciscosolis/emails'
 import type { Env } from '@/env'
 
 /**
@@ -29,6 +35,14 @@ const invitationTemplate = (input: {
 }): Promise<Template> => renderInvitationEmail(input)
 
 /**
+ * Notice that an application gained access to an account — a sign-in, or an authorization granted
+ * from a session that already existed. Every value it shows is already formatted: deciding what
+ * "14:32 UTC" or "Santiago, Chile" reads like is `services/notifications.ts`'s job, not a
+ * template's.
+ */
+const accountAccessTemplate = (input: AccountAccessEmailProps): Promise<Template> => renderAccountAccessEmail(input)
+
+/**
  * Hands a message to Cloudflare Email Sending. The sender identity is fixed by `MAIL_FROM_NAME` /
  * `MAIL_FROM_EMAIL` and is also pinned in wrangler.jsonc via `allowed_sender_addresses`, so a bug
  * elsewhere cannot make the Worker send as some other address.
@@ -44,5 +58,5 @@ const sendEmail = async (env: Env, to: string, template: Template) => {
   return result.messageId
 }
 
-export { invitationTemplate, magicLinkTemplate, sendEmail }
+export { accountAccessTemplate, invitationTemplate, magicLinkTemplate, sendEmail }
 export type { Template }

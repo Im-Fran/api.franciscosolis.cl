@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:test'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { invitationTemplate, magicLinkTemplate, sendEmail, type Template } from '@/services/email'
+import { accountAccessTemplate, invitationTemplate, magicLinkTemplate, sendEmail, type Template } from '@/services/email'
 import { captureEmails } from '../helpers/email'
 
 const mailbox = captureEmails()
@@ -150,6 +150,81 @@ describe('invitationTemplate', () => {
     })
 
     expect(template.text).toContain('tied to this email address')
+  })
+})
+
+describe('accountAccessTemplate', () => {
+  const details = {
+    applicationName: 'franciscosolis.cl',
+    providerName: 'Google',
+    occurredAt: '17 Sept 2026, 14:32 UTC',
+    device: 'Chrome on macOS',
+    location: 'Santiago, Chile',
+    ipAddress: '203.0.113.24',
+  } as const
+
+  it('leads with what happened, in the subject and the heading alike', async () => {
+    const signIn = await accountAccessTemplate({ event: 'sign_in', ...details })
+    const authorization = await accountAccessTemplate({ event: 'authorization', ...details })
+
+    expect(signIn.subject).toBe('New sign-in to franciscosolis.cl')
+    expect(signIn.text).toContain('New sign-in to franciscosolis.cl')
+    expect(authorization.subject).toBe('franciscosolis.cl was authorized on your account')
+    expect(authorization.text).toContain('from a browser that was already signed in')
+  })
+
+  it('carries every detail of the access into the plain-text part with its label', async () => {
+    // The labels are the point: html-to-text renders a table as stranded cells, which is why these
+    // are rows of text rather than one. "Where was this" has to survive in a text-only client.
+    const { text } = await accountAccessTemplate({ event: 'sign_in', ...details })
+
+    expect(text).toContain('When: 17 Sept 2026, 14:32 UTC')
+    expect(text).toContain('Application: franciscosolis.cl')
+    expect(text).toContain('Signed in with: Google')
+    expect(text).toContain('Device: Chrome on macOS')
+    expect(text).toContain('Location: Santiago, Chile')
+    expect(text).toContain('IP address: 203.0.113.24')
+  })
+
+  it('renders a detail it does not have rather than dropping the row', async () => {
+    // A missing line is invisible; "Unknown" is a fact the recipient can weigh.
+    const { text } = await accountAccessTemplate({
+      event: 'sign_in',
+      ...details,
+      device: null,
+      location: null,
+      ipAddress: null,
+    })
+
+    expect(text).toContain('Device: Unknown')
+    expect(text).toContain('Location: Unknown')
+    expect(text).toContain('IP address: Unknown')
+  })
+
+  it('tells the recipient what to do if it was not them', async () => {
+    const { text } = await accountAccessTemplate({ event: 'authorization', ...details })
+
+    expect(text).toContain('close every session you do not recognise')
+  })
+
+  it('embeds its styling inline, like every other body here', async () => {
+    const { html } = await accountAccessTemplate({ event: 'sign_in', ...details })
+
+    expect(html).not.toContain('<style')
+    expect(html).toContain('style="')
+  })
+
+  it('neutralises markup arriving through an application name or a user agent', async () => {
+    const { html } = await accountAccessTemplate({
+      event: 'sign_in',
+      ...details,
+      applicationName: '<script>alert(1)</script>',
+      device: '"><img src=x onerror=alert(1)>',
+    })
+
+    expect(html).not.toContain('<script>')
+    expect(html).not.toContain('<img src=x')
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 })
 

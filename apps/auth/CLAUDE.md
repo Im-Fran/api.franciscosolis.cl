@@ -24,7 +24,8 @@ plain OIDC — another application on its own domain, or Cloudflare Access — c
 
 - Cloudflare Workers, Hono 4, hono-openapi + valibot, axios, Wrangler 4, TypeScript strict.
 - **Drizzle ORM** over D1 (`drizzle-orm/d1`).
-- **`@franciscosolis/emails`** (workspace package) for the magic link and invitation bodies.
+- **`@franciscosolis/emails`** (workspace package) for the magic link, invitation and access
+  notification bodies.
 - Dependency versions come from the parent workspace's pnpm `catalog` — use `catalog:`,
   never a hardcoded version.
 - `pnpm` install/deps are managed from the **monorepo root**.
@@ -66,6 +67,8 @@ front-end `/oauth/authorize` hands the browser to; it is set in `wrangler.jsonc`
   header against what a client registered, wildcard patterns included), `prune.ts` (which of an
   account's sessions a bulk close would take). `config.ts` also owns `SSO_COOKIE_NAME` and
   `PROMPT_VALUES`.
+- `src/lib/user-agent.ts` — a `User-Agent` header as "Chrome on macOS", for the access notice. It
+  describes and never decides: a user agent is client-controlled.
 - `src/providers/` — `types.ts` defines `ProviderProfile` / `AuthorizationRequest`;
   `magic-link.ts` and `google.ts` implement them; `index.ts` is the registry.
 - `src/services/` — `applications.ts` (clients, redirect URIs, scopes, secrets, client
@@ -73,7 +76,8 @@ front-end `/oauth/authorize` hands the browser to; it is set in `wrangler.jsonc`
   `users.ts` (account resolution, roles), `avatars.ts` (uploads, moderation, the R2 bucket),
   `tokens.ts` (codes, sessions, refresh rotation, the token responses), `sso.ts` (the browser's own
   session with this server, and its cookie), `invitations.ts`,
-  `email.ts`, `audit.ts`, `authorization.ts` (the shared flow head and tail).
+  `email.ts`, `notifications.ts` (the access notice sent to the account holder), `audit.ts`,
+  `authorization.ts` (the shared flow head and tail).
 - `src/routes/` — one file per area (`authorize`, `token`, `userinfo`, `introspect`, `logout`,
   `google`, `magic-link`, `me`, `avatars`, `well-known`); `routes/admin/` is the permission-gated
   admin API (`me`, `users`, `sessions`, `invitations`, `applications`, `roles` — which also owns the
@@ -223,6 +227,27 @@ front-end `/oauth/authorize` hands the browser to; it is set in `wrangler.jsonc`
   (`application.deleted` in `AuditEvent` exists only for it). Values are interpolated into SQL, so
   anything with control characters is refused rather than escaped. When changing secret handling,
   change both: they are two implementations of one policy.
+- **The account holder is told every time an application gets in, and the "Authorize" case is why.**
+  `notifyAccountAccess` (`services/notifications.ts`) runs at the end of both tails in
+  `services/authorization.ts`: `completeAuthentication` sends a `sign_in` notice, and
+  `authorizeFromSsoSession` an `authorization` one. The second is the one that matters — letting a
+  new application into an account from an existing SSO session takes no credential, sends no magic
+  link and leaves nothing a user can see except an audit row they have no access to. Four things
+  about it are deliberate:
+  - **It never throws.** By the time it runs the code is minted and the browser is mid-redirect, so
+    a bounced notice is logged like a lost audit row rather than turned into a 500 that would strand
+    the user. `test/functional/sso.test.ts` pins that a failing `EMAIL` binding still returns a code.
+  - **It is awaited rather than deferred to `waitUntil`.** One binding call is not what makes a
+    redirect slow, the magic link path already blocks on exactly one, and a failure is worth having
+    logged against the request that caused it.
+  - **The two events carry different clocks.** A sign-in reports the session's `authenticated_at`;
+    an authorization reports now, because what the reader is being told about is the application
+    being let in, not how long ago they signed in — that fact is the `auth_time` claim's.
+  - **Every detail is rendered, `Unknown` included.** A line missing from a list the reader does not
+    know the length of tells them nothing; "Location: Unknown" tells them the edge could not place
+    the request. The location comes from `getRequestLocation`, so it is the same one the session
+    carries under `/me/sso-sessions`, and the country code is expanded through `Intl.DisplayNames` —
+    except for `Unknown Region`, CLDR's real name for `ZZ`, which is worse than the code itself.
 - **Email bodies live in `@franciscosolis/emails`, and rendering is async.** `services/email.ts`
   is now a thin wrapper: `magicLinkTemplate` and `invitationTemplate` return *promises* of
   `{ subject, html, text }`, so every call site awaits them. There is no `escapeHtml` here any

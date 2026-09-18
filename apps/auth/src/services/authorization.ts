@@ -8,7 +8,8 @@ import { generateId, randomToken, sha256 } from '@/lib/crypto'
 import { createPkcePair } from '@/lib/pkce'
 import { buildAuthorizationUrl } from '@/providers/google'
 import { issueAuthorizationCode } from '@/services/tokens'
-import { recordAudit } from '@/services/audit'
+import { getRequestLocation, recordAudit } from '@/services/audit'
+import { notifyAccountAccess } from '@/services/notifications'
 import { startSsoSession, touchSsoSession } from '@/services/sso'
 import type { SsoSession } from '@/services/sso'
 import { assertUserActive, resolveUserForProfile } from '@/services/users'
@@ -78,6 +79,21 @@ const completeAuthentication = async (
     metadata: { provider: profile.provider },
   })
 
+  // The location is read off the session rather than the context again: it was stamped from this
+  // very request a moment ago, and the notice has to describe the same access the user will later
+  // see under `/me/sso-sessions`.
+  await notifyAccountAccess(c.env, {
+    event: 'sign_in',
+    user,
+    applicationName: request.application.name,
+    provider: profile.provider,
+    occurredAt: ssoSession.authenticatedAt,
+    ip: input.ip,
+    userAgent: input.userAgent,
+    country: ssoSession.country,
+    city: ssoSession.city,
+  })
+
   return { redirectUrl: codeRedirect(request, code), user, isNewUser, ssoSession }
 }
 
@@ -92,8 +108,14 @@ const completeAuthentication = async (
  *
  * The caller is responsible for having proved that *this* browser holds the session: the cookie,
  * never the parked request's stamp on its own.
+ *
+ * It takes the Hono context for the same family of reasons `completeAuthentication` does: this is
+ * the step that lets a new application into an account without anyone authenticating, so it is the
+ * step that has to tell the account holder about it, and both the notice's location and the mail
+ * binding come off the request.
  */
 const authorizeFromSsoSession = async (
+  c: Context<AppEnv>,
   db: Database,
   input: {
     request: AuthorizationRequest
@@ -127,6 +149,20 @@ const authorizeFromSsoSession = async (
     ip: input.ip,
     userAgent: input.userAgent,
     metadata: { provider: session.provider, sso_session_id: session.id },
+  })
+
+  // `occurredAt` is now, not the session's `authenticated_at`: what the user is being told about is
+  // the application being let in, which is happening as this runs. How long ago they authenticated
+  // is a different fact, and the one the `auth_time` claim already carries.
+  await notifyAccountAccess(c.env, {
+    event: 'authorization',
+    user,
+    applicationName: request.application.name,
+    provider: session.provider,
+    occurredAt: new Date(),
+    ip: input.ip,
+    userAgent: input.userAgent,
+    ...getRequestLocation(c),
   })
 
   return { redirectUrl: codeRedirect(request, code), user }

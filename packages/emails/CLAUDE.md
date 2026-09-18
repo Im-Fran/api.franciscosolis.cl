@@ -10,8 +10,8 @@ language) into files, commits, or code in this repo.
 ## Purpose
 
 `@franciscosolis/emails` holds every email body the monorepo sends, written as
-[react-email](https://react.email) components. `apps/auth` uses it for magic links and
-invitations, `apps/cms` for editorial messages. It is the first entry under `packages/`
+[react-email](https://react.email) components. `apps/auth` uses it for magic links,
+invitations and account access notices, `apps/cms` for editorial messages. It is the first entry under `packages/`
 and the only non-Worker workspace package.
 
 A consumer imports a `render*Email` function, gets `{ subject, html, text }` and hands
@@ -74,6 +74,11 @@ package. That is deliberate on all four counts — see below.
   `vitest.config.ts` so the suite runs against the same module graph that deploys. The stub
   throws rather than no-ops: a react-email version that genuinely needs the formatter should
   fail loudly.
+- **`AccountAccessEmail` lists facts as rows of `<Text>`, not as a table.** The plain-text part is
+  derived from this markup, and html-to-text renders a table as bare cells with the labels stranded —
+  which is exactly the half a recipient skimming "where was this from" needs. It also renders a
+  detail it does not have as `Unknown` rather than dropping the row: the sender decides what is
+  known, and a silently missing line reads as nothing at all.
 - **`ContentEmail` inserts its body with `dangerouslySetInnerHTML`, deliberately.** It exists
   to wrap markup an authenticated CMS editor wrote; that editor already controls the whole
   document, and re-serialising their HTML would silently rewrite it. Do not point any
