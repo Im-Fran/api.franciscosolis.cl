@@ -101,6 +101,25 @@ stored as a hash on the row, not a key held here. `.dev.vars` (gitignored, copy 
   filed — and the fact that a given person filed one. `requireTicketAccess` makes "no such ticket"
   and "not yours" indistinguishable from outside, and `POST /tickets/resend-link` always answers 202
   for the same reason.
+- **The three ways into a ticket are a cascade, and a Bearer that resolves to nothing does not end
+  it.** A browser sends the website's session *and* the secret from the emailed link — the first in
+  `Authorization`, the second in `X-Support-Ticket-Token`, because only one of the two fits in
+  `Authorization`. Stopping at a token that matches neither audience is what made a perfectly valid
+  link answer "no such ticket" for anybody signed in under a different address than the one that
+  opened the ticket. Falling through grants nothing the secret would not grant on its own. The
+  gateway has to allow that header (`allowHeaders` in `apps/api/src/index.ts`) or the browser never
+  sends it.
+- **An `@mention` is plain text, rendered as a link in two places.** There is no HTML column on a
+  ticket (see below), so a mention is stored exactly as typed — `@` immediately followed by an
+  address — and turned into a `mailto:` link at render time by `packages/emails/src/mentions.ts`
+  for the digest email and by `src/lib/support/mentions.ts` in the website repository for the
+  timeline. The two hold the same pattern and cannot import each other; changing one means changing
+  the other. The email side also needs its anchor to carry `PLAIN_TEXT_MENTION_CLASS`, or
+  html-to-text prints the address twice in the plain-text part.
+- **`ticket_participants.tag` is the team's own note about a person** (`guest` or `interest`), and
+  the redaction lives in exactly one function: `toParticipant` carries it for the console,
+  `toRequesterParticipant` drops it for `GET /tickets/:reference`. Same shape as the `reply`/`note`
+  split — one mapper decides, no route repeats the decision.
 - **Two secrets hang off a ticket, and conflating them is a bug waiting to happen.**
   `access_token_hash` is a credential: it travels in the fragment of an emailed link and must be
   rotatable the day that link is forwarded to the wrong person. `reply_key` is routing metadata baked
@@ -209,10 +228,13 @@ hands it a `Date` thirty-one minutes out instead of waiting, and `scheduled()` s
 Two things this repository cannot configure, exactly as it cannot configure Workers Builds:
 
 1. **Email Routing rules** for `soporte@franciscosolis.cl` and `support@franciscosolis.cl` pointing at
-   the `support` Worker — plus a **catch-all** rule if the `reply+<key>@` threading key is wanted, since
-   Email Routing matches a custom address exactly and has no wildcard of its own. Without the
-   catch-all the cascade in `services/inbound.ts` simply falls through to its next strategy. The apex
-   already uses Cloudflare Email Routing as its MX, so adding these displaces no existing mailbox.
+   the `support` Worker — **plus a catch-all rule, which is required rather than optional**, since
+   Email Routing matches a custom address exactly and has no wildcard of its own. Every ticket email
+   this Worker sends carries `Reply-To: reply+<key>@franciscosolis.cl` (`services/email.ts`), so
+   without the catch-all the reply button in every participant's mail client points at an address the
+   zone does not accept and the message *bounces* — it does not fall through to a weaker threading
+   strategy, it never arrives at all. The apex already uses Cloudflare Email Routing as its MX, so
+   adding these displaces no existing mailbox.
 2. **The Vectorize index**, before the first deploy:
    ```
    wrangler vectorize create franciscosolis-support-help --dimensions=1024 --metric=cosine

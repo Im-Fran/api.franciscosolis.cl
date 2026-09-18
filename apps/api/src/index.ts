@@ -19,7 +19,10 @@ const gatewayCors = cors({
   // POST/PATCH/DELETE. `PUT` is the support console's assignee endpoint, which replaces a value
   // rather than merging into one. Origins stay locked down to what `src/cors.ts` accepts.
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
+  // `X-Support-Ticket-Token` carries the per-ticket secret from an emailed support link. It is a
+  // header of its own rather than `Authorization` because a visitor can hold both that secret and a
+  // website session, and only one of the two fits in `Authorization`.
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Support-Ticket-Token'],
   exposeHeaders: ['Content-Type'],
   maxAge: 600,
   credentials: false,

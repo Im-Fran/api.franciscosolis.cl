@@ -136,10 +136,14 @@ describe('CORS preflight', () => {
     expect(response.headers.get('Access-Control-Allow-Methods')).toContain('PUT')
   })
 
-  it('allows only Content-Type and Authorization as request headers', async () => {
+  it('allows only the request headers the modules actually read', async () => {
     const response = await preflight('/cms/content/projects', 'POST')
 
-    expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type,Authorization')
+    // `X-Support-Ticket-Token` is the per-ticket secret from an emailed support link, which cannot
+    // ride in `Authorization` because a website session may already be there.
+    expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
+      'Content-Type,Authorization,X-Support-Ticket-Token',
+    )
   })
 
   it('lets the browser cache the preflight for ten minutes', async () => {
