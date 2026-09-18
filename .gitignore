@@ -36,6 +36,7 @@ lerna-debug.log*
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
+!.claude/skills/
 .claude/settings.local.json
 docs/superpowers
 .superpowers
