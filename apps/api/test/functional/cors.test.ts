@@ -124,16 +124,16 @@ describe('CORS preflight', () => {
     await expect(response.text()).resolves.toBe('')
   })
 
-  it('allows the write verbs the auth and cms modules need', async () => {
+  it('allows the write verbs the auth, cms and support modules need', async () => {
     const response = await preflight('/cms/content/projects', 'POST')
 
-    expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PATCH,DELETE,OPTIONS')
+    expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PUT,PATCH,DELETE,OPTIONS')
   })
 
-  it('does not advertise PUT', async () => {
-    const response = await preflight('/cms/content/projects/1', 'PUT')
+  it('advertises PUT for the support console assignee endpoint', async () => {
+    const response = await preflight('/support/admin/tickets/1/assignee', 'PUT')
 
-    expect(response.headers.get('Access-Control-Allow-Methods')).not.toContain('PUT')
+    expect(response.headers.get('Access-Control-Allow-Methods')).toContain('PUT')
   })
 
   it('allows only Content-Type and Authorization as request headers', async () => {
@@ -220,7 +220,7 @@ describe('OPTIONS without preflight headers', () => {
   it('answers it with the same preflight headers as a well-formed one', async () => {
     const response = await gateway('/cms/content/projects', { method: 'OPTIONS' })
 
-    expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PATCH,DELETE,OPTIONS')
+    expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PUT,PATCH,DELETE,OPTIONS')
     expect(response.headers.get('Access-Control-Max-Age')).toBe('600')
   })
 
