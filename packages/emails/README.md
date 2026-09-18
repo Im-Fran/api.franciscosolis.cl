@@ -12,10 +12,10 @@
 
 ## 📖 Overview
 
-Two Workers in this monorepo send mail — [`apps/auth`](../../apps/auth/README.md) (sign-in links
-and invitations) and [`apps/cms`](../../apps/cms/README.md) (editorial messages). Before this
-package they each assembled their own HTML with template literals, which meant hand-escaping every
-interpolated value, hand-writing a plain-text twin of each body, and two subtly different visual
+Two Workers in this monorepo send mail — [`apps/auth`](../../apps/auth/README.md) (sign-in links,
+invitations and account access notices) and [`apps/cms`](../../apps/cms/README.md) (editorial
+messages). Before this package they each assembled their own HTML with template literals, which
+meant hand-escaping every interpolated value, hand-writing a plain-text twin of each body, and two subtly different visual
 identities arriving from the same domain.
 
 This package is where those bodies live now. A Worker imports one function, gets back
@@ -53,8 +53,9 @@ esbuild, so a build step here would only add an artifact to keep in sync.
 |--------|------------|
 | `renderMagicLinkEmail` | Single-use sign-in link. Used by `apps/auth`. |
 | `renderInvitationEmail` | Invitation to an address an admin has just allowed in. Used by `apps/auth`. |
+| `renderAccountAccessEmail` | Notice that an application gained access to an account — a sign-in, or an authorization granted from a session the browser already had. Used by `apps/auth`. |
 | `renderContentEmail` | Wrapper around an editor-authored body. Used by `apps/cms`. |
-| `renderEmail` | The primitive the three above are built on: element in, `{ subject, html, text }` out. |
+| `renderEmail` | The primitive the four above are built on: element in, `{ subject, html, text }` out. |
 | `EmailLayout`, `ActionLink`, `Paragraph` | The building blocks a new template is assembled from. |
 | `theme` | The design tokens — palette, gradient, logo, widths. |
 | `palette` | The raw brand colours `theme` is composed from. |

@@ -49,6 +49,12 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
   before it mints anything. `prompt=none` is answered with a code for a browser that holds one,
   `prompt=login`/`select_account` and an exceeded `max_age` force a fresh authentication, and
   `GET /oauth/logout` ends the session and clears the cookie.
+- **Access notifications** — every time an application gains access to an account, the account
+  holder is emailed: a sign-in, and equally an application authorized from a session the browser
+  already had, which is the one that needs no credential at all. The notice names the application,
+  how the person authenticated, when it happened, the device the user agent describes, the city and
+  country Cloudflare placed the request in, and the IP address. It is sent on a best effort: a
+  message that cannot be delivered is logged and never fails the sign-in it reports on.
 - **OpenID Connect** — `id_token` with `nonce`, `at_hash`, `auth_time`, `sid` and `groups`, a
   UserInfo endpoint, token introspection, RP-initiated logout and a discovery document published
   at both `/.well-known/openid-configuration` and `/.well-known/oauth-authorization-server`.
@@ -353,6 +359,11 @@ skip the middle of this diagram for:
      GET /auth/oauth/authorize/<handle>/continue
    → 302 <redirect_uri>?code=…&state=…        (no provider, no email, no password)
 ```
+
+Both endings — a fresh sign-in and an `Authorize` — email the account holder a notice of the access,
+with the application, the provider, the time, the device, the location and the IP address. It is the
+only thing that makes the second diagram visible to the person it happens to, since nothing in it
+asks anybody for anything.
 
 The cookie is the authority, never the handle: `/continue` resolves the cookie again and refuses a
 handle presented by a different browser. A client that wants none of this can ask for a fresh

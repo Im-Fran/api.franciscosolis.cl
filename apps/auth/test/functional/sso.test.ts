@@ -8,7 +8,7 @@ import type { IdTokenClaims } from '@/lib/jwt'
 import { verifySignedToken } from '@/lib/jwt'
 import { cookieHeader, cookieValue } from '../helpers/context'
 import { bearer, createSsoSession, createUser, db, SEED, signIn, uniqueEmail } from '../helpers/db'
-import { captureEmails, magicLinkTokenFrom } from '../helpers/email'
+import { captureEmails, failEmails, magicLinkTokenFrom } from '../helpers/email'
 import { RFC7636 } from '../helpers/pkce'
 
 const mailbox = captureEmails()
@@ -175,6 +175,72 @@ describe('a second application', () => {
 
     expect(row?.userId).toBe(user.id)
     expect(JSON.parse(row?.metadata ?? 'null')).toMatchObject({ sso_session_id: session.id })
+  })
+})
+
+/**
+ * The notice the account holder gets. It is the only way an authorization granted from an existing
+ * session — no password, no link, no provider — becomes visible to the person it belongs to, so it
+ * is asserted through the real flows rather than against the service alone.
+ */
+describe('access notifications', () => {
+  const CLIENT = {
+    'CF-Connecting-IP': '203.0.113.24',
+    'CF-IPCountry': 'CL',
+    'User-Agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  }
+
+  it('writes to the account after a sign-in, describing where it came from', async () => {
+    const user = await createUser({ email: uniqueEmail('sso-notify-signin') })
+    await signInThroughMagicLink(user.email)
+
+    // The sign-in link itself came first; the notice is what the callback sent.
+    const notice = mailbox.last()
+    expect(notice.to).toEqual([user.email])
+    expect(notice.subject).toBe('New sign-in to franciscosolis.cl')
+    expect(notice.text).toContain('Signed in with: Magic Link')
+  })
+
+  it('writes to the account when an application is authorized from a session it already had', async () => {
+    const user = await createUser({ email: uniqueEmail('sso-notify-continue') })
+    const { token } = await createSsoSession({ userId: user.id })
+    const handle = await park({}, token)
+
+    await navigate(`/oauth/authorize/${handle}/continue`, {
+      headers: { ...cookieHeader(SSO_COOKIE_NAME, token), ...CLIENT },
+    })
+
+    const notice = mailbox.last()
+    expect(notice.to).toEqual([user.email])
+    expect(notice.subject).toBe('franciscosolis.cl was authorized on your account')
+    expect(notice.text).toContain('Device: Chrome on macOS')
+    expect(notice.text).toContain('Location: Chile')
+    expect(notice.text).toContain('IP address: 203.0.113.24')
+  })
+
+  it('writes to the account for a prompt=none authorization, which involves no screen at all', async () => {
+    const user = await createUser({ email: uniqueEmail('sso-notify-none') })
+    const { token } = await createSsoSession({ userId: user.id })
+
+    await authorize({ prompt: 'none' }, token)
+
+    expect(mailbox.last().subject).toBe('franciscosolis.cl was authorized on your account')
+  })
+
+  it('does not stop an authorization when the notice cannot be delivered', async () => {
+    const user = await createUser({ email: uniqueEmail('sso-notify-broken') })
+    const { token } = await createSsoSession({ userId: user.id })
+    const handle = await park({}, token)
+    const broken = failEmails('mailbox full')
+
+    const response = await navigate(`/oauth/authorize/${handle}/continue`, {
+      headers: cookieHeader(SSO_COOKIE_NAME, token),
+    })
+    broken.restore()
+
+    expect(response.status).toBe(302)
+    expect(location(response).searchParams.get('code')).toBeTruthy()
   })
 })
 

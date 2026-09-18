@@ -222,7 +222,10 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   hands its response back untouched — but that is why the forwarding policy for `auth`
   (`SERVICE_MODULES` in `apps/api/src/services.ts`) must keep forwarding the Request as it stands
   rather than rebuilding a header list, the way `landing` does. See `apps/auth/CLAUDE.md` for why
-  the cookie is `SameSite=Lax` and why CORS there still never allows credentials.
+  the cookie is `SameSite=Lax` and why CORS there still never allows credentials. Because that
+  cookie makes the *second* application an "Authorize" rather than a sign-in — no credential, no
+  email — `apps/auth` emails the account holder a notice of every access it grants, sign-in and
+  authorization alike (`apps/auth/src/services/notifications.ts`).
 - **The gateway's CORS allows write verbs because of auth**: `apps/api` used to allow `GET`
   only; sign-in, token exchange and the admin API need `POST`/`PATCH`/`DELETE`. The origin
   allowlist must stay locked down — but `/auth/*` is excluded from it entirely (`ownsCors` in

@@ -180,7 +180,7 @@ app.get(
           metadata: { provider: authenticated.session.provider, scope, prompt: 'none' },
         })
 
-        const { redirectUrl } = await authorizeFromSsoSession(db, {
+        const { redirectUrl } = await authorizeFromSsoSession(c, db, {
           request: {
             application,
             redirectUri,
@@ -358,7 +358,7 @@ app.get(
     }
 
     try {
-      const { redirectUrl } = await authorizeFromSsoSession(db, {
+      const { redirectUrl } = await authorizeFromSsoSession(c, db, {
         request: toAuthorizationRequest(record, application),
         session: sso.session,
         user: sso.user,
