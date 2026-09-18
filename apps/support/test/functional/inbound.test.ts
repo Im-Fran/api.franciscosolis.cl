@@ -8,7 +8,7 @@ import { allRows, clearDatabase, countRows, firstRow } from '../helpers/db'
 import { captureEmail } from '../helpers/email'
 import { deliver } from '../helpers/inbound'
 import { htmlOnly, plainText, quotedReply, withAttachment, withoutMessageId } from '../fixtures/mime'
-import { stubAiResponse } from '../helpers/ai'
+import { stubAi, stubAiResponse } from '../helpers/ai'
 import { asAgent } from '../helpers/tokens'
 
 let mail: ReturnType<typeof captureEmail>
@@ -280,7 +280,11 @@ describe('the AI enrichment pass', () => {
   })
 
   it('keeps the ticket when the model fails outright', async () => {
-    stubAiResponse(Promise.reject(new Error('model unavailable')) as never)
+    // Thrown from inside the stub, not a pre-built rejected promise: the latter is unhandled from
+    // the moment it is constructed and fails the whole run even though every test passes.
+    stubAi(async () => {
+      throw new Error('model unavailable')
+    })
     await deliver(plainText)
 
     // The email is written before the model is asked, which is the whole reason a model outage
