@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { describeRoute, openAPIRouteHandler, resolver } from 'hono-openapi'
 import * as v from 'valibot'
-import type { AppEnv } from '@/env'
+import { getDb } from '@/db/client'
+import type { AppEnv, Env } from '@/env'
 import {
   MESSAGE_KIND,
   TICKET_EVENTS,
@@ -11,6 +12,8 @@ import {
   TICKET_STATUS,
 } from '@/lib/config'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
+
+import { sweepNotifications } from '@/services/notifications'
 
 /* Routes */
 import admin from '@/routes/admin'
@@ -126,4 +129,36 @@ app.get(
   }),
 )
 
-export default app
+/**
+ * The deferred-reply sweep, run by the cron in `wrangler.jsonc`.
+ *
+ * Everything it does lives in `src/services/notifications.ts`; this is the adapter. Keeping the
+ * handler this thin is what makes the rule testable at all — miniflare will happily dispatch a
+ * scheduled event, but reasoning about a 30-minute deadline is far easier against a function you can
+ * hand a `Date` to than against a cron you have to wait for.
+ */
+const handleScheduled: ExportedHandlerScheduledHandler<Env> = async (controller, env, ctx) => {
+  ctx.waitUntil(
+    sweepNotifications(getDb(env), env, new Date(controller.scheduledTime)).then((result) => {
+      // One line per run, which is what makes "did anybody get told" answerable from the logs alone.
+      console.log('notification sweep', JSON.stringify(result))
+    }),
+  )
+}
+
+/**
+ * This Worker has three entry points, and only one of them comes through the gateway.
+ *
+ * `fetch` is proxied from `apps/api` at `/support/*` like every other internal Worker here. `email`
+ * is dispatched straight to this script by Cloudflare Email Routing, and `scheduled` by the cron —
+ * neither passes through `apps/api`, and neither can. That is the one documented exception to this
+ * monorepo's "internal Workers are reached only through the gateway" rule, and it is why the
+ * `workers_dev` and routing configuration here must not be "tidied up": doing so silently removes
+ * the inbound half of the product while every test still passes.
+ */
+export default {
+  fetch: app.fetch,
+  scheduled: handleScheduled,
+} satisfies ExportedHandler<Env>
+
+export { app }

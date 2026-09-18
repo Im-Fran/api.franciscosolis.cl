@@ -108,6 +108,10 @@ const NOTIFICATIONS = {
   excerptLength: 300,
 } as const
 
+/** States a deferred notice can be in. `sending` is transient and reaped if it sticks. */
+const NOTIFICATION_STATES = ['pending', 'sending', 'sent', 'cancelled', 'failed'] as const
+type NotificationState = (typeof NOTIFICATION_STATES)[number]
+
 /** Limits on what Email Routing hands us. */
 const INBOUND = {
   /** Bytes. Checked before `message.raw` is touched — the point is not to buffer a huge message. */
@@ -182,6 +186,7 @@ export {
   INBOUND,
   JWKS_CACHE_TTL,
   MESSAGE_KIND,
+  NOTIFICATION_STATES,
   NOTIFICATIONS,
   PAGINATION,
   PARTICIPANT_ROLE,
@@ -196,6 +201,7 @@ export {
 }
 export type {
   AuthorType,
+  NotificationState,
   ContentStatus,
   MessageKind,
   ParticipantRole,

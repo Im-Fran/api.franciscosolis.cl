@@ -44,10 +44,17 @@ const findReferenceInSubject = (subject: string | null | undefined): number | nu
   return match ? Number(match[1]) : null
 }
 
-/** `Cannot sign in` → `[FS-1042] Cannot sign in`, without doubling the tag on a reply. */
-const withReferenceTag = (subject: string, number: number): string => {
-  const reference = formatReference(number)
-  return subject.includes(`[${reference}]`) ? subject : `[${reference}] ${subject}`
-}
+/**
+ * Removes any `[FS-…]` tag and `Re:`/`RV:` prefixes from a subject.
+ *
+ * Used when an inbound email becomes a *new* ticket. The subject may already carry a tag — from a
+ * stale thread, a forwarded message, or somebody guessing — and the email templates add the real one
+ * themselves, so leaving it in produces `[FS-1002] [FS-9999] Cannot sign in`.
+ */
+const stripReferenceTag = (subject: string): string =>
+  subject
+    .replace(new RegExp(`\\[${TICKET_REFERENCE_PREFIX}-\\d{1,9}\\]`, 'gi'), '')
+    .replace(/^\s*(?:re|rv|fwd|fw)\s*:\s*/gi, '')
+    .trim()
 
-export { findReferenceInSubject, formatReference, parseReference, withReferenceTag }
+export { findReferenceInSubject, formatReference, parseReference, stripReferenceTag }

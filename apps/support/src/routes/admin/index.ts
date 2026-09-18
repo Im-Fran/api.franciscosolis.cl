@@ -3,9 +3,9 @@ import { Hono } from 'hono'
 import { describeRoute, resolver, validator } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
-import { auditLogs } from '@/db/schema'
+import { auditLogs, emailMessages, ticketNotifications } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { ADMIN_PERMISSION, PAGINATION } from '@/lib/config'
+import { ADMIN_PERMISSION, NOTIFICATION_STATES, PAGINATION } from '@/lib/config'
 import { parseJson } from '@/lib/json'
 import { dateInput, paginationSchema } from '@/lib/validation'
 import { requireAgent } from '@/middleware/auth'
@@ -124,6 +124,93 @@ app.get(
         metadata: parseJson<Record<string, unknown>>(row.metadata, {}),
         ip: row.ip,
         created_at: row.createdAt?.toISOString() ?? null,
+      })),
+    })
+  },
+)
+
+const opsResponseSchema = v.object({
+  code: v.literal(200),
+  data: v.array(v.looseObject({ id: v.string(), status: v.optional(v.string()), state: v.optional(v.string()) })),
+})
+
+app.get(
+  '/emails',
+  describeRoute({
+    description:
+      'Outgoing mail, newest first. A message that never arrived and one that was never attempted look different here, which is the only reason the log exists.',
+    tags: ['Admin'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'Sent mail', content: { 'application/json': { schema: resolver(opsResponseSchema) } } },
+      401: { description: 'Missing or invalid access token' },
+    },
+  }),
+  validator('query', paginationSchema),
+  async (c) => {
+    const { limit = PAGINATION.defaultLimit, offset = 0 } = c.req.valid('query')
+    const rows = await getDb(c.env)
+      .select()
+      .from(emailMessages)
+      .orderBy(desc(emailMessages.createdAt))
+      .limit(limit)
+      .offset(offset)
+
+    return c.json({
+      code: 200,
+      data: rows.map((row) => ({
+        id: row.id,
+        ticket_id: row.ticketId,
+        kind: row.kind,
+        to: parseJson<string[]>(row.toAddresses, []),
+        subject: row.subject,
+        status: row.status,
+        provider_message_id: row.providerMessageId,
+        error: row.error,
+        sent_at: row.sentAt?.toISOString() ?? null,
+        created_at: row.createdAt?.toISOString() ?? null,
+      })),
+    })
+  },
+)
+
+app.get(
+  '/notifications',
+  describeRoute({
+    description:
+      'The deferred-reply queue: what is waiting, what was cancelled because the person came back, and what could not be delivered. Read this before believing somebody was never told.',
+    tags: ['Admin'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'Queued notices', content: { 'application/json': { schema: resolver(opsResponseSchema) } } },
+      401: { description: 'Missing or invalid access token' },
+    },
+  }),
+  validator('query', v.object({ state: v.optional(v.picklist(NOTIFICATION_STATES)), ...paginationSchema.entries })),
+  async (c) => {
+    const { state, limit = PAGINATION.defaultLimit, offset = 0 } = c.req.valid('query')
+    const rows = await getDb(c.env)
+      .select()
+      .from(ticketNotifications)
+      .where(state ? eq(ticketNotifications.state, state) : undefined)
+      .orderBy(desc(ticketNotifications.dueAt))
+      .limit(limit)
+      .offset(offset)
+
+    return c.json({
+      code: 200,
+      data: rows.map((row) => ({
+        id: row.id,
+        ticket_id: row.ticketId,
+        recipient_email: row.recipientEmail,
+        state: row.state,
+        due_at: row.dueAt?.toISOString() ?? null,
+        after_seq: row.afterSeq,
+        through_seq: row.throughSeq,
+        attempts: row.attempts,
+        last_error: row.lastError,
+        cancel_reason: row.cancelReason,
+        sent_at: row.sentAt?.toISOString() ?? null,
       })),
     })
   },

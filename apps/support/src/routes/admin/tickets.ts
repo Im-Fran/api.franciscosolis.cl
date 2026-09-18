@@ -12,6 +12,8 @@ import { LOCALES } from '@/lib/locales'
 import { parseReference } from '@/lib/references'
 import { emailAddress, optionalEmail, paginationSchema, requiredText } from '@/lib/validation'
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
+import { sendParticipantAdded } from '@/services/email'
+import { scheduleReplyNotifications } from '@/services/notifications'
 import {
   addMessage,
   buildTimeline,
@@ -323,6 +325,14 @@ app.post(
       source: 'web',
     })
 
+    if (kind === 'reply') {
+      // A public reply starts the clock; an internal note is the team talking to itself and starts
+      // nothing. Scheduling here rather than inside `addMessage` keeps the rule where it is legible:
+      // the thing that decides whether somebody gets an email is the route that decided the message
+      // was public.
+      await scheduleReplyNotifications(db, ticket, agent.email)
+    }
+
     await recordAudit(db, {
       event: 'message.created',
       ...getActorContext(c),
@@ -450,6 +460,11 @@ app.post(
     } catch (error) {
       throw asConflict(error, `${body.email} is already on this ticket`)
     }
+
+    // Their own note with the link, rather than being back-filled into the next digest — that would
+    // mail a stranger a conversation they were not part of when it happened. Awaited so the 201 is
+    // not ahead of the thing it reports.
+    await sendParticipantAdded(db, c.env, ticket, body.email)
 
     await recordEvent(db, {
       ticketId: ticket.id,

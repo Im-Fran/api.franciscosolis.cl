@@ -2,19 +2,25 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { describeRoute, resolver, validator } from 'hono-openapi'
 import * as v from 'valibot'
+import { eq } from 'drizzle-orm'
 import { getDb } from '@/db/client'
+import { tickets } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { BODY_LIMITS, TICKET_CREATION } from '@/lib/config'
 import { LOCALES } from '@/lib/locales'
-import { formatReference } from '@/lib/references'
+import { formatReference, parseReference } from '@/lib/references'
+import { generateSecret, sha256 } from '@/lib/tokens'
 import { emailAddress, requiredText } from '@/lib/validation'
 import { requireTicketAccess } from '@/middleware/ticket-access'
 import { getRequestContext, recordAudit } from '@/services/audit'
+import { sendTicketReceived } from '@/services/email'
+import { cancelNotificationsFor, scheduleReplyNotifications } from '@/services/notifications'
 import { retryAfterSeconds, ticketsFromEmail, ticketsFromIp } from '@/services/rate-limit'
 import {
   addMessage,
   buildTimeline,
   createTicket,
+  findTicketByNumber,
   listEvents,
   listMessages,
   listParticipants,
@@ -101,6 +107,12 @@ app.post(
       ccEmails: body.cc,
     })
 
+    // Awaited rather than deferred with `waitUntil`, for the same reason `apps/auth` awaits its
+    // access notifications: the send is what the response is about to claim happened, and a caller
+    // told "check your inbox" before anything was attempted is a worse outcome than a response that
+    // took an extra moment. `sendEmail` never throws, so a provider outage still returns the ticket.
+    await sendTicketReceived(db, c.env, ticket, accessToken)
+
     await recordAudit(db, {
       event: 'ticket.created',
       actorEmail: ticket.requesterEmail,
@@ -122,6 +134,52 @@ app.post(
       },
       201,
     )
+  },
+)
+
+const resendSchema = v.object({ email: emailAddress, reference: v.pipe(v.string(), v.trim(), v.maxLength(32)) })
+
+app.post(
+  // Registered before `/tickets/:reference` on purpose. Hono runs matching handlers in registration
+  // order, so the literal segment has to come first or `:reference` swallows it and the request 404s
+  // on a ticket called "resend-link".
+  '/tickets/resend-link',
+  describeRoute({
+    description:
+      'Emails a fresh link to the address on a ticket. Always answers 202, whether or not the ticket exists — a different answer would turn this into a way to ask whether somebody has ever contacted support.',
+    tags: ['Tickets'],
+    responses: {
+      202: { description: 'If there is a matching ticket, a link is on its way' },
+      400: { description: 'The body failed validation' },
+    },
+  }),
+  validator('json', resendSchema),
+  async (c) => {
+    const body = c.req.valid('json')
+    const db = getDb(c.env)
+    const number = parseReference(body.reference)
+    const ticket = number === null ? null : await findTicketByNumber(db, number)
+
+    // Rotating is the only option: the previous secret exists solely as a SHA-256 and cannot be
+    // recovered to re-send. The trade — the link in the original confirmation stops working — is the
+    // right way round, because this request came from somebody who no longer has that link.
+    if (ticket && ticket.requesterEmail === body.email && ticket.status !== 'spam') {
+      const accessToken = generateSecret()
+      await db
+        .update(tickets)
+        .set({ accessTokenHash: await sha256(accessToken), accessTokenRotatedAt: new Date(), updatedAt: new Date() })
+        .where(eq(tickets.id, ticket.id))
+
+      await sendTicketReceived(db, c.env, ticket, accessToken)
+      await recordEvent(db, {
+        ticketId: ticket.id,
+        event: 'link_rotated',
+        actorType: 'requester',
+        actorEmail: ticket.requesterEmail,
+      })
+    }
+
+    return c.json({ code: 202, data: { message: 'If that ticket exists, a link is on its way.' } }, 202)
   },
 )
 
@@ -223,13 +281,23 @@ app.post(
       source: 'web',
     })
 
-    await recordEvent(db, {
-      ticketId: ticket.id,
-      event: ticket.status === 'solved' || ticket.status === 'closed' ? 'reopened' : 'status_changed',
-      actorType: level === 'agent' ? 'agent' : 'requester',
-      actorEmail,
-      metadata: { seq: message.seq },
-    })
+    if (ticket.status === 'solved' || ticket.status === 'closed') {
+      await recordEvent(db, {
+        ticketId: ticket.id,
+        event: 'reopened',
+        actorType: level === 'agent' ? 'agent' : 'requester',
+        actorEmail,
+        metadata: { from: ticket.status },
+      })
+    }
+
+    if (level === 'agent') {
+      // An agent answering from this route is still answering, so the same deferred notice applies.
+      await scheduleReplyNotifications(db, ticket, actorEmail)
+    } else if (actorEmail) {
+      // They came back. Whatever we were about to email them about, they have just read.
+      await cancelNotificationsFor(db, ticket.id, actorEmail)
+    }
 
     return c.json({ code: 201, data: { seq: message.seq, created_at: message.createdAt?.toISOString() ?? null } }, 201)
   },

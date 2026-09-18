@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findReferenceInSubject, formatReference, parseReference, withReferenceTag } from '@/lib/references'
+import { findReferenceInSubject, formatReference, parseReference, stripReferenceTag } from '@/lib/references'
 
 describe('formatReference', () => {
   it('renders the prefixed form people read out loud', () => {
@@ -49,13 +49,16 @@ describe('findReferenceInSubject', () => {
   })
 })
 
-describe('withReferenceTag', () => {
-  it('tags a fresh subject', () => {
-    expect(withReferenceTag('Cannot sign in', 1042)).toBe('[FS-1042] Cannot sign in')
-  })
-
-  it('does not tag a subject twice, so a long thread does not accumulate them', () => {
-    const once = withReferenceTag('Cannot sign in', 1042)
-    expect(withReferenceTag(once, 1042)).toBe(once)
+describe('stripReferenceTag', () => {
+  it.each([
+    ['a tagged reply', 'Re: [FS-1042] Cannot sign in', 'Cannot sign in'],
+    ['a forward', 'Fwd: Cannot sign in', 'Cannot sign in'],
+    ['a Spanish forward prefix', 'RV: [FS-7] No puedo entrar', 'No puedo entrar'],
+    ['several tags a long thread accumulated', '[FS-1] [FS-2] Cannot sign in', 'Cannot sign in'],
+    ['a subject that needs nothing done to it', 'Cannot sign in', 'Cannot sign in'],
+  ])('cleans %s', (_label, subject, expected) => {
+    // A new ticket built from an email whose subject already carries a tag would otherwise be
+    // announced as `[FS-1002] [FS-9999] Cannot sign in`.
+    expect(stripReferenceTag(subject)).toBe(expected)
   })
 })
