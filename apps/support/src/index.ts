@@ -22,6 +22,7 @@ import { sweepNotifications } from '@/services/notifications'
 
 /* Routes */
 import admin from '@/routes/admin'
+import help from '@/routes/help'
 import me from '@/routes/me'
 import tickets from '@/routes/tickets'
 
@@ -106,6 +107,7 @@ app.get(
 
 app.route('/', tickets)
 app.route('/', me)
+app.route('/', help)
 app.route('/admin', admin)
 
 app.get(

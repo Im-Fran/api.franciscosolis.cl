@@ -11,6 +11,8 @@ import { dateInput, paginationSchema } from '@/lib/validation'
 import { requireAgent } from '@/middleware/auth'
 
 /* Routes */
+import assist from '@/routes/admin/assist'
+import help from '@/routes/admin/help'
 import labels from '@/routes/admin/labels'
 import tickets from '@/routes/admin/tickets'
 
@@ -218,5 +220,7 @@ app.get(
 
 app.route('/', tickets)
 app.route('/', labels)
+app.route('/', help)
+app.route('/', assist)
 
 export default app
