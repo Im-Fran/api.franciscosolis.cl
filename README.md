@@ -15,8 +15,9 @@
 
 This repository holds the backend that powers **franciscosolis.cl**: a public-facing API
 worker (`apps/api`) that fronts a set of internal Cloudflare Workers — the landing site's
-own API (`apps/landing`), the centralized authentication service (`apps/auth`) and the
-content management service (`apps/cms`). The
+own API (`apps/landing`), the centralized authentication service (`apps/auth`), the
+content management service (`apps/cms`) and the standalone application pages service
+(`apps/pages`). The
 workers talk to each other directly through Cloudflare **service bindings** — no HTTP
 round-trip over the public internet — and the root API transparently proxies and merges the
 OpenAPI specs of every internal module it exposes.
@@ -40,8 +41,9 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 ## ✨ Features
 
 - **Single public entrypoint, multiple internal Workers** — `apps/api` proxies `/landing/*`,
-  `/auth/*` and `/cms/*` to the `landing`, `auth` and `cms` Workers via Cloudflare service
-  bindings (`LANDING`, `AUTH`, `CMS`), keeping internal services off the public internet.
+  `/auth/*`, `/cms/*` and `/pages/*` to the `landing`, `auth`, `cms` and `pages` Workers via
+  Cloudflare service bindings (`LANDING`, `AUTH`, `CMS`, `PAGES`), keeping internal services off
+  the public internet.
 - **Centralized authentication** — `apps/auth` implements an OAuth 2.0 authorization code
   flow with PKCE over two providers (magic link by email, Google OAuth 2.0), backed by a D1
   database of users, identities, applications, roles, permissions, invitations and sessions.
@@ -51,6 +53,12 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   through Cloudflare Email Sending. Published content is readable publicly; editing requires an
   access token from `apps/auth` belonging to an `@franciscosolis.cl` account, verified offline
   against the auth JWKS.
+- **Standalone application pages** — `apps/pages` gives every application built here the same
+  product page: a banner, then the tabs it turned on out of Overview, Updates, Wiki and Contact.
+  The tab set is a registry rather than a per-page layout field, which is what keeps a dozen pages
+  looking like one product family instead of a dozen bespoke sites. The website renders them at
+  `franciscosolis.cl/application/<slug>` and the CMS front-end edits them, so the Worker needs no
+  client application of its own.
 - **Shared email templates** — every message either Worker sends is a react-email component in
   `packages/emails`, rendered to an HTML + plain-text pair at send time. Values are escaped by
   construction, the text alternative is derived from the HTML so the two cannot drift, and the
@@ -93,7 +101,7 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 | Runtime | Cloudflare Workers (`nodejs_compat`) |
 | Framework | [Hono](https://hono.dev) + [hono-openapi](https://www.npmjs.com/package/hono-openapi) |
 | Validation | [valibot](https://valibot.dev) via `@hono/standard-validator` |
-| Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth`, `apps/cms`) |
+| Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth`, `apps/cms`, `apps/pages`) |
 | Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`apps/auth`, `apps/cms`) |
 | Email templates | [react-email](https://react.email) in the shared `@franciscosolis/emails` package |
 | HTTP client | axios |
@@ -137,11 +145,12 @@ Copy the example dev-vars files and fill them in:
 cp apps/landing/.dev.vars.example apps/landing/.dev.vars
 cp apps/auth/.dev.vars.example apps/auth/.dev.vars
 cp apps/cms/.dev.vars.example apps/cms/.dev.vars
+cp apps/pages/.dev.vars.example apps/pages/.dev.vars
 cd apps/auth && pnpm run keys:generate   # prints the JWT_PRIVATE_KEY to paste in
 ```
 
-`apps/cms` has no secrets of its own — its `.dev.vars` only points `AUTH_JWKS_URL` and
-`AUTH_ISSUER` at the local auth Worker.
+`apps/cms` and `apps/pages` have no secrets of their own — their `.dev.vars` only point
+`AUTH_JWKS_URL` and `AUTH_ISSUER` at the local auth Worker.
 
 | Variable | Description | Where |
 |----------|-------------|-------|
@@ -154,9 +163,10 @@ Then create the database tables:
 ```bash
 cd apps/auth && pnpm run db:migrate:local
 cd apps/cms && pnpm run db:migrate:local
+cd apps/pages && pnpm run db:migrate:local
 ```
 
-The `api` worker has no secrets of its own; it only needs the `LANDING`, `AUTH` and `CMS`
+The `api` worker has no secrets of its own; it only needs the `LANDING`, `AUTH`, `CMS` and `PAGES`
 service bindings, which are wired up in `apps/api/wrangler.jsonc`. See
 [`apps/auth/README.md`](apps/auth/README.md) for the full authentication setup.
 
@@ -173,6 +183,7 @@ This starts:
 - `landing` on `http://localhost:8788` (inspector on port `9230`)
 - `auth` on `http://localhost:8789` (inspector on port `9231`)
 - `cms` on `http://localhost:8790` (inspector on port `9232`)
+- `pages` on `http://localhost:8792` (inspector on port `9233`)
 
 Each app can also be run individually from its own directory, e.g. `cd apps/api && pnpm run dev`.
 
@@ -211,13 +222,14 @@ Notes on the setup, per app:
 
 | App | What the harness provides |
 |-----|---------------------------|
-| `api` | The `landing`, `auth` and `cms` Workers are booted as auxiliary Miniflare Workers (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS` are genuine service bindings under test |
+| `api` | The `landing`, `auth`, `cms` and `pages` Workers are booted as auxiliary Miniflare Workers (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`PAGES` are genuine service bindings under test |
 | `landing` | A dummy `GH_TOKEN`; every GitHub call is mocked at the `axios` module |
 | `auth` | A live D1 database with `migrations/` applied per test file, plus a fixed test-only Ed25519 signing key |
 | `cms` | A live D1 database with `migrations/` applied per test file; `AUTH_JWKS_URL` points at an unroutable host so a JWKS fetch that escapes its stub fails loudly |
+| `pages` | The same as `cms`. Its JWKS-cache tests live in a file of their own, because the cache is per isolate and one warm fetch would make every later stub go unasked |
 
-Because `auth` and `cms` apply their real `migrations/` directory to each test file's isolated
-database, a migration that stops applying cleanly fails the test run rather than surfacing at
+Because `auth`, `cms` and `pages` apply their real `migrations/` directory to each test file's
+isolated database, a migration that stops applying cleanly fails the test run rather than surfacing at
 deploy time.
 
 Coverage uses the **istanbul** provider — `workerd` exposes no V8 coverage hooks, so
@@ -239,8 +251,8 @@ a missing binding or code that does not bundle for the Workers runtime.
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request, on pushes to
 `dev`, and on demand.
 
-It runs **one job per app**, so `api`, `landing`, `auth` and `cms` each report as an independent
-check, plus a small `emails` job that typechecks the shared template package. `fail-fast` is disabled: a failure in one app never cancels or hides the others, and the
+It runs **one job per app**, so `api`, `landing`, `auth`, `cms` and `pages` each report as an
+independent check, plus a small `emails` job that typechecks the shared template package. `fail-fast` is disabled: a failure in one app never cancels or hides the others, and the
 check that goes red points straight at the Worker that broke. Each job does the same three things
 for its own app:
 
@@ -271,11 +283,13 @@ cd apps/api && pnpm run deploy
 cd apps/landing && pnpm run deploy
 cd apps/auth && pnpm run deploy
 cd apps/cms && pnpm run deploy
+cd apps/pages && pnpm run deploy
 ```
 
 `apps/api/wrangler.jsonc` binds the custom domain `api.franciscosolis.cl` (zone
-`franciscosolis.cl`) plus the `LANDING`, `AUTH` and `CMS` service bindings, so those Workers must
-be deployed under exactly the names `landing`, `auth` and `cms` for the bindings to resolve.
+`franciscosolis.cl`) plus the `LANDING`, `AUTH`, `CMS` and `PAGES` service bindings, so those
+Workers must be deployed under exactly the names `landing`, `auth`, `cms` and `pages` for the
+bindings to resolve.
 
 `apps/auth` also needs its secrets in production:
 
@@ -286,11 +300,11 @@ pnpm exec wrangler secret put GOOGLE_CLIENT_ID
 pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
 ```
 
-`apps/cms` needs no secrets at all.
+`apps/cms` and `apps/pages` need no secrets at all.
 
 ### Database migrations
 
-The two stateful Workers — `auth` and `cms` — own a D1 database each, and their migrations are
+The three stateful Workers — `auth`, `cms` and `pages` — own a D1 database each, and their migrations are
 applied by the **`Migrate` workflow** (`.github/workflows/migrate.yml`), not by hand. It runs on a
 push to `dev` that touches `apps/*/migrations/**`, one job per database, and can also be started by
 hand from the Actions tab — applying is idempotent, so a run against a database that is already
@@ -308,7 +322,7 @@ fixed.
 Running them by hand is still there for a database that has drifted, or for a first deploy:
 
 ```bash
-pnpm run db:migrate:list      # what is pending, both databases
+pnpm run db:migrate:list      # what is pending, every database
 pnpm run db:migrate:remote    # apply it
 pnpm run db:migrate:local     # the same, against the local dev databases
 ```
@@ -334,12 +348,14 @@ pnpm run cf-typegen
 
 | File | Purpose |
 |------|---------|
-| `apps/api/wrangler.jsonc` | Routes, custom domain, `LANDING`, `AUTH` and `CMS` service bindings, observability sampling |
+| `apps/api/wrangler.jsonc` | Routes, custom domain, `LANDING`, `AUTH`, `CMS` and `PAGES` service bindings, observability sampling |
 | `apps/landing/wrangler.jsonc` | Worker name/config for the `landing` service |
 | `apps/auth/wrangler.jsonc` | Worker name/config for the `auth` service, D1 binding, email sending binding, public URL and issuer vars |
 | `apps/auth/migrations/` | D1 migrations for `franciscosolis_auth` |
 | `apps/cms/wrangler.jsonc` | Worker name/config for the `cms` service, D1 binding, email sending binding, JWKS/issuer, allowed audiences, email domains and senders |
 | `apps/cms/migrations/` | D1 migrations for `franciscosolis_cms` |
+| `apps/pages/wrangler.jsonc` | Worker name/config for the `pages` service, D1 binding, JWKS/issuer, allowed audiences and email domains |
+| `apps/pages/migrations/` | D1 migrations for `franciscosolis_pages` |
 | `pnpm-workspace.yaml` | Workspace packages (`apps/*`, `packages/*`) and shared dependency catalog |
 | `apps/*/vitest.config.ts` | Test runtime for that app — bindings, D1 migrations and service-binding stubs |
 | `.github/workflows/ci.yml` | CI pipeline: typecheck, test and dry-run build, one independent check per app |
