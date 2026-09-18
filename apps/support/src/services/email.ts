@@ -113,8 +113,8 @@ const sendTicketReceived = async (db: Database, env: Env, ticket: TicketRow, acc
     kind: 'ticket_received',
     ticketId: ticket.id,
     to: [ticket.requesterEmail],
-    replyTo,
     ...rendered,
+    replyTo,
   })
 }
 
@@ -164,8 +164,8 @@ const sendReplyDigest = async (
     kind: 'reply_digest',
     ticketId: ticket.id,
     to: [recipient],
-    replyTo,
     ...rendered,
+    replyTo,
   })
 }
 
@@ -185,8 +185,8 @@ const sendParticipantAdded = async (db: Database, env: Env, ticket: TicketRow, r
     kind: 'participant_added',
     ticketId: ticket.id,
     to: [recipient],
-    replyTo,
     ...rendered,
+    replyTo,
   })
 }
 
