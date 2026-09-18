@@ -10,7 +10,7 @@ language) into files, commits, or code in this repo.
 ## Repo purpose
 
 Single pnpm monorepo for the public REST API behind **franciscosolis.cl**. It wires
-together five Cloudflare Workers, all living directly in this repo:
+together six Cloudflare Workers, all living directly in this repo:
 
 - `apps/api` — public gateway Worker, deployed to `api.franciscosolis.cl`.
 - `apps/landing` — internal Worker with the landing page's GitHub stats, only reachable
@@ -26,17 +26,22 @@ together five Cloudflare Workers, all living directly in this repo:
   built here, all to the same house standard (a banner, then Overview / Updates / Wiki / Contact
   tabs), reachable through `apps/api` at `/pages/*`. Same public-read, gated-write split as the CMS,
   and edited from the CMS front-end rather than from an application of its own.
+- `apps/support` — internal Worker with the **support ticket system** and the help centre behind it,
+  reachable through `apps/api` at `/support/*`. A ticket can be opened from the website or by writing
+  to `soporte@franciscosolis.cl`, and answered in either place; the help centre is searched both
+  lexically (FTS5) and semantically (Workers AI + Vectorize). It is the one Worker here with entry
+  points the gateway does not front, and the only one that uses Workers AI.
 
 Alongside them, `packages/` holds the shared code the Workers import:
 
 - `packages/emails` (`@franciscosolis/emails`) — every email body in the monorepo, written as
-  react-email components. Imported by `apps/auth` and `apps/cms`; no Worker builds mail markup
-  itself.
+  react-email components. Imported by `apps/auth`, `apps/cms` and `apps/support`; no Worker builds
+  mail markup itself.
 
 Each app and package keeps its own `CLAUDE.md` and `README.md`. When working on the actual
-implementation of a Worker, read/edit inside `apps/api`, `apps/landing`, `apps/auth`, `apps/cms` or
-`apps/pages` — the root repo only owns workspace-wide wiring (pnpm workspace/catalog, root
-scripts).
+implementation of a Worker, read/edit inside `apps/api`, `apps/landing`, `apps/auth`, `apps/cms`,
+`apps/pages` or `apps/support` — the root repo only owns workspace-wide wiring (pnpm
+workspace/catalog, root scripts).
 
 ## Stack
 
@@ -44,9 +49,10 @@ scripts).
   glob'd from `apps/*` and `packages/*` (`pnpm-workspace.yaml`).
 - Every Worker uses Hono + hono-openapi + valibot + Wrangler, all pinned via a
   shared pnpm `catalog` in `pnpm-workspace.yaml` — do not add per-app version pins for
-  those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms` and `apps/pages`
-  additionally use drizzle-orm/drizzle-kit; `apps/auth` and `apps/cms` also pull react +
-  react-email through `@franciscosolis/emails`, all catalogued too.
+  those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/pages` and
+  `apps/support` additionally use drizzle-orm/drizzle-kit; `apps/auth`, `apps/cms` and `apps/support`
+  also pull react + react-email through `@franciscosolis/emails`, all catalogued too. `apps/support`
+  is the only one with `postal-mime`, and the only one using Workers AI and Vectorize.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
   on `dev`/`deploy`.
 - Vitest running inside `workerd` via `@cloudflare/vitest-pool-workers`, also catalogued.
@@ -55,7 +61,7 @@ scripts).
 
 - `pnpm install` — installs for the whole workspace.
 - `pnpm run dev` — runs `dev` in every workspace app in parallel (`api` on :8787,
-  `landing` on :8788, `auth` on :8789, `cms` on :8790, `pages` on :8792).
+  `landing` on :8788, `auth` on :8789, `cms` on :8790, `pages` on :8792, `support` on :8793).
 - `pnpm run test` / `pnpm run test:coverage` — runs every app's suite.
 - `pnpm run typecheck` — `tsc --noEmit` over `src/` and `test/` in every app.
 - `pnpm run build` — `wrangler deploy --dry-run` in every app. Not an artifact; it is the
@@ -64,8 +70,9 @@ scripts).
 - `pnpm run cf-typegen` — regenerates Cloudflare binding types (`CloudflareBindings`) in
   every app after a `wrangler.jsonc` change.
 - `pnpm run db:migrate:list` / `db:migrate:remote` / `db:migrate:local` — D1 migrations across
-  every app that owns a database (`auth`, `cms`, `pages`). Production runs happen in CI (see *Deploys and migrations*);
-  these are for local work and for repairing a database that has drifted.
+  every app that owns a database (`auth`, `cms`, `pages`, `support`). Production runs happen in CI
+  (see *Deploys and migrations*); these are for local work and for repairing a database that has
+  drifted.
 
 - `pnpm --filter @franciscosolis/emails run preview` — react-email preview server on :8791.
 
@@ -92,11 +99,18 @@ Non-obvious things about this harness, learned the hard way — do not re-derive
 - The `@/*` alias must be restated as a Vite `resolve.alias`; Wrangler reads it from
   tsconfig when bundling, but Vite does not.
 - Coverage must use the **istanbul** provider — `workerd` exposes no V8 coverage hooks.
-- `apps/auth`, `apps/cms` and `apps/pages` apply their real `migrations/` directory to each test
-  file's isolated D1 instance (`readD1Migrations` in the config, `applyD1Migrations` in
+- `apps/auth`, `apps/cms`, `apps/pages` and `apps/support` apply their real `migrations/` directory
+  to each test file's isolated D1 instance (`readD1Migrations` in the config, `applyD1Migrations` in
   `test/setup.ts`), so a migration that no longer applies cleanly fails the test run.
 - `apps/api` boots the internal Workers as auxiliary Miniflare Workers
-  (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`PAGES` are real service bindings in tests.
+  (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`PAGES`/`SUPPORT` are real service bindings
+  in tests.
+- **`apps/support` runs against a named `test` environment in its own `wrangler.jsonc`**, and that is
+  not stylistic. The pool answers an `ai` or `vectorize` binding by opening a *remote proxy session*
+  against the real Cloudflare account, which needs a `CLOUDFLARE_API_TOKEN` CI does not have and
+  bills real neurons for a unit test. The named environment restates everything except those two
+  bindings, and the suite supplies them by assignment. Miniflare also cannot dispatch an email event,
+  so that Worker's `email()` handler is called directly rather than through `SELF`.
 - `apps/auth` gets a fixed, committed, test-only Ed25519 signing key from its
   `vitest.config.ts`. It signs nothing outside the suite; the production key stays a secret.
 
@@ -114,7 +128,7 @@ The Workers are deployed by **Cloudflare's Git integration**, not from this repo
 "Workers Builds" checks on a PR are. Nothing here configures it, and no workflow should duplicate it.
 
 What that integration does not do is touch D1, so `.github/workflows/migrate.yml` owns that:
-it applies pending migrations for the stateful Workers (`auth`, `cms`, `pages`) on a push to `dev`
+it applies pending migrations for the stateful Workers (`auth`, `cms`, `pages`, `support`) on a push to `dev`
 that touches `apps/*/migrations/**`, one job per database, plus a bare `workflow_dispatch` for a
 manual run. It needs the `CLOUDFLARE_API_TOKEN` (D1:Edit) and `CLOUDFLARE_ACCOUNT_ID` repository
 secrets. Adding another stateful app means adding it to that matrix. The dispatch deliberately takes no
@@ -140,8 +154,8 @@ Three things about it are worth not re-deriving:
   configuration this repo cannot hold or review. The workflow is the version that lives in git.
 
 `pnpm run db:migrate:remote` / `db:migrate:list` / `db:migrate:local` at the root fan out to every
-app that declares them, which is exactly `auth`, `cms` and `pages` — `pnpm run -r` skips the rest, and runs
-them sequentially rather than in parallel, which is what migrations want.
+app that declares them, which is exactly `auth`, `cms`, `pages` and `support` — `pnpm run -r` skips
+the rest, and runs them sequentially rather than in parallel, which is what migrations want.
 
 ## Versioning
 
@@ -168,16 +182,16 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
 ## Architecture notes (non-obvious)
 
 - **Service binding, not HTTP**: `apps/api` talks to the internal Workers through Cloudflare
-  service bindings (`LANDING`, `AUTH`, `CMS` and `PAGES` in `apps/api/wrangler.jsonc`), not public
-  HTTP calls. These only resolve when each Worker is deployed under the exact name configured
+  service bindings (`LANDING`, `AUTH`, `CMS`, `PAGES` and `SUPPORT` in `apps/api/wrangler.jsonc`),
+  not public HTTP calls. These only resolve when each Worker is deployed under the exact name configured
   (the Worker's `name` must match the `service` field of the binding).
 - **Merged OpenAPI**: `apps/api`'s `/openapi.json` is not just its own spec — it fetches
   each internal module's `/openapi.json` over its service binding and merges paths/
   components under a prefix (e.g. `/landing/*`). An unreachable module is silently
   skipped rather than breaking the whole document. See `apps/api/src/openapi.ts`.
-- **Three stateful Workers**: `apps/auth` owns the `franciscosolis_auth` D1 database, `apps/cms`
-  owns `franciscosolis_cms` and `apps/pages` owns `franciscosolis_pages`; all three use Drizzle and
-  Wrangler-applied migrations.
+- **Four stateful Workers**: `apps/auth` owns the `franciscosolis_auth` D1 database, `apps/cms`
+  owns `franciscosolis_cms`, `apps/pages` owns `franciscosolis_pages` and `apps/support` owns
+  `franciscosolis_support`; all four use Drizzle and Wrangler-applied migrations.
   `auth` issues EdDSA-signed JWTs that any other Worker can verify offline against
   `https://api.franciscosolis.cl/auth/.well-known/jwks.json` — never add a service binding
   back into `auth` just to validate a token. It is also an OpenID Connect provider, so an
@@ -251,8 +265,31 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   `https://*.example.com` entry in a client's `allowed_origins` (`apps/auth/src/lib/origins.ts`).
   Both match on a dot boundary — `evilfranciscosolis.workers.dev` is a hostname anyone can take —
   and neither loosens redirect URIs, which stay byte-for-byte exact.
+- **`apps/support` is the one Worker here with entry points the gateway does not front.** `fetch` is
+  proxied at `/support/*` like every other internal Worker, but `email` is dispatched straight to the
+  script by Cloudflare Email Routing and `scheduled` by a cron trigger — neither passes through
+  `apps/api`, and neither can. That is the single documented exception to the service-binding rule
+  above, and it is why the `workers_dev`/routing configuration there must not be "tidied up" on the
+  strength of it: doing so silently removes the inbound half of the product while every test still
+  passes. The Email Routing rules themselves are dashboard configuration this repo cannot hold, in
+  exactly the way Workers Builds is.
+- **`apps/support` is also the first Worker here that enforces a permission.** `apps/cms` and
+  `apps/pages` deliberately stop at the email-domain gate and never read `permissions` off a token.
+  A support system cannot: tickets are *assignable to people*, and that is meaningless without a
+  defined set of people. `apps/auth` resolves roles per client application, so `support:agent` plus a
+  client application of its own is the mechanism that produces one — which is why `apps/support` does
+  **not** reuse the CMS's audience the way `apps/pages` does. It also carries two audience lists, one
+  for the console and a wider one for somebody reading their own ticket; merging them would leave the
+  domain and permission checks as the only thing keeping a website token out of `/admin`.
+- **Ticket content is the only unauthenticated free text this monorepo stores**, and the schema has
+  no column for HTML anywhere near it. Not having the column is what makes it structurally impossible
+  for a later change to render it — the same rule `packages/emails/CLAUDE.md` states for
+  `ContentEmail`'s `dangerouslySetInnerHTML`. Inbound mail is converted to text at ingest by
+  `apps/support/src/lib/mime.ts`, and the quoted trail is trimmed there.
 - This repo uses `dev` as its default/main branch — never target `main`/`master`.
 - `apps/landing/.dev.vars` holds the `GH_TOKEN` secret for local dev, and
   `apps/auth/.dev.vars` holds `JWT_PRIVATE_KEY` and the Google OAuth client. Neither must
   ever be committed (both already gitignored). `apps/cms` and `apps/pages` have no secrets at all —
-  their `.dev.vars` only repoint `AUTH_JWKS_URL`/`AUTH_ISSUER` at a local auth Worker.
+  their `.dev.vars` only repoint `AUTH_JWKS_URL`/`AUTH_ISSUER` at a local auth Worker, and
+  `apps/support` has none either — the link that lets somebody read their own ticket without an
+  account is a per-ticket random secret stored as a hash on the row, not a key held by the Worker.

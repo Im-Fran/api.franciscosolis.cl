@@ -28,7 +28,7 @@ INSERT OR IGNORE INTO `applications`
     'franciscosolis.cl Support',
     'Support console for franciscosolis.cl. Restricted by apps/support to @franciscosolis.cl accounts holding support:agent.',
     'none',
-    '["https://franciscosolis.cl/support/agent/callback","http://localhost:5173/support/agent/callback"]',
+    '["https://franciscosolis.cl/support/callback","http://localhost:5173/support/callback"]',
     '["authorization_code","refresh_token"]',
     true,
     true

@@ -38,8 +38,8 @@ const SEED = {
   cmsSiteRedirectUri: 'https://franciscosolis.cl/apps/cms/callback',
   cmsSiteLocalRedirectUri: 'http://localhost:5173/apps/cms/callback',
   /* Where the support console lives: another route of the site's own single-page application. */
-  supportRedirectUri: 'https://franciscosolis.cl/support/agent/callback',
-  supportLocalRedirectUri: 'http://localhost:5173/support/agent/callback',
+  supportRedirectUri: 'https://franciscosolis.cl/support/callback',
+  supportLocalRedirectUri: 'http://localhost:5173/support/callback',
   /* Wildcard origin covering Cloudflare preview deployments of the front-ends. */
   previewOriginPattern: 'https://*.franciscosolis.workers.dev',
   /* A hostname that pattern describes: `<alias>-<worker>.<account>.workers.dev`. */

@@ -234,6 +234,26 @@ app.get(
   },
 )
 
+app.get(
+  '/help/articles/:id',
+  describeRoute({
+    description: 'One article as it is stored: the default locale in its own fields, the overrides beside them.',
+    tags: ['Admin · Help'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'The article', content: { 'application/json': { schema: resolver(oneArticleSchema) } } },
+      404: { description: 'No such article' },
+    },
+  }),
+  async (c) => {
+    const article = await findArticleById(getDb(c.env), c.req.param('id') ?? '')
+    if (!article) {
+      throw new HTTPException(404, { message: 'Article not found' })
+    }
+    return c.json({ code: 200, data: toAdminArticle(article) })
+  },
+)
+
 const articleBody = v.object({
   title: requiredText(200),
   slug: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(64))),
