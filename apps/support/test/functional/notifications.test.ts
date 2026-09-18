@@ -228,9 +228,11 @@ describe('the sweep', () => {
 
     const [message] = mail.sent
     expect(message?.html).toContain('mailto:colleague@franciscosolis.cl')
-    // The plain-text part is derived from the HTML and keeps the mention readable as-is, since
-    // there is nothing to link to in plain text.
-    expect(message?.text).toContain('@colleague@franciscosolis.cl')
+    // The plain-text part is derived from the HTML, where html-to-text prints an anchor's href
+    // after its text unless told otherwise — which rendered the address twice in a row. It reads
+    // as it was typed, once.
+    expect(message?.text).toContain('Looping in @colleague@franciscosolis.cl on this one.')
+    expect(message?.text).not.toContain('mailto:')
   })
 
   it('does not send the same reply twice', async () => {

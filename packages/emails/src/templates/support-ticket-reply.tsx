@@ -5,7 +5,7 @@ import { EmailLayout } from '../components/email-layout'
 import { Paragraph } from '../components/paragraph'
 import type { EmailLocale } from '../locale'
 import { splitMentions } from '../mentions'
-import { renderEmail, type RenderedEmail } from '../render'
+import { PLAIN_TEXT_MENTION_CLASS, renderEmail, type RenderedEmail } from '../render'
 import { theme } from '../theme'
 
 type SupportReplyExcerpt = {
@@ -101,7 +101,12 @@ const SupportTicketReplyEmail = ({
           >
             {splitMentions(message.body).map((part, index) =>
               part.kind === 'mention' ? (
-                <Link key={index} href={`mailto:${part.email}`} style={{ color: theme.colors.link }}>
+                <Link
+                  key={index}
+                  href={`mailto:${part.email}`}
+                  className={PLAIN_TEXT_MENTION_CLASS}
+                  style={{ color: theme.colors.link }}
+                >
                   @{part.email}
                 </Link>
               ) : (
