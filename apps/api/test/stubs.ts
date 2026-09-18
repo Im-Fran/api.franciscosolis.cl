@@ -1,5 +1,5 @@
 /**
- * Miniflare definitions for the three internal Workers this gateway is bound to.
+ * Miniflare definitions for the internal Workers this gateway is bound to.
  *
  * They are real auxiliary Workers rather than hand-written `Fetcher` objects, so the tests exercise
  * an actual Cloudflare service binding — the same path production takes — instead of a stand-in
@@ -11,7 +11,7 @@
  */
 
 /** Name of the module the gateway strips from the path before forwarding. */
-type ModuleName = 'landing' | 'auth' | 'cms'
+type ModuleName = 'landing' | 'auth' | 'cms' | 'pages'
 
 const echoWorkerScript = (module: ModuleName) => `
 export default {
@@ -96,7 +96,7 @@ type EchoedRequest = {
   headers: Record<string, string>
 }
 
-const internalWorkers = [stubWorker('landing'), stubWorker('auth'), stubWorker('cms')]
+const internalWorkers = [stubWorker('landing'), stubWorker('auth'), stubWorker('cms'), stubWorker('pages')]
 
 export { internalWorkers, stubWorker }
 export type { EchoedRequest, ModuleName }

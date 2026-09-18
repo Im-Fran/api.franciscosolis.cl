@@ -75,6 +75,14 @@ const SERVICE_MODULES = [
     // needs the body of POST/PATCH calls, the Authorization header to validate the access token,
     // and CF-Connecting-IP for its audit trail.
   },
+  {
+    name: 'pages',
+    binding: 'PAGES',
+    tag: 'Pages',
+    description: 'Proxy to the standalone application pages Worker (banner, tabs, updates and wiki per application)',
+    // Forwards the whole Request for the same reasons as the CMS: its editorial half reads the
+    // Authorization header itself and writes CF-Connecting-IP onto its audit trail.
+  },
 ] as const satisfies readonly ServiceModule[]
 
 /** A registry entry as written above, with its `binding` and `name` narrowed to the literals used. */

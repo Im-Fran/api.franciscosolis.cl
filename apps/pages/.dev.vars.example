@@ -1,0 +1,7 @@
+# This Worker holds no secrets: access tokens are verified offline against the auth Worker's
+# published JWKS, so there is no signing key and no client secret here.
+#
+# Copy to `.dev.vars` only to point a local Pages Worker at a local auth Worker. `AUTH_JWKS_URL` is
+# fetched over the AUTH service binding, so the host is a placeholder either way — what has to match
+# is the issuer the local auth Worker stamps into its tokens.
+AUTH_ISSUER=http://localhost:8787/auth

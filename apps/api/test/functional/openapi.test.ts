@@ -66,13 +66,15 @@ describe('GET /openapi.json', () => {
       '/cms/thing',
       '/landing',
       '/landing/thing',
+      '/pages',
+      '/pages/thing',
     ])
   })
 
   it('keeps each module operation attached to the module it came from', async () => {
     const { paths } = await documentFrom(await gateway('/openapi.json'))
 
-    for (const module of ['landing', 'auth', 'cms']) {
+    for (const module of ['landing', 'auth', 'cms', 'pages']) {
       expect(paths[`/${module}`]?.get?.summary).toBe(`${module} root`)
       expect(paths[`/${module}/thing`]?.get?.summary).toBe(`${module} thing`)
     }
@@ -81,12 +83,12 @@ describe('GET /openapi.json', () => {
   it('collapses each module root onto the bare prefix', async () => {
     const { paths } = await documentFrom(await gateway('/openapi.json'))
 
-    for (const module of ['landing', 'auth', 'cms']) {
+    for (const module of ['landing', 'auth', 'cms', 'pages']) {
       expect(paths).not.toHaveProperty([`/${module}/`])
     }
   })
 
-  // The three `app.all('/<module>/*')` routes carry `describeRoute` metadata that never reaches the
+  // The `app.all('/<module>/*')` routes carry `describeRoute` metadata that never reaches the
   // document; only the merged module specs describe what lives behind a prefix. Reported as a bug.
   it('does not document the wildcard proxy routes themselves', async () => {
     const { paths } = await documentFrom(await gateway('/openapi.json'))
@@ -94,6 +96,7 @@ describe('GET /openapi.json', () => {
     expect(paths).not.toHaveProperty(['/landing/*'])
     expect(paths).not.toHaveProperty(['/auth/*'])
     expect(paths).not.toHaveProperty(['/cms/*'])
+    expect(paths).not.toHaveProperty(['/pages/*'])
     expect(paths).not.toHaveProperty(['/openapi.json'])
   })
 
@@ -104,7 +107,7 @@ describe('GET /openapi.json', () => {
     const names = Object.keys(components.schemas)
 
     expect(names).toHaveLength(1)
-    expect(['landingSchema', 'authSchema', 'cmsSchema']).toContain(names[0])
+    expect(['landingSchema', 'authSchema', 'cmsSchema', 'pagesSchema']).toContain(names[0])
   })
 })
 
@@ -137,10 +140,10 @@ describe('GET /<module>/openapi.json', () => {
   })
 
   it('keeps every module schema, unlike the merged document that collapses them', async () => {
-    const perModule = await Promise.all(['landing', 'auth', 'cms'].map(async (module) =>
+    const perModule = await Promise.all(['landing', 'auth', 'cms', 'pages'].map(async (module) =>
       Object.keys((await documentFrom(await gateway(`/${module}/openapi.json`))).components.schemas)))
 
-    expect(perModule).toEqual([['landingSchema'], ['authSchema'], ['cmsSchema']])
+    expect(perModule).toEqual([['landingSchema'], ['authSchema'], ['cmsSchema'], ['pagesSchema']])
   })
 })
 
@@ -153,7 +156,9 @@ describe('GET /openapi.json with a module unavailable', () => {
 
     expect(response.status).toBe(200)
     const { paths } = await documentFrom(response)
-    expect(Object.keys(paths).sort()).toEqual(['/', '/auth', '/auth/thing', '/cms', '/cms/thing'])
+    expect(Object.keys(paths).sort()).toEqual([
+      '/', '/auth', '/auth/thing', '/cms', '/cms/thing', '/pages', '/pages/thing',
+    ])
   })
 
   it('drops a module answering a non-2xx status', async () => {
@@ -181,7 +186,7 @@ describe('GET /openapi.json with a module unavailable', () => {
   it('still answers with the gateway own routes when every module is down', async () => {
     const down = () => fetcher(() => Promise.reject(new Error('down')))
     const response = await gatewayWithBindings(
-      { LANDING: down(), AUTH: down(), CMS: down() },
+      { LANDING: down(), AUTH: down(), CMS: down(), PAGES: down() },
       '/openapi.json',
     )
 
@@ -199,11 +204,16 @@ describe('GET /openapi.json with a module unavailable', () => {
     })
 
     const response = await gatewayWithBindings(
-      { LANDING: recording('landing'), AUTH: recording('auth'), CMS: recording('cms') },
+      {
+        LANDING: recording('landing'),
+        AUTH: recording('auth'),
+        CMS: recording('cms'),
+        PAGES: recording('pages'),
+      },
       '/openapi.json?ignored=1',
     )
 
     expect(response.status).toBe(200)
-    expect(asked).toEqual(['/openapi.json', '/openapi.json', '/openapi.json'])
+    expect(asked).toEqual(['/openapi.json', '/openapi.json', '/openapi.json', '/openapi.json'])
   })
 })

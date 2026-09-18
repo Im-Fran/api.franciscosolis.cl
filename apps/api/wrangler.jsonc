@@ -33,6 +33,10 @@
     {
       "binding": "CMS",
       "service": "cms"
+    },
+    {
+      "binding": "PAGES",
+      "service": "pages"
     }
   ],
   "observability": {
