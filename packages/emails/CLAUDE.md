@@ -29,6 +29,9 @@ package. That is deliberate on all four counts — see below.
 ## Source layout
 
 - `src/index.ts` — the public API. Anything a Worker imports has to be re-exported here.
+- `src/company.ts` — who the sender is: legal name, RUT, address, contact address and the two
+  legal document URLs the footer links. Mirrors `src/lib/company.ts` in the website repository;
+  the two are separate repositories and are kept in step by hand.
 - `src/theme.ts` — `palette` (the brand's published colours) and `theme` (what the components
   actually reference). The only place a hex code belongs.
 - `src/render.ts` — `renderEmail`, the primitive every template's wrapper calls.
@@ -108,6 +111,15 @@ package. That is deliberate on all four counts — see below.
   lockup loses the ink-coloured "Solis". Its `alt` is the wordmark, but that does *not* reach the
   plain-text part (`toPlainText` skips images), which is why the footer also names the brand in
   words. Changing the asset means re-encoding `apps/api/src/brand.ts`; see `README.md`.
+- **The footer identifies the company, and that is a legal requirement rather than a design
+  choice.** It used to end on the brand's positioning tagline, which told a recipient nothing about
+  who had written to them. What is there now — razón social, RUT, domicilio, a contact address and
+  links to the Terms of Service and the Privacy Policy — comes from `company.ts` and is identical in
+  every message, because an identity that varied by template would be worse than none. The legal
+  links are fragments (`/legal#terms-of-service`), because the website serves every legal document
+  from one route and selects between them by the slug seeded in `apps/cms/migrations/`. Each fact is
+  its own `<Text>`: html-to-text keeps a block boundary as a line break, so the plain-text part gets
+  the same legible lines instead of one run-on paragraph.
 - **`ContentEmail`'s editor HTML keeps its own link styling.** Anchors inside the injected body come
   out in the client's default blue rather than `iris-500`, because reaching them would mean either a
   `<style>` block or rewriting the editor's markup, and both are ruled out above. Default link blue
