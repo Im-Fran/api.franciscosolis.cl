@@ -10,17 +10,22 @@ describe('auth smoke', () => {
   it('applies the schema and the permission seed', async () => {
     const row = await env.DB.prepare('SELECT COUNT(*) AS total FROM permissions').first<{ total: number }>()
 
-    // 0001_seed.sql inserts the eleven baseline permissions, 0007 the two avatar ones.
-    expect(row?.total).toBe(13)
+    // 0001_seed.sql inserts the eleven baseline permissions, 0007 the two avatar ones and
+    // 0010 the two support ones.
+    expect(row?.total).toBe(15)
   })
 
-  it('seeds the two client applications as public clients', async () => {
+  it('seeds every client application as a public client', async () => {
     const { results } = await env.DB.prepare(
       'SELECT id, token_endpoint_auth_method, require_pkce, is_active FROM applications ORDER BY id',
     ).all<{ id: string; token_endpoint_auth_method: string; require_pkce: number; is_active: number }>()
 
-    expect(results.map((row) => row.id)).toEqual(['franciscosolis-cms', 'franciscosolis-web'])
-    // Authenticating with nothing means PKCE is mandatory for both — that is the security
+    expect(results.map((row) => row.id)).toEqual([
+      'franciscosolis-cms',
+      'franciscosolis-support',
+      'franciscosolis-web',
+    ])
+    // Authenticating with nothing means PKCE is mandatory for all of them — that is the security
     // property, not an incidental default.
     expect(results.every((row) => row.token_endpoint_auth_method === 'none')).toBe(true)
     expect(results.every((row) => row.require_pkce === 1)).toBe(true)

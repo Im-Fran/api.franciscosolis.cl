@@ -16,8 +16,8 @@
 This repository holds the backend that powers **franciscosolis.cl**: a public-facing API
 worker (`apps/api`) that fronts a set of internal Cloudflare Workers — the landing site's
 own API (`apps/landing`), the centralized authentication service (`apps/auth`), the
-content management service (`apps/cms`) and the standalone application pages service
-(`apps/pages`). The
+content management service (`apps/cms`), the standalone application pages service
+(`apps/pages`) and the support desk (`apps/support`). The
 workers talk to each other directly through Cloudflare **service bindings** — no HTTP
 round-trip over the public internet — and the root API transparently proxies and merges the
 OpenAPI specs of every internal module it exposes.
@@ -41,9 +41,11 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 ## ✨ Features
 
 - **Single public entrypoint, multiple internal Workers** — `apps/api` proxies `/landing/*`,
-  `/auth/*`, `/cms/*` and `/pages/*` to the `landing`, `auth`, `cms` and `pages` Workers via
-  Cloudflare service bindings (`LANDING`, `AUTH`, `CMS`, `PAGES`), keeping internal services off
-  the public internet.
+  `/auth/*`, `/cms/*`, `/pages/*` and `/support/*` to the `landing`, `auth`, `cms`, `pages` and
+  `support` Workers via Cloudflare service bindings (`LANDING`, `AUTH`, `CMS`, `PAGES`, `SUPPORT`),
+  keeping internal services off the public internet. `support` is the one exception worth knowing:
+  it also answers a Cloudflare Email Routing handler and a cron trigger, neither of which comes
+  through the gateway.
 - **Centralized authentication** — `apps/auth` implements an OAuth 2.0 authorization code
   flow with PKCE over two providers (magic link by email, Google OAuth 2.0), backed by a D1
   database of users, identities, applications, roles, permissions, invitations and sessions.
@@ -59,6 +61,12 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   looking like one product family instead of a dozen bespoke sites. The website renders them at
   `franciscosolis.cl/application/<slug>` and the CMS front-end edits them, so the Worker needs no
   client application of its own.
+- **Support tickets and a help centre** — `apps/support` takes a request for help from the website
+  or from `soporte@franciscosolis.cl`, and the conversation works in both places: replies, internal
+  notes only the team sees, labels, assignment and watchers. When the team answers and nobody comes
+  back within thirty minutes, one digest email goes out. Behind it sits a bilingual help centre,
+  searched lexically with SQLite's FTS5 and semantically with Workers AI embeddings in Vectorize —
+  the second of which also drafts an agent's reply out of the published articles.
 - **Shared email templates** — every message either Worker sends is a react-email component in
   `packages/emails`, rendered to an HTML + plain-text pair at send time. Values are escaped by
   construction, the text alternative is derived from the HTML so the two cannot drift, and the

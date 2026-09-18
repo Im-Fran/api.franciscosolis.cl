@@ -15,7 +15,7 @@ describe('gateway smoke', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       status: 200,
-      data: { message: '¡Hello, API!', modules: ['landing', 'auth', 'cms', 'pages'] },
+      data: { message: '¡Hello, API!', modules: ['landing', 'auth', 'cms', 'pages', 'support'] },
     })
   })
 
@@ -24,6 +24,7 @@ describe('gateway smoke', () => {
     ['auth', '/auth/.well-known/jwks.json', '/.well-known/jwks.json'],
     ['cms', '/cms/content/projects', '/content/projects'],
     ['pages', '/pages/applications/openbattery', '/applications/openbattery'],
+    ['support', '/support/tickets/FS-1042', '/tickets/FS-1042'],
   ])('forwards to the %s binding with the prefix stripped', async (module, requested, forwarded) => {
     const response = await SELF.fetch(`https://api.test${requested}`)
     const echoed = await response.json<EchoedRequest>()

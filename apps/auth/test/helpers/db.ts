@@ -30,18 +30,25 @@ import type { User } from '@/services/users'
 const SEED = {
   webAppId: 'franciscosolis-web',
   cmsAppId: 'franciscosolis-cms',
+  supportAppId: 'franciscosolis-support',
   webRedirectUri: 'https://franciscosolis.cl/auth/callback',
   webLocalRedirectUri: 'http://localhost:5173/auth/callback',
   cmsRedirectUri: 'https://cms.franciscosolis.cl/auth/callback',
   /* Where the CMS front-end really lives: a route of the site's own single-page application. */
   cmsSiteRedirectUri: 'https://franciscosolis.cl/apps/cms/callback',
   cmsSiteLocalRedirectUri: 'http://localhost:5173/apps/cms/callback',
-  /* Wildcard origin covering Cloudflare preview deployments of both front-ends. */
+  /* Where the support console lives: another route of the site's own single-page application. */
+  supportRedirectUri: 'https://franciscosolis.cl/support/callback',
+  supportLocalRedirectUri: 'http://localhost:5173/support/callback',
+  /* Wildcard origin covering Cloudflare preview deployments of the front-ends. */
   previewOriginPattern: 'https://*.franciscosolis.workers.dev',
   /* A hostname that pattern describes: `<alias>-<worker>.<account>.workers.dev`. */
   previewOrigin: 'https://claude-auth-testing-r0yqup-franciscosolis.franciscosolis.workers.dev',
   adminRoleId: '8e7a797c-5012-4a96-a9a2-e8b5bdaeb802',
   userRoleId: 'e159f911-541f-4d48-806e-aaa94971c9a9',
+  /* Application-scoped, unlike the two above: being a support agent means nothing outside support. */
+  supportAgentRoleId: 'b6e3c9f4-5d0a-4e3b-9c74-8f2a9b3d4e55',
+  supportAdminRoleId: 'c7f4d0a5-6e1b-4f4c-8d85-9a3b0c4e5f66',
 } as const
 
 const db = () => getDb(env)

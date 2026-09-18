@@ -37,6 +37,10 @@
     {
       "binding": "PAGES",
       "service": "pages"
+    },
+    {
+      "binding": "SUPPORT",
+      "service": "support"
     }
   ],
   "observability": {

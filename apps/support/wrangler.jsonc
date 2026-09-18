@@ -1,0 +1,180 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "support",
+  "main": "src/index.ts",
+  "preview_urls": true,
+  "workers_dev": true,
+  "cache": {
+    "enabled": true
+  },
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "placement": {
+    "mode": "smart"
+  },
+  // The deferred-reply sweep. Every five minutes is deliberate against a 30-minute threshold: the
+  // worst case is a notice five minutes late, which nobody can tell apart from a 30-minute one,
+  // and the alternative (a queue or a Durable Object alarm) buys precision this rule does not need.
+  // See `src/services/notifications.ts`.
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "franciscosolis_support",
+      "database_id": "46817666-1f5a-41d3-8443-9555e326f727",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Outgoing mail. Cloudflare refuses a send from any address not listed here, so this is the outer
+  // bound of what this Worker can ever send as. Replies carry `Reply-To: soporte@franciscosolis.cl`
+  // so the answer comes back through Email Routing and lands on the ticket it belongs to.
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "soporte@mail.franciscosolis.cl"
+      ]
+    }
+  ],
+  // Ticket triage from an inbound email, and the help-centre assistant. Workers AI has no local
+  // simulation, so it always runs against the real service — which is why the suite stubs `env.AI`
+  // rather than calling it. See `test/helpers/ai.ts`.
+  "ai": {
+    "binding": "AI"
+  },
+  // Semantic half of the help-centre search. `remote: true` because Vectorize, like Workers AI, has
+  // no local emulation: without it `wrangler dev` has no index to talk to at all.
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "franciscosolis-support-help"
+    }
+  ],
+  "services": [
+    {
+      // Only ever asked for `/.well-known/jwks.json`, and a binding rather than a public fetch for
+      // the reason spelled out in `src/lib/jwks.ts`: a Worker's subrequest to its own zone skips
+      // Workers routing and is sent to the zone's origin, which `api.franciscosolis.cl` has none of.
+      "binding": "AUTH",
+      "service": "auth"
+    }
+  ],
+  "vars": {
+    // Path the JWKS is read from, over the AUTH service binding above. The host is a placeholder:
+    // a service binding routes by binding, not by DNS. Tokens are still verified offline — this
+    // fetches public keys, it does not ask auth to validate anything.
+    "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
+    // Expected `iss` claim. Must match `AUTH_ISSUER` in apps/auth/wrangler.jsonc exactly.
+    "AUTH_ISSUER": "https://api.franciscosolis.cl/auth",
+    // Client application ids (the `aud` claim) whose tokens may act as a support agent. This is the
+    // narrow list, and it gates /admin.
+    //
+    // There are two audience lists here and they must never be merged. This Worker serves two
+    // populations — the team answering tickets, and the person who opened one — and a token minted
+    // for the public website must not be usable on the console even for a moment. Merging them would
+    // leave the email-domain and permission checks as the only thing standing in the way, which is
+    // one mistake away from being nothing at all.
+    "SUPPORT_ALLOWED_AUDIENCES": "franciscosolis-support",
+    // The wider list: client ids a *requester* may present to read their own ticket. Deliberately
+    // includes the website, and gates nothing under /admin.
+    "SUPPORT_REQUESTER_AUDIENCES": "franciscosolis-web,franciscosolis-cms,franciscosolis-support",
+    // Comma-separated email domains that may act as an agent. This is the access gate to /admin: an
+    // account outside these domains is refused even with a perfectly valid access token.
+    "SUPPORT_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+    // Addresses Email Routing delivers to this Worker. Used to strip the support inbox out of the
+    // participant list when a reply carries it on Cc, which would otherwise make the Worker a
+    // watcher of its own tickets and mail itself in a loop.
+    "SUPPORT_INBOX_ADDRESSES": "soporte@franciscosolis.cl,support@franciscosolis.cl",
+    // Domain the per-ticket `reply+<key>@` address lives on, which is the strongest signal available
+    // for matching a reply back to its thread. It is the apex because Email Routing operates per
+    // zone, and it only works once a *catch-all* rule points at this Worker — Email Routing matches a
+    // custom address exactly and has no wildcard of its own. Without that rule the cascade in
+    // `src/services/inbound.ts` simply falls through to its next strategy, so this degrades rather
+    // than breaking. See the operator setup section of the README.
+    "SUPPORT_REPLY_DOMAIN": "franciscosolis.cl",
+    // Default sender. Must be one of `allowed_sender_addresses` above.
+    "MAIL_FROM_EMAIL": "soporte@mail.franciscosolis.cl",
+    "MAIL_FROM_NAME": "FranciscoSolis Support",
+    // Where a reply should go. Deliberately not the sending address: `mail.franciscosolis.cl` sends,
+    // `franciscosolis.cl` receives, and Email Routing is configured on the latter.
+    "MAIL_REPLY_TO": "soporte@franciscosolis.cl",
+    // Base the ticket link in an email is built on. `<base>/<reference>?token=<secret>`.
+    "SUPPORT_TICKET_URL": "https://franciscosolis.cl/tickets",
+    // Workers AI models. Vars rather than constants so a model that is retired — which happens on
+    // Cloudflare's schedule, not ours — is a deploy, not a code change.
+    "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    // Multilingual on purpose: the help centre publishes in English and Spanish, and a single index
+    // holding both only works if one model embeds both into the same space.
+    "AI_EMBEDDING_MODEL": "@cf/baai/bge-m3"
+  },
+  // The environment the test suite runs against, and the only reason it exists is Workers AI and
+  // Vectorize. Neither has a local simulation, so @cloudflare/vitest-pool-workers responds to those
+  // two bindings by opening a *remote proxy session* against the real account — which needs a
+  // CLOUDFLARE_API_TOKEN, which CI deliberately does not have, and which would bill real neurons for
+  // a unit test either way. Declaring a named environment without them is the documented escape
+  // hatch: a named environment inherits nothing, so everything the suite needs is restated here and
+  // `test/unit/wrangler-config.test.ts` fails if the two copies drift apart.
+  //
+  // The suite supplies its own `env.AI` and `env.VECTORIZE` by assignment instead — see
+  // `test/helpers/ai.ts`. That is the same technique `apps/pages` uses to stub its AUTH binding, and
+  // it has the useful property that any code path reaching the real service in a test throws loudly.
+  "env": {
+    "test": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_support",
+          "database_id": "46817666-1f5a-41d3-8443-9555e326f727",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "soporte@mail.franciscosolis.cl"
+          ]
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth"
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.test/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://auth.test",
+        "SUPPORT_ALLOWED_AUDIENCES": "franciscosolis-support",
+        "SUPPORT_REQUESTER_AUDIENCES": "franciscosolis-web,franciscosolis-support",
+        "SUPPORT_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+        "SUPPORT_INBOX_ADDRESSES": "soporte@franciscosolis.cl,support@franciscosolis.cl",
+        "SUPPORT_REPLY_DOMAIN": "reply.franciscosolis.test",
+        "MAIL_FROM_EMAIL": "soporte@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "FranciscoSolis Support",
+        "MAIL_REPLY_TO": "soporte@franciscosolis.test",
+        "SUPPORT_TICKET_URL": "https://franciscosolis.test/tickets",
+        "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "AI_EMBEDDING_MODEL": "@cf/baai/bge-m3"
+      }
+    }
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.25,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    }
+  }
+}
