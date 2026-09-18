@@ -1,10 +1,11 @@
 /** @jsxImportSource react */
-import { Hr, Text } from 'react-email'
+import { Hr, Link, Text } from 'react-email'
 import { ActionLink } from '../components/action-link'
 import { EmailLayout } from '../components/email-layout'
 import { Paragraph } from '../components/paragraph'
 import type { EmailLocale } from '../locale'
-import { renderEmail, type RenderedEmail } from '../render'
+import { splitMentions } from '../mentions'
+import { PLAIN_TEXT_MENTION_CLASS, renderEmail, type RenderedEmail } from '../render'
 import { theme } from '../theme'
 
 type SupportReplyExcerpt = {
@@ -86,7 +87,9 @@ const SupportTicketReplyEmail = ({
             {message.author}
           </Text>
           {/* `whiteSpace: pre-wrap` because the source is plain text and its line breaks are meaning:
-              a pasted error message collapsed into one paragraph is unreadable. */}
+              a pasted error message collapsed into one paragraph is unreadable. An `@mention` in
+              the source is the same plain text turned into a link here, never stored as one — see
+              `mentions.ts`. */}
           <Text
             style={{
               margin: '0 0 24px',
@@ -96,7 +99,20 @@ const SupportTicketReplyEmail = ({
               whiteSpace: 'pre-wrap',
             }}
           >
-            {message.body}
+            {splitMentions(message.body).map((part, index) =>
+              part.kind === 'mention' ? (
+                <Link
+                  key={index}
+                  href={`mailto:${part.email}`}
+                  className={PLAIN_TEXT_MENTION_CLASS}
+                  style={{ color: theme.colors.link }}
+                >
+                  @{part.email}
+                </Link>
+              ) : (
+                part.value
+              ),
+            )}
           </Text>
         </div>
       ))}

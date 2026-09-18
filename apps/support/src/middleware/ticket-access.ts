@@ -76,6 +76,12 @@ const ticketToken = (header: string | undefined, custom: string | undefined, que
  *    ticket opened anonymously starts showing up under the account from then on.
  * 3. **The link secret** — matched by hash against this ticket's row, so a valid secret for another
  *    ticket resolves to nothing here.
+ *
+ * A Bearer that resolves to neither of the first two does **not** end the cascade: it falls through
+ * to the secret. Ending it there is what made an emailed link stop working for anybody who happened
+ * to be signed in to the website under a different address than the one that opened the ticket —
+ * the link was valid, the browser sent a session token beside it, and the answer was "no such
+ * ticket". Falling through grants nothing the secret would not have granted on its own.
  */
 const requireTicketAccess = createMiddleware<AppEnv>(async (c, next) => {
   const number = parseReference(c.req.param('reference') ?? '')
@@ -145,8 +151,8 @@ const requireTicketAccess = createMiddleware<AppEnv>(async (c, next) => {
         return
       }
     }
-
-    throw notFound()
+    // Deliberately no `throw` here: an unusable Bearer falls through to the secret below, which is
+    // the only credential the holder of an emailed link has.
   }
 
   const secret = ticketToken(

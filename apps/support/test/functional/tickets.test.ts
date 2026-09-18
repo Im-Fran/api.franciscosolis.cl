@@ -178,6 +178,40 @@ describe('reading a ticket with the emailed link', () => {
     expect(reply).toBeDefined()
     expect(reply?.author_email).toBeNull()
   })
+
+  it('still honours the secret when a session token for somebody else rides along', async () => {
+    const { reference, secret } = await openTicket({ email: 'someone@example.test' })
+    // The browser sends both: the website's own session, and the secret out of the emailed link.
+    // Whoever is signed in has nothing to do with whether that link is valid, so a token that
+    // resolves to neither an agent nor a participant must not swallow the request.
+    const headers = { ...(await asRequester({ email: 'stranger@example.test' })), 'X-Support-Ticket-Token': secret }
+
+    const response = await get(`/tickets/${reference}`, headers)
+    expect(response.status).toBe(200)
+    expect(((await response.json()) as { data: { reference: string } }).data.reference).toBe(reference)
+  })
+
+  it('still answers 404 for a session token with no secret beside it', async () => {
+    const { reference } = await openTicket({ email: 'someone@example.test' })
+    const headers = { ...(await asRequester({ email: 'stranger@example.test' })), 'X-Support-Ticket-Token': 'not-the-secret' }
+
+    expect((await get(`/tickets/${reference}`, headers)).status).toBe(404)
+  })
+
+  it("never publishes a participant's internal tag to the requester", async () => {
+    const { reference, secret } = await openTicket()
+    const ticket = await firstRow<{ id: string }>('SELECT id FROM tickets')
+    const agent = await asAgent()
+    await post(`/admin/tickets/${ticket!.id}/participants`, { email: 'colleague@example.test', tag: 'interest' }, agent)
+
+    const response = await get(`/tickets/${reference}`, asLinkHolder(secret))
+    const body = (await response.json()) as { data: { participants: Array<Record<string, unknown>> } }
+
+    expect(body.data.participants.length).toBeGreaterThan(0)
+    for (const participant of body.data.participants) {
+      expect(participant).not.toHaveProperty('tag')
+    }
+  })
 })
 
 describe('replying as the requester', () => {

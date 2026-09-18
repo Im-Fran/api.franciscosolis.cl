@@ -13,10 +13,21 @@ import type { ReactElement } from 'react'
  */
 const PLAIN_TEXT_SKIP_CLASS = 'skip-in-text'
 
+/**
+ * A `mailto:` link whose visible text is already the address — an `@mention` in a ticket message.
+ *
+ * html-to-text prints an anchor's href after its text unless the two are identical, and
+ * `mailto:someone@example.com` is never identical to `@someone@example.com`, so the plain-text
+ * part read "@someone@example.com someone@example.com". The address once is the whole point.
+ */
+const PLAIN_TEXT_MENTION_CLASS = 'mention'
+
 const PLAIN_TEXT_SELECTORS = [
   { selector: 'h1', options: { uppercase: false } },
   { selector: 'h2', options: { uppercase: false } },
   { selector: `.${PLAIN_TEXT_SKIP_CLASS}`, format: 'skip' },
+  /* `format` is required alongside options for anything but a bare tag selector, or compilation throws. */
+  { selector: `a.${PLAIN_TEXT_MENTION_CLASS}`, format: 'anchor', options: { ignoreHref: true } },
 ]
 
 /** A message body ready to hand to Cloudflare Email Sending. */
@@ -46,5 +57,5 @@ const renderEmail = async (subject: string, element: ReactElement): Promise<Rend
   return { subject, html, text: toPlainText(html, { selectors: PLAIN_TEXT_SELECTORS }) }
 }
 
-export { PLAIN_TEXT_SKIP_CLASS, renderEmail }
+export { PLAIN_TEXT_MENTION_CLASS, PLAIN_TEXT_SKIP_CLASS, renderEmail }
 export type { RenderedEmail }

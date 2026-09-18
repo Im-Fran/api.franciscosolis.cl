@@ -104,6 +104,13 @@ package. That is deliberate on all four counts — see below.
   what rules out `@media (prefers-color-scheme: dark)` and is why the palette is light-first instead
   of adaptive. It is also why `PLAIN_TEXT_SKIP_CLASS` is a class name — a class attribute costs
   nothing in a mail client and is the one hook html-to-text can select on.
+- **`PLAIN_TEXT_MENTION_CLASS` exists because html-to-text prints an anchor's href after its text.**
+  An `@mention` in a support reply links to `mailto:someone@example.com` under the text
+  `@someone@example.com`; the two are not byte-identical, so the default `hideLinkHrefIfSameAsText`
+  does not fire and the plain-text part read the address twice in a row. The selector in `render.ts`
+  turns the href off for that one class, and it needs a `format` beside its options — html-to-text
+  throws at compile time for a non-tag selector without one. `mentions.ts` holds the pattern itself,
+  duplicated by hand in the website repository, which renders the same convention in the console.
 - **The logo is a hosted PNG, and every property of it is forced.** Gmail strips inline SVG and
   blocks `data:` URIs, so it cannot be embedded; `apps/api` serves it at `/brand/lockup.png` because
   that Worker owns the only public hostname in the repo. It is flattened onto white rather than

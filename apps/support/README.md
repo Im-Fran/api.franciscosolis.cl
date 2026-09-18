@@ -97,7 +97,8 @@ Cloudflare account rather than in this repository:
 
 - A **D1 database** named `franciscosolis_support`, whose id is already in `wrangler.jsonc`.
 - A **Vectorize index** — see [Deployment](#-deployment).
-- **Email Routing rules** delivering `soporte@` and `support@` to this Worker, and
+- **Email Routing rules** delivering `soporte@` and `support@` to this Worker, a **catch-all** rule
+  so the `reply+<key>@` address every outgoing ticket email sets as its `Reply-To` is accepted, and
   `soporte@mail.franciscosolis.cl` verified for Email Sending.
 
 ---
@@ -178,7 +179,7 @@ article save reach the real services and need credentials. Everything else works
 | `GET` | `/admin/tickets/:id/timeline` | The whole thread, internal notes included |
 | `POST` | `/admin/tickets/:id/messages` | Post a `reply` or a `note` |
 | `PUT` | `/admin/tickets/:id/assignee` | Assign, or clear with a null email |
-| `POST` `DELETE` | `/admin/tickets/:id/participants[/:participantId]` | Watchers |
+| `POST` `PATCH` `DELETE` | `/admin/tickets/:id/participants[/:participantId]` | Watchers, and their internal-only `guest` / `interest` tag |
 | `POST` `DELETE` | `/admin/tickets/:id/labels/:labelId` | Labels |
 | `GET` `POST` | `/admin/labels` | The label catalogue |
 | `PATCH` `DELETE` | `/admin/labels/:id` | Update or delete a label |
@@ -209,7 +210,7 @@ The always-current description is the OpenAPI document at
 | Reference | `FS-1042`. Short enough to read out loud, allocated from a counter row rather than `max() + 1` |
 | Status | `new`, `open`, `pending`, `on_hold`, `solved`, `closed`, `spam` |
 | Message | A `reply` everybody on the ticket sees, or a `note` that never leaves the team |
-| Participant | The requester, anybody on copy, and the agents who picked it up |
+| Participant | The requester, anybody on copy, and the agents who picked it up. An agent can tag one `guest` or `interest`, which the requester's own view never sees |
 | Access token | A 256-bit secret in the fragment of the emailed link. Stored only as a SHA-256 |
 | Reply key | A separate 128-bit lowercase-hex key in the `reply+<key>@` address, never rotated |
 | Deferred notice | One pending row per person per ticket, due thirty minutes after an agent reply |

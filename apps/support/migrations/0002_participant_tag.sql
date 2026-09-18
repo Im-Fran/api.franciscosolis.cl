@@ -1,0 +1,1 @@
+ALTER TABLE `ticket_participants` ADD `tag` text;

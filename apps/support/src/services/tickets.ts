@@ -475,14 +475,25 @@ const toEvent = (row: EventRow) => ({
   created_at: toIso(row.createdAt),
 })
 
+/** The full record, for the console — including the internal-only `tag`. */
 const toParticipant = (row: ParticipantRow) => ({
   id: row.id,
   email: row.email,
   name: row.name,
   role: row.role,
+  tag: row.tag,
   notify_email: row.notifyEmail,
   created_at: toIso(row.createdAt),
 })
+
+/**
+ * The same participant as the requester sees it: everything but `tag`, which is the team's own
+ * note about the person and not something they were told.
+ */
+const toRequesterParticipant = (row: ParticipantRow) => {
+  const { id, email, name, role, notify_email, created_at } = toParticipant(row)
+  return { id, email, name, role, notify_email, created_at }
+}
 
 const toLabel = (row: LabelRow) => ({
   id: row.id,
@@ -617,6 +628,7 @@ export {
   toLabel,
   toParticipant,
   toRequesterMessage,
+  toRequesterParticipant,
   toRequesterTicket,
   toTicketSummary,
 }

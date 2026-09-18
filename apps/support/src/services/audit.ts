@@ -16,6 +16,7 @@ type AuditEvent =
   | 'message.deleted'
   | 'participant.added'
   | 'participant.removed'
+  | 'participant.tagged'
   | 'label.created'
   | 'label.updated'
   | 'label.deleted'

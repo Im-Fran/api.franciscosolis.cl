@@ -231,6 +231,61 @@ describe('participants', () => {
     const response = await call(`/admin/tickets/${id}/participants/${requester!.id}`, { method: 'DELETE', headers })
     expect(response.status).toBe(409)
   })
+
+  it('tags a participant on creation and lets the console read it back', async () => {
+    const { id } = await openTicket()
+    const headers = await asAgent()
+    const created = await call(`/admin/tickets/${id}/participants`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ email: 'colleague@example.test', tag: 'interest' }),
+    })
+    expect(created.status).toBe(201)
+
+    const ticket = await call(`/admin/tickets/${id}`, { headers })
+    const body = (await ticket.json()) as { data: { participants: Array<{ email: string; tag: string | null }> } }
+    const participant = body.data.participants.find((row) => row.email === 'colleague@example.test')
+    expect(participant?.tag).toBe('interest')
+  })
+
+  it('sets and clears a tag on an existing participant', async () => {
+    const { id } = await openTicket()
+    const headers = await asAgent()
+    const requester = await firstRow<{ id: string }>("SELECT id FROM ticket_participants WHERE role = 'requester'")
+
+    const tagged = await call(`/admin/tickets/${id}/participants/${requester!.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ tag: 'guest' }),
+    })
+    expect(tagged.status).toBe(200)
+    expect((await firstRow<{ tag: string | null }>('SELECT tag FROM ticket_participants WHERE id = ?', requester!.id))?.tag).toBe(
+      'guest',
+    )
+
+    const cleared = await call(`/admin/tickets/${id}/participants/${requester!.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ tag: null }),
+    })
+    expect(cleared.status).toBe(200)
+    expect(
+      (await firstRow<{ tag: string | null }>('SELECT tag FROM ticket_participants WHERE id = ?', requester!.id))?.tag,
+    ).toBeNull()
+  })
+
+  it('rejects a tag outside the closed vocabulary', async () => {
+    const { id } = await openTicket()
+    const headers = await asAgent()
+    const requester = await firstRow<{ id: string }>("SELECT id FROM ticket_participants WHERE role = 'requester'")
+
+    const response = await call(`/admin/tickets/${id}/participants/${requester!.id}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ tag: 'vip' }),
+    })
+    expect(response.status).toBe(400)
+  })
 })
 
 describe('labels', () => {

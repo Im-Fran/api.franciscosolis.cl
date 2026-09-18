@@ -28,6 +28,14 @@ type AuthorType = (typeof AUTHOR_TYPE)[number]
 const PARTICIPANT_ROLE = ['requester', 'agent', 'cc'] as const
 type ParticipantRole = (typeof PARTICIPANT_ROLE)[number]
 
+/**
+ * An internal-only note an agent can put on a participant — never shown to the requester's own
+ * view of the ticket. `guest` for somebody along for the ride, `interest` for somebody the team
+ * wants to keep an eye on.
+ */
+const PARTICIPANT_TAG = ['guest', 'interest'] as const
+type ParticipantTag = (typeof PARTICIPANT_TAG)[number]
+
 /** Closed vocabulary for `ticket_events.event`, so the console can render each one. */
 const TICKET_EVENTS = [
   'created',
@@ -190,6 +198,7 @@ export {
   NOTIFICATIONS,
   PAGINATION,
   PARTICIPANT_ROLE,
+  PARTICIPANT_TAG,
   PUBLIC_CACHE_SECONDS,
   REQUESTER_VISIBLE_STATUS,
   TICKET_CREATION,
@@ -205,6 +214,7 @@ export type {
   ContentStatus,
   MessageKind,
   ParticipantRole,
+  ParticipantTag,
   TicketEvent,
   TicketPriority,
   TicketSource,

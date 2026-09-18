@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { getDb } from '@/db/client'
 import { NOTIFICATIONS } from '@/lib/config'
 import { cancelNotificationsFor, sweepNotifications } from '@/services/notifications'
+import { findTicketById, ticketReplyAddress } from '@/services/tickets'
 import { allRows, clearDatabase, firstRow } from '../helpers/db'
 import { captureEmail } from '../helpers/email'
 import { asAgent, asLinkHolder } from '../helpers/tokens'
@@ -208,10 +209,30 @@ describe('the sweep', () => {
     await sweepNotifications(getDb(env), env, past())
 
     const [message] = mail.sent
+    const ticket = await findTicketById(getDb(env), id)
     // `mail.franciscosolis.cl` sends and has no MX; the apex is where Email Routing listens. A
-    // reply-to of the sending address would bounce and quietly remove the whole inbound half.
-    expect(message?.replyTo).toBe(env.MAIL_REPLY_TO)
+    // reply-to of the sending address would bounce and quietly remove the whole inbound half. It
+    // is also the ticket's own `reply+<key>@` address rather than the generic one, which is what
+    // makes a reply thread straight back onto this ticket instead of falling through to a weaker
+    // match.
+    expect(message?.replyTo).toBe(ticketReplyAddress(env, ticket!))
+    expect(message?.replyTo).not.toBe(env.MAIL_REPLY_TO)
     expect(message?.from.email).toBe(env.MAIL_FROM_EMAIL)
+  })
+
+  it('renders an @mention in a reply as a mailto link in the digest', async () => {
+    const { id } = await openTicket()
+    await agentReplies(id, 'Looping in @colleague@franciscosolis.cl on this one.')
+    mail.sent.length = 0
+    await sweepNotifications(getDb(env), env, past())
+
+    const [message] = mail.sent
+    expect(message?.html).toContain('mailto:colleague@franciscosolis.cl')
+    // The plain-text part is derived from the HTML, where html-to-text prints an anchor's href
+    // after its text unless told otherwise — which rendered the address twice in a row. It reads
+    // as it was typed, once.
+    expect(message?.text).toContain('Looping in @colleague@franciscosolis.cl on this one.')
+    expect(message?.text).not.toContain('mailto:')
   })
 
   it('does not send the same reply twice', async () => {

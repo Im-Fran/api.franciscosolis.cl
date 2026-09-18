@@ -34,6 +34,12 @@ type SendInput = {
   subject: string
   html: string
   text: string
+  /**
+   * Where a reply to this message should land. Defaults to `env.MAIL_REPLY_TO`, the generic
+   * support address — a ticket-bound send overrides it with `ticketReplyAddress()` so the header
+   * actually sent matches the `reply+<key>@` address the body text tells the recipient to use.
+   */
+  replyTo?: string
 }
 
 type SendResult = {
@@ -46,6 +52,7 @@ type SendResult = {
 const sendEmail = async (db: Database, env: Env, input: SendInput): Promise<SendResult> => {
   const id = crypto.randomUUID()
   const from = { email: env.MAIL_FROM_EMAIL, name: env.MAIL_FROM_NAME }
+  const replyTo = input.replyTo ?? env.MAIL_REPLY_TO
 
   const base = {
     id,
@@ -54,7 +61,7 @@ const sendEmail = async (db: Database, env: Env, input: SendInput): Promise<Send
     toAddresses: JSON.stringify(input.to),
     fromEmail: from.email,
     fromName: from.name,
-    replyTo: env.MAIL_REPLY_TO,
+    replyTo,
     subject: input.subject,
     html: input.html,
     text: input.text,
@@ -71,8 +78,10 @@ const sendEmail = async (db: Database, env: Env, input: SendInput): Promise<Send
       text: input.text,
       // Deliberately not the sending address. `mail.franciscosolis.cl` sends and has no MX;
       // `franciscosolis.cl` is where Email Routing listens. A reply has to go to the second one or
-      // it bounces, which would quietly remove the entire inbound half of this Worker.
-      replyTo: env.MAIL_REPLY_TO,
+      // it bounces, which would quietly remove the entire inbound half of this Worker. A
+      // ticket-bound send narrows this further, to that ticket's own `reply+<key>@` address, so a
+      // reply threads straight back onto it instead of falling through to the subject-tag match.
+      replyTo,
     })
 
     await db
@@ -90,11 +99,12 @@ const sendEmail = async (db: Database, env: Env, input: SendInput): Promise<Send
 
 /** The confirmation, carrying the only copy of the access link that ever leaves this system. */
 const sendTicketReceived = async (db: Database, env: Env, ticket: TicketRow, accessToken: string) => {
+  const replyTo = ticketReplyAddress(env, ticket)
   const rendered = await renderSupportTicketReceivedEmail({
     reference: formatReference(ticket.number),
     subject: ticket.subject,
     url: ticketUrl(env, ticket, accessToken),
-    replyTo: ticketReplyAddress(env, ticket),
+    replyTo,
     locale: resolveEmailLocale(ticket.locale),
     brandName: env.MAIL_FROM_NAME,
   })
@@ -104,6 +114,7 @@ const sendTicketReceived = async (db: Database, env: Env, ticket: TicketRow, acc
     ticketId: ticket.id,
     to: [ticket.requesterEmail],
     ...rendered,
+    replyTo,
   })
 }
 
@@ -138,11 +149,12 @@ const sendReplyDigest = async (
         : message.bodyText,
   }))
 
+  const replyTo = ticketReplyAddress(env, ticket)
   const rendered = await renderSupportTicketReplyEmail({
     reference: formatReference(ticket.number),
     subject: ticket.subject,
     url: `${env.SUPPORT_TICKET_URL.replace(/\/+$/, '')}/${formatReference(ticket.number)}`,
-    replyTo: ticketReplyAddress(env, ticket),
+    replyTo,
     messages: excerpts,
     locale: resolveEmailLocale(ticket.locale),
     brandName: env.MAIL_FROM_NAME,
@@ -153,16 +165,18 @@ const sendReplyDigest = async (
     ticketId: ticket.id,
     to: [recipient],
     ...rendered,
+    replyTo,
   })
 }
 
 /** Sent to somebody newly put on a ticket, instead of back-filling them into the next digest. */
 const sendParticipantAdded = async (db: Database, env: Env, ticket: TicketRow, recipient: string) => {
+  const replyTo = ticketReplyAddress(env, ticket)
   const rendered = await renderSupportParticipantAddedEmail({
     reference: formatReference(ticket.number),
     subject: ticket.subject,
     url: `${env.SUPPORT_TICKET_URL.replace(/\/+$/, '')}/${formatReference(ticket.number)}`,
-    replyTo: ticketReplyAddress(env, ticket),
+    replyTo,
     locale: resolveEmailLocale(ticket.locale),
     brandName: env.MAIL_FROM_NAME,
   })
@@ -172,6 +186,7 @@ const sendParticipantAdded = async (db: Database, env: Env, ticket: TicketRow, r
     ticketId: ticket.id,
     to: [recipient],
     ...rendered,
+    replyTo,
   })
 }
 
