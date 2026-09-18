@@ -6,7 +6,7 @@ import * as v from 'valibot'
 import { getDb } from '@/db/client'
 import { labels, ticketLabels, ticketParticipants, tickets } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { BODY_LIMITS, MESSAGE_KIND, PAGINATION, TICKET_PRIORITY, TICKET_STATUS } from '@/lib/config'
+import { BODY_LIMITS, MESSAGE_KIND, PAGINATION, PARTICIPANT_TAG, TICKET_PRIORITY, TICKET_STATUS } from '@/lib/config'
 import { asConflict } from '@/lib/errors'
 import { LOCALES } from '@/lib/locales'
 import { parseReference } from '@/lib/references'
@@ -419,6 +419,7 @@ app.put(
 const participantSchema = v.object({
   email: emailAddress,
   name: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))),
+  tag: v.optional(v.nullable(v.picklist(PARTICIPANT_TAG))),
 })
 
 app.post(
@@ -448,6 +449,7 @@ app.post(
       email: body.email,
       name: body.name ?? null,
       role: 'cc' as const,
+      tag: body.tag ?? null,
       notifyEmail: true,
       // Starts at the current head, so being added mid-thread does not mail somebody a conversation
       // they were not part of when it happened. They get a "you were added" note with the link instead.
@@ -482,7 +484,57 @@ app.post(
       metadata: { ticket_id: ticket.id, email: body.email },
     })
 
-    return c.json({ code: 201, data: { id: row.id, email: row.email, role: row.role } }, 201)
+    return c.json({ code: 201, data: { id: row.id, email: row.email, role: row.role, tag: row.tag } }, 201)
+  },
+)
+
+const participantTagSchema = v.object({ tag: v.nullable(v.picklist(PARTICIPANT_TAG)) })
+
+app.patch(
+  '/tickets/:id/participants/:participantId',
+  describeRoute({
+    description:
+      "Sets or clears a participant's internal-only tag (`guest` or `interest`). Never sent to the requester's own view of the ticket.",
+    tags: ['Admin · Tickets'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'Tag updated' },
+      404: { description: 'No such ticket or participant' },
+      400: { description: 'The body failed validation' },
+    },
+  }),
+  validator('json', participantTagSchema),
+  async (c) => {
+    const ticket = await requireTicket(c)
+    const { tag } = c.req.valid('json')
+    const db = getDb(c.env)
+    const [row] = await db
+      .select()
+      .from(ticketParticipants)
+      .where(
+        and(
+          eq(ticketParticipants.ticketId, ticket.id),
+          eq(ticketParticipants.id, c.req.param('participantId') ?? ''),
+        ),
+      )
+      .limit(1)
+
+    if (!row) {
+      throw new HTTPException(404, { message: 'Participant not found' })
+    }
+
+    await db.update(ticketParticipants).set({ tag }).where(eq(ticketParticipants.id, row.id))
+
+    await recordAudit(db, {
+      event: 'participant.tagged',
+      ...getActorContext(c),
+      ...getRequestContext(c),
+      resourceType: 'ticket_participants',
+      resourceId: row.id,
+      metadata: { ticket_id: ticket.id, email: row.email, tag },
+    })
+
+    return c.json({ code: 200, data: { id: row.id, tag } })
   },
 )
 

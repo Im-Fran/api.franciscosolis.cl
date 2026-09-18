@@ -175,6 +175,13 @@ const ticketParticipants = sqliteTable('ticket_participants', {
   userId: text('user_id'),
   /** `requester` | `agent` | `cc`. */
   role: text('role').notNull().default('cc'),
+  /**
+   * An internal-only classification an agent can put on a participant — `guest` for somebody
+   * along for the ride, `interest` for somebody the team wants to keep an eye on. Never shown to
+   * the requester's own view of the ticket: `toRequesterParticipant` in `src/services/tickets.ts`
+   * drops it, the way `GET /tickets/:reference` already drops the agent role.
+   */
+  tag: text('tag'),
   notifyEmail: integer('notify_email', { mode: 'boolean' }).notNull().default(true),
   /** Highest `ticket_messages.seq` this person has already been emailed about. */
   lastNotifiedSeq: integer('last_notified_seq').notNull().default(0),

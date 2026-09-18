@@ -178,6 +178,21 @@ describe('reading a ticket with the emailed link', () => {
     expect(reply).toBeDefined()
     expect(reply?.author_email).toBeNull()
   })
+
+  it("never publishes a participant's internal tag to the requester", async () => {
+    const { reference, secret } = await openTicket()
+    const ticket = await firstRow<{ id: string }>('SELECT id FROM tickets')
+    const agent = await asAgent()
+    await post(`/admin/tickets/${ticket!.id}/participants`, { email: 'colleague@example.test', tag: 'interest' }, agent)
+
+    const response = await get(`/tickets/${reference}`, asLinkHolder(secret))
+    const body = (await response.json()) as { data: { participants: Array<Record<string, unknown>> } }
+
+    expect(body.data.participants.length).toBeGreaterThan(0)
+    for (const participant of body.data.participants) {
+      expect(participant).not.toHaveProperty('tag')
+    }
+  })
 })
 
 describe('replying as the requester', () => {

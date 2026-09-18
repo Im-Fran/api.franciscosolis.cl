@@ -28,7 +28,7 @@ import {
   recordEvent,
   ticketUrl,
   toLabel,
-  toParticipant,
+  toRequesterParticipant,
   toRequesterTicket,
 } from '@/services/tickets'
 
@@ -214,7 +214,7 @@ app.get(
         ...toRequesterTicket(ticket),
         access_level: level,
         labels: ticketLabelRows.map(toLabel),
-        participants: participants.filter((row) => row.role !== 'agent').map(toParticipant),
+        participants: participants.filter((row) => row.role !== 'agent').map(toRequesterParticipant),
       },
     })
   },
