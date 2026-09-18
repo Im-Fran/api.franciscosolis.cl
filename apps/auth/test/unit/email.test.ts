@@ -106,6 +106,39 @@ describe('branding and legibility', () => {
     expect(html).toContain('background-color:#75549c;background-image:linear-gradient(45deg')
   })
 
+  it('identifies the company that sent it, in both parts of the message', async () => {
+    // Transactional mail from a company has to say which company: the legal name, the taxpayer id
+    // and the address are what let a recipient who does not recognise the message check it against
+    // the website rather than reply and ask. The plain-text alternative carries them too, because
+    // that is the part a client showing no HTML falls back to.
+    const { text } = await magicLinkTemplate({ url: 'https://api.test/cb', applicationName: 'App', expiresInMinutes: 15 })
+
+    for (const fact of [
+      'DESARROLLO Y MANTENCION DE SERVICIOS INFORMATICOS FRANCISCO SOLIS MATURANA E.I.R.L.',
+      'RUT 78.473.345-9',
+      'Av. Irarr\u00e1zaval 2401, Oficina 607, \u00d1u\u00f1oa, Santiago, Chile',
+      'fsolism@franciscosolis.cl',
+    ]) {
+      expect(html).toContain(fact)
+      expect(text).toContain(fact)
+    }
+  })
+
+  it('links the terms and the privacy policy at the documents the CMS publishes', () => {
+    // Fragments, not paths: the website serves every legal document from one `/legal` route and
+    // selects between them by the slug seeded in the CMS migration.
+    expect(html).toContain('href="https://franciscosolis.cl/legal#terms-of-service"')
+    expect(html).toContain('href="https://franciscosolis.cl/legal#privacy-policy"')
+    expect(html).toContain('Terms of Service')
+    expect(html).toContain('Privacy Policy')
+  })
+
+  it('no longer carries the marketing tagline the footer used to end on', () => {
+    // It told a recipient nothing about who wrote to them, which is the only question a footer on
+    // a transactional message is there to answer.
+    expect(html).not.toContain('for businesses of every size')
+  })
+
   it('keeps the decorative rule out of the plain-text part', async () => {
     // The rule is a non-breaking space in a table cell. Left alone it opens every plain-text
     // alternative with a run of blank lines.

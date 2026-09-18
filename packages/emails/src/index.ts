@@ -9,6 +9,18 @@
  * The package ships TypeScript source, not a build. Wrangler already bundles each Worker with
  * esbuild, so a build step here would only add a stale artifact to keep in sync.
  */
+export {
+  ADDRESS_LINE,
+  company,
+  CONTACT_EMAIL,
+  LEGAL_NAME,
+  PRIVACY_URL,
+  RUT,
+  TERMS_URL,
+  TRADE_NAME,
+  WEBSITE,
+  WEBSITE_LABEL,
+} from './company'
 export { ActionLink } from './components/action-link'
 export type { ActionLinkProps } from './components/action-link'
 export { EmailLayout } from './components/email-layout'

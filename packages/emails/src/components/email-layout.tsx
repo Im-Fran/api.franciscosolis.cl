@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { Body, Container, Head, Heading, Hr, Html, Img, Link, Preview, Section, Text } from 'react-email'
 import type { ReactNode } from 'react'
+import { company } from '../company'
 import { PLAIN_TEXT_SKIP_CLASS } from '../render'
 import { theme } from '../theme'
 
@@ -15,14 +16,31 @@ type EmailLayoutProps = {
   children: ReactNode
 }
 
-/** The one-line positioning statement from the brand guidelines, softened for a footer. */
-const TAGLINE = 'Appointments, quotes, signatures and change requests — for businesses of every size.'
+/**
+ * One line of the sender's identity block. Small print, but never smaller than `muted` on white
+ * clears (6.1:1) — this is the part of the message a recipient reads when they are suspicious of
+ * it, which is the worst possible moment for it to be unreadable.
+ */
+const IDENTITY_LINE = {
+  margin: 0,
+  fontSize: '12px',
+  lineHeight: '1.6',
+  color: theme.colors.muted,
+} as const
+
+/**
+ * Footer links stay underlined: at 12 px, colour alone is not a reliable affordance, and a
+ * recipient reading this block is looking for something to click. `textDecorationLine` rather than
+ * the `textDecoration` shorthand, because react-email's `<Link>` already emits the former — the
+ * shorthand would leave both in the attribute and rely on their order.
+ */
+const FOOTER_LINK = { color: theme.colors.link, textDecorationLine: 'underline' } as const
 
 /**
  * The shell every template renders inside: one centred white card on the brand's tinted page,
  * under a 4 px gradient rule and the horizontal lockup.
  *
- * Three things here are load-bearing rather than decorative:
+ * Four things here are load-bearing rather than decorative:
  *
  * - **The two `<meta>` tags.** `color-scheme` and `supported-color-schemes` are what tell Apple
  *   Mail, iOS Mail and Outlook for Mac that this message has already chosen its colours and must
@@ -33,12 +51,18 @@ const TAGLINE = 'Appointments, quotes, signatures and change requests — for bu
  *   honour. Where a surface matters, it is declared twice on purpose.
  * - **`<Preview>`.** Without it, clients build the inbox snippet from whatever text comes first in
  *   the document, which is usually the heading repeated back.
+ * - **The footer's identity block.** These are transactional messages from a company, so the
+ *   sender has to be identifiable from the message itself: the legal name, the RUT, the address,
+ *   an address to write back to, and the two documents that govern the relationship. It replaced a
+ *   marketing tagline, which said nothing a recipient checking who wrote to them needs. The values
+ *   come from `company.ts`, never from a template — a legal identity that varied by email is worse
+ *   than none.
  *
  * There is still no `<style>` block, and there must not be one: the whole design has to survive a
  * client that keeps only inline attributes. That rules out `@media (prefers-color-scheme: dark)`,
  * which is why the palette is light-first instead (see `theme.ts`).
  */
-const EmailLayout = ({ preview, heading, brandName = 'FranciscoSolis', logoSrc, children }: EmailLayoutProps) => (
+const EmailLayout = ({ preview, heading, brandName = company.tradeName, logoSrc, children }: EmailLayoutProps) => (
   <Html lang="en">
     <Head>
       <meta name="color-scheme" content="light" />
@@ -125,15 +149,37 @@ const EmailLayout = ({ preview, heading, brandName = 'FranciscoSolis', logoSrc, 
           </Section>
           <Section style={{ padding: '0 32px 28px' }}>
             <Hr style={{ margin: '0 0 16px', border: 'none', borderTop: `1px solid ${theme.colors.divider}` }} />
-            <Text style={{ margin: '0 0 4px', fontSize: '13px', lineHeight: '1.6', color: theme.colors.body }}>
+            <Text style={{ margin: '0 0 8px', fontSize: '13px', lineHeight: '1.6', color: theme.colors.body }}>
               {brandName}
               {' · '}
-              <Link href="https://franciscosolis.cl" style={{ color: theme.colors.link, textDecoration: 'none' }}>
-                franciscosolis.cl
+              <Link href={company.website} style={{ color: theme.colors.link, textDecoration: 'none' }}>
+                {company.websiteLabel}
               </Link>
             </Text>
-            <Text style={{ margin: 0, fontSize: '12px', lineHeight: '1.6', color: theme.colors.muted }}>
-              {TAGLINE}
+            {/*
+              Who actually sent this. One `<Text>` per fact rather than one wrapped paragraph,
+              because html-to-text keeps a block boundary as a line break — the plain-text part of
+              the message gets the same four legible lines instead of one run-on sentence.
+            */}
+            <Text style={IDENTITY_LINE}>{company.legalName}</Text>
+            {/* One expression, not `RUT {company.rut}`: React separates adjacent children with an
+                HTML comment, and a comment in the middle of the number is a number no recipient can
+                copy and no test can match. */}
+            <Text style={IDENTITY_LINE}>{`RUT ${company.rut}`}</Text>
+            <Text style={IDENTITY_LINE}>{company.addressLine}</Text>
+            <Text style={IDENTITY_LINE}>
+              <Link href={`mailto:${company.email}`} style={FOOTER_LINK}>
+                {company.email}
+              </Link>
+            </Text>
+            <Text style={{ ...IDENTITY_LINE, margin: '8px 0 0' }}>
+              <Link href={company.termsUrl} style={FOOTER_LINK}>
+                Terms of Service
+              </Link>
+              {' · '}
+              <Link href={company.privacyUrl} style={FOOTER_LINK}>
+                Privacy Policy
+              </Link>
             </Text>
           </Section>
         </Container>
