@@ -20,11 +20,33 @@ import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 
 /**
+ * The arguments to parse, with a leading `--` dropped.
+ *
+ * `pnpm run applications -- <args>` is the documented way to call this, and pnpm 11 forwards that
+ * separator into `process.argv` rather than swallowing it. `parseArgs` reads a bare `--` as the end
+ * of options, so every flag after it became a *positional*: `--remote` stopped being seen, the
+ * script silently fell back to the local database, and the run died on `no such table:
+ * applications` — while `--dev` kept working, because it is read straight off `process.argv` below
+ * and never went through `parseArgs` at all. That asymmetry is what made it look like a credentials
+ * problem.
+ *
+ * Only a *leading* separator is dropped: one appearing later is the caller's own and still ends
+ * option parsing where they asked it to.
+ */
+const ARGS = process.argv.slice(2)
+if (ARGS[0] === '--') {
+  ARGS.shift()
+}
+
+/**
  * Which stack to act on. `--dev` targets the development Worker's own database, which is a separate
  * D1 instance with its own client applications: the development stack signs in on
  * dev.franciscosolis.cl, so its redirect URIs are different values, not the same ones with a flag.
+ *
+ * Read off `ARGS` rather than `process.argv` so it cannot disagree with everything `parseArgs`
+ * sees — the exact disagreement described above.
  */
-const development = process.argv.includes('--dev')
+const development = ARGS.includes('--dev')
 const DATABASE = development ? 'franciscosolis_auth_dev' : 'franciscosolis_auth'
 
 /** Wrangler needs the environment too, or it resolves the binding out of the top-level config. */
@@ -126,9 +148,22 @@ const fail = (message) => {
 let values
 let positionals
 try {
-  ;({ values, positionals } = parseArgs({ allowPositionals: true, options: OPTIONS }))
+  ;({ values, positionals } = parseArgs({ args: ARGS, allowPositionals: true, options: OPTIONS }))
 } catch (error) {
   console.error(`${error.message}\n${USAGE}`)
+  process.exit(1)
+}
+
+// A positional that looks like a flag means option parsing ended earlier than the caller meant it
+// to — a stray `--`, most likely — and every flag past that point is being ignored. Ignoring
+// `--remote` silently is how this script came to write to the wrong database, so it refuses instead.
+const swallowed = positionals.filter((positional) => positional.startsWith('-'))
+if (swallowed.length > 0) {
+  console.error(
+    `These look like options but were read as positional arguments: ${swallowed.join(', ')}\n` +
+      'Something ended option parsing early — usually a `--` in the middle of the command line. ' +
+      `Remove it and run again.\n${USAGE}`,
+  )
   process.exit(1)
 }
 
