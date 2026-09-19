@@ -67,8 +67,15 @@ const answerSchema = v.object({
  */
 const MAX_SOURCE_CHARS = 8000
 
-/** Default bound on the model call. Bounds the response, not the spend — nothing can bound that. */
-const DEFAULT_TIMEOUT_MS = 20_000
+/**
+ * Default bound on the model call. Bounds the response, not the spend — nothing can bound that.
+ *
+ * Deliberately below the front-end's own 20-second request timeout (`REQUEST_TIMEOUT_MS` in the
+ * website repository's `src/lib/auth/client.ts`). A model call that outlives the browser's patience
+ * is billed, answered and thrown away, and the editor is told nothing useful; abandoning it here
+ * leaves time for the answer to travel and for the route to say honestly that no draft came back.
+ */
+const DEFAULT_TIMEOUT_MS = 15_000
 
 /**
  * The system prompt.

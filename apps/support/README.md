@@ -64,6 +64,13 @@ Unlike its siblings, this Worker has **three entry points and the gateway fronts
 - **Bilingual by override, not by row** — a help article's own columns hold English and a
   `translations` blob holds the Spanish, exactly as in [`apps/cms`](../cms/README.md). A public read
   takes `?locale` and reports which language it actually served.
+- **The Spanish can be drafted too** — `POST /admin/translate` answers with a machine translation of
+  one field and **writes nothing**, so it cannot reach the FTS index or the vectors either, and a
+  failed answer is a `200` with `translation: null`. Same rule as the assistant: the model drafts, a
+  human sends. The prompt lives in [`@franciscosolis/translate`](../../packages/translate/README.md),
+  shared with [`apps/cms`](../cms/README.md) and [`apps/pages`](../pages/README.md); the hourly limit
+  is counted apart from the assistant's, because drafting a reply and translating the help centre are
+  two different spends by the same agent.
 - **Nothing about a ticket is HTML** — inbound mail is converted to text at ingest and the quoted
   trail is trimmed off, with the untouched original kept beside it. There is no column for markup
   anywhere on a ticket, which is what makes it structurally impossible for a later change to render
@@ -197,6 +204,7 @@ article save reach the real services and need credentials. Everything else works
 | `GET` `PATCH` `DELETE` | `/admin/help/articles/:id` | One article |
 | `POST` | `/admin/help/articles/:id/reindex` | Rebuild both search indexes for it |
 | `POST` | `/admin/assist` | Draft an answer from the help centre |
+| `POST` | `/admin/translate` | Draft a translation of one prose field with Workers AI |
 
 The always-current description is the OpenAPI document at
 `https://api.franciscosolis.cl/openapi.json`, which merges this Worker's own spec under `/support`.

@@ -33,13 +33,16 @@ together six Cloudflare Workers, all living directly in this repo:
   reachable through `apps/api` at `/support/*`. A ticket can be opened from the website or by writing
   to `soporte@franciscosolis.cl`, and answered in either place; the help centre is searched both
   lexically (FTS5) and semantically (Workers AI + Vectorize). It is the one Worker here with entry
-  points the gateway does not front, and the only one that uses Workers AI.
+  points the gateway does not front, and the only one that uses Vectorize.
 
 Alongside them, `packages/` holds the shared code the Workers import:
 
 - `packages/emails` (`@franciscosolis/emails`) — every email body in the monorepo, written as
   react-email components. Imported by `apps/auth`, `apps/cms` and `apps/support`; no Worker builds
   mail markup itself.
+- `packages/translate` (`@franciscosolis/translate`) — the one prompt behind every machine
+  translation here, and the parsing of the model's answer. Imported by `apps/cms`, `apps/pages` and
+  `apps/support`; no Worker writes a translation prompt itself.
 
 Each app and package keeps its own `CLAUDE.md` and `README.md`. When working on the actual
 implementation of a Worker, read/edit inside `apps/api`, `apps/landing`, `apps/auth`, `apps/cms`,
@@ -54,8 +57,9 @@ workspace/catalog, root scripts).
   shared pnpm `catalog` in `pnpm-workspace.yaml` — do not add per-app version pins for
   those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/pages` and
   `apps/support` additionally use drizzle-orm/drizzle-kit; `apps/auth`, `apps/cms` and `apps/support`
-  also pull react + react-email through `@franciscosolis/emails`, all catalogued too. `apps/support`
-  is the only one with `postal-mime`, and the only one using Workers AI and Vectorize. `apps/pages`
+  also pull react + react-email through `@franciscosolis/emails`, all catalogued too. `apps/cms`,
+  `apps/pages` and `apps/support` use **Workers AI** through `@franciscosolis/translate`;
+  `apps/support` is the only one with `postal-mime`, and the only one using Vectorize. `apps/pages`
   talks to MercadoPago over plain `fetch` rather than through an SDK — three functions in
   `src/lib/mercadopago.ts` against a dependency that assumes Node.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
@@ -88,9 +92,10 @@ workspace/catalog, root scripts).
 
 Individual apps can also be run from their own directory (`cd apps/api && pnpm run dev`).
 
-`packages/emails` has no `dev`/`build`/`deploy`/`test` script, so the root `-r` scripts skip it —
-it ships TypeScript source that each Worker bundles, and its rendering is covered by the `auth` and
-`cms` suites, which run inside `workerd`.
+Neither `packages/emails` nor `packages/translate` has a `dev`/`build`/`deploy`/`test` script, so
+the root `-r` scripts skip both — they ship TypeScript source that each Worker bundles, and their
+behaviour is covered by the consuming suites, which run inside `workerd`: email rendering by `auth`
+and `cms`, the translation prompt by `apps/cms/test/unit/translate.test.ts`.
 
 ## Testing
 
@@ -115,12 +120,15 @@ Non-obvious things about this harness, learned the hard way — do not re-derive
 - `apps/api` boots the internal Workers as auxiliary Miniflare Workers
   (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`PAGES`/`SUPPORT` are real service bindings
   in tests.
-- **`apps/support` runs against a named `test` environment in its own `wrangler.jsonc`**, and that is
-  not stylistic. The pool answers an `ai` or `vectorize` binding by opening a *remote proxy session*
-  against the real Cloudflare account, which needs a `CLOUDFLARE_API_TOKEN` CI does not have and
-  bills real neurons for a unit test. The named environment restates everything except those two
-  bindings, and the suite supplies them by assignment. Miniflare also cannot dispatch an email event,
-  so that Worker's `email()` handler is called directly rather than through `SELF`.
+- **`apps/cms`, `apps/pages` and `apps/support` run against a named `test` environment in their own
+  `wrangler.jsonc`**, and that is not stylistic. The pool answers an `ai` or `vectorize` binding by
+  opening a *remote proxy session* against the real Cloudflare account, which needs a
+  `CLOUDFLARE_API_TOKEN` CI does not have and bills real neurons for a unit test. Each named
+  environment restates everything except those bindings, and each suite supplies them by assignment
+  from its own `test/helpers/ai.ts`, with loud defaults so a path that reaches the real service
+  unexpectedly says so instead of returning `undefined`. In `apps/support`, Miniflare also cannot
+  dispatch an email event, so that Worker's `email()` handler is called directly rather than through
+  `SELF`.
 - `apps/auth` gets a fixed, committed, test-only Ed25519 signing key from its
   `vitest.config.ts`. It signs nothing outside the suite; the production key stays a secret.
 
@@ -293,6 +301,17 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   one `content_entries` table discriminated by `collection`, with collection-specific fields
   validated by `apps/cms/src/lib/collections.ts`. Adding a collection is a registry entry,
   not a migration.
+- **A translation is drafted by Workers AI and written by a person.** All three translating Workers
+  expose `POST /admin/translate`, which takes one field's text and one target locale and answers with
+  a draft — and **writes nothing**. The draft is saved, edited or discarded through the ordinary
+  PATCH that saves every other override. Four things follow and every one of them is the reason it is
+  shaped this way: a model outage cannot corrupt a record, because the route touches no table;
+  nothing machine-translated is published without somebody having read it, because publishing is a
+  separate request a human makes; there is no "translated by AI" flag to keep in sync, because by the
+  time the text is stored it is simply what the editor wrote; and a failed, timed-out or unreadable
+  answer is a `200` with `translation: null`, so an outage costs a button that did nothing. The
+  prompt is `packages/translate`; the meter, the hourly per-editor limit and the gate are each
+  Worker's own. See `packages/translate/CLAUDE.md`.
 - **The CMS is bilingual by override, not by row**: the row holds the default locale (`en`) and
   a `translations` column holds `{"es":{"title":"…"}}` for the rest. Public reads take `?locale`
   and resolve it server-side, so the website reads plain `title`/`body` fields and gets a `locale`
