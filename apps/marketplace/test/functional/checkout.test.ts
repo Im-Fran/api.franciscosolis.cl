@@ -86,7 +86,7 @@ describe('POST /products/:slug/checkout', () => {
     await checkout('openbattery')
 
     expect(calls[0]?.body.back_urls).toMatchObject({ success: 'https://site.test/product/openbattery' })
-    expect(calls[0]?.body.notification_url).toBe('https://api.test/pages/payments/mercadopago/webhook')
+    expect(calls[0]?.body.notification_url).toBe('https://api.test/marketplace/payments/mercadopago/webhook')
   })
 
   it('charges a paid product its price even when a smaller amount is asked for', async () => {

@@ -32,7 +32,7 @@ const ticketFor = async (slug: string, fileId: string, headers: Record<string, s
  * `/pages` prefix the gateway strips before forwarding. Calling `SELF` with the prefix left on hits no
  * route at all, which is a plain 404 that looks exactly like a missing file.
  */
-const pathOf = (url: string) => new URL(url).pathname.replace(/^\/pages/, '')
+const pathOf = (url: string) => new URL(url).pathname.replace(/^\/marketplace/, '')
 
 afterEach(() => {
   vi.useRealTimers()
@@ -104,6 +104,22 @@ describe('POST /products/:slug/files/:id/download', () => {
 
     expect(response.status).toBe(201)
     expect(body.data?.paid).toBe(true)
+    expect(body.data?.cooldown_seconds).toBe(0)
+    expect((await call(pathOf(body.data!.url))).status).toBe(200)
+  })
+
+  /**
+   * A free product has no payer and no non-payer, so it has no cooldown either: the wait exists to
+   * make the payment offer worth reading, and there is no offer. The ticket's own default would
+   * have applied the five seconds anyway, which is why the route passes the number explicitly.
+   */
+  it('mints a ticket that works immediately for a free product', async () => {
+    const product = await seedProduct({ slug: 'gratis' })
+    const release = await seedRelease({ productId: product.id, version: '1.0' })
+    const file = await seedReleaseFile({ productId: product.id, releaseId: release.id })
+
+    const { body } = await ticketFor('gratis', file.id)
+
     expect(body.data?.cooldown_seconds).toBe(0)
     expect((await call(pathOf(body.data!.url))).status).toBe(200)
   })

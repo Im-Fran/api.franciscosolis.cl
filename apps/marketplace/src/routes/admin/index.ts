@@ -13,6 +13,7 @@ import files from '@/routes/admin/files'
 import purchases from '@/routes/admin/purchases'
 import sales from '@/routes/admin/sales'
 import translate from '@/routes/admin/translate'
+import analytics from '@/routes/admin/analytics'
 import compatibility from '@/routes/admin/compatibility'
 import releases from '@/routes/admin/releases'
 import reviews from '@/routes/admin/reviews'
@@ -121,6 +122,7 @@ app.route('/', products)
 app.route('/', releases)
 app.route('/', compatibility)
 app.route('/', reviews)
+app.route('/', analytics)
 app.route('/', wiki)
 app.route('/', files)
 app.route('/', purchases)

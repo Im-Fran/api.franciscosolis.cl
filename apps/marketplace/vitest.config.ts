@@ -33,7 +33,7 @@ export default defineConfig({
           MERCADOPAGO_ACCESS_TOKEN: 'TEST-access-token',
           MERCADOPAGO_WEBHOOK_SECRET: 'test-webhook-secret',
           DOWNLOAD_SIGNING_KEY: 'test-download-signing-key',
-          MARKETPLACE_PUBLIC_URL: 'https://api.test/pages',
+          MARKETPLACE_PUBLIC_URL: 'https://api.test/marketplace',
           SITE_BASE_URL: 'https://site.test',
           // The real address rather than a `.test` one: Miniflare enforces the
           // `allowed_sender_addresses` list from wrangler.jsonc, and a sender outside it throws

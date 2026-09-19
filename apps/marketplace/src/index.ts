@@ -18,6 +18,7 @@ import products from '@/routes/products'
 import downloads from '@/routes/downloads'
 import payments from '@/routes/payments'
 import reviews from '@/routes/reviews'
+import views from '@/routes/views'
 import store from '@/routes/store'
 
 const app = new Hono<AppEnv>()
@@ -129,6 +130,7 @@ app.route('/', store)
 app.route('/', downloads)
 app.route('/', payments)
 app.route('/', reviews)
+app.route('/', views)
 app.route('/admin', admin)
 
 app.get(

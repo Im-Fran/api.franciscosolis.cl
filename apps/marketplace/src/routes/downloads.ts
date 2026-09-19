@@ -14,6 +14,7 @@ import { GATE_MESSAGES, isChannelGated, resolveAccess } from '@/services/access'
 import type { Product } from '@/services/products'
 import { findProductById, findProductBySlug } from '@/services/products'
 import { getRequestContext } from '@/services/audit'
+import { recordDownloadStats } from '@/services/analytics'
 import { recordDownload } from '@/services/downloads'
 import { countDownload, findReleaseFileById, listReleaseFiles, toPublicReleaseFile } from '@/services/release-files'
 import { findReleaseByVersion, findReleaseById } from '@/services/releases'
@@ -163,6 +164,12 @@ app.post(
       // from without a second read. Not a trust boundary — the gate was decided here, at mint time.
       c: release.channel,
       paid: access.has_paid,
+      // Passed explicitly rather than left to the ticket's own default, which is `paid ? 0 : 5`.
+      // That default is wrong for a free product: `resolveAccess` says its cooldown is zero — the
+      // wait exists to make an offer worth reading, and a free product makes no offer — and a
+      // ticket that waited anyway would contradict the `cooldown_seconds: 0` the same response
+      // advertises. `access.cooldown_seconds` is the one answer, so it is the one that is used.
+      cooldownSeconds: access.cooldown_seconds,
     })
 
     return c.json(
@@ -277,9 +284,14 @@ app.get(
 
     // After the response, never before it: the bytes are already leaving, and neither the counter nor
     // the history is worth making somebody wait for.
+    // Five writes, all after the response and all swallowing their own errors: the per-file counter
+    // an editor reads, the event `/me/downloads` is built from, and the product and release totals
+    // plus the two daily rows behind the charts. The bytes are already leaving; none of this is
+    // worth making somebody wait for, and a lost counter must not turn a download into a 500.
     c.executionCtx.waitUntil(
       Promise.all([
         countDownload(db, file.id),
+        recordDownloadStats(db, { productId: file.productId, releaseId: file.releaseId }),
         recordDownload(db, {
           fileId: file.id,
           productId: file.productId,
