@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "lib": [
+      "ESNext"
+    ],
+    // No `@/*` path alias on purpose: these files are compiled by the *consuming* Worker's
+    // bundler, where `@/*` already points at that Worker's own `src/`. Imports here are relative.
+    "types": []
+  },
+  "include": [
+    "./src/**/*.ts"
+  ]
+}

@@ -55,7 +55,7 @@ describe('the support console gate', () => {
   })
 
   it('refuses an allowed account that has not been made an agent', async () => {
-    // The permission check is what `apps/cms` and `apps/pages` deliberately do without. A support
+    // The permission check is what `apps/cms` deliberately does without. A support
     // system cannot: "assign this ticket to somebody" is meaningless unless there is a defined set
     // of people, and the domain alone is not one.
     const response = await admin('/admin/me', { headers: await asAgent({ permissions: [] }) })

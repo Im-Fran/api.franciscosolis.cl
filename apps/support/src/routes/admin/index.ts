@@ -15,6 +15,7 @@ import assist from '@/routes/admin/assist'
 import help from '@/routes/admin/help'
 import labels from '@/routes/admin/labels'
 import tickets from '@/routes/admin/tickets'
+import translate from '@/routes/admin/translate'
 
 const app = new Hono<AppEnv>()
 
@@ -222,5 +223,6 @@ app.route('/', tickets)
 app.route('/', labels)
 app.route('/', help)
 app.route('/', assist)
+app.route('/', translate)
 
 export default app

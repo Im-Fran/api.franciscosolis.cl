@@ -28,6 +28,16 @@ type ForwardingPolicy = {
    * database, so the gateway's fixed allowlist cannot describe them.
    */
   ownsCors?: boolean
+  /**
+   * A path this gateway still answers on for compatibility, forwarding to a module that has been
+   * renamed. It is proxied like any other entry and left out of everything that describes the
+   * service: the `modules` list, and the combined OpenAPI document — which would otherwise carry
+   * the same paths twice under two prefixes.
+   *
+   * The string is the reason it is still here, so that removing it is a decision somebody makes on
+   * purpose rather than a tidy-up nobody questions.
+   */
+  deprecated?: string
 }
 
 /** An internal Worker mounted under `/<name>/*` and merged into the combined OpenAPI document. */
@@ -76,12 +86,33 @@ const SERVICE_MODULES = [
     // and CF-Connecting-IP for its audit trail.
   },
   {
+    name: 'marketplace',
+    binding: 'MARKETPLACE',
+    tag: 'Marketplace',
+    description:
+      'Proxy to the marketplace Worker (product pages, release channels, downloads, payments, reviews and analytics)',
+    // Forwards the whole Request for the same reasons as the CMS, plus one of its own: a page view
+    // is deduplicated per viewer on a hash of CF-Connecting-IP and User-Agent, so both have to
+    // survive the hop or every view in the world would look like the same person.
+  },
+  {
+    // The path `apps/pages` used to answer on, kept pointing at its replacement.
+    //
+    // This exists for one reason and it is worth one paragraph. MercadoPago bakes
+    // `notification_url` into a Checkout Pro preference **when the preference is created**, not
+    // when it is paid. A preference created five minutes before the cutover notifies `/pages/*`
+    // after it, and without this entry that notification is a 404: the buyer pays, the webhook
+    // never lands, and the only trace is a `pending` row. The gateway strips the prefix, so the
+    // notification reaches `/payments/mercadopago/webhook` on the marketplace Worker exactly as a
+    // fresh one would. `/downloads/:ticket` is the other path that survives usefully, for a ticket
+    // in flight; the old content paths simply 404 there, which is correct.
+    //
+    // Remove it once no preference created before the cutover can still be paid.
     name: 'pages',
-    binding: 'PAGES',
-    tag: 'Pages',
-    description: 'Proxy to the standalone application pages Worker (banner, tabs, updates and wiki per application)',
-    // Forwards the whole Request for the same reasons as the CMS: its editorial half reads the
-    // Authorization header itself and writes CF-Connecting-IP onto its audit trail.
+    binding: 'MARKETPLACE',
+    tag: 'Marketplace',
+    description: 'Deprecated alias of /marketplace/*, kept for MercadoPago preferences created before the rename',
+    deprecated: 'MercadoPago preferences created before the marketplace rename still notify this path',
   },
   {
     name: 'support',
@@ -100,8 +131,8 @@ type RegisteredModule = (typeof SERVICE_MODULES)[number]
 /** Binding names declared by the registry, so `Env` cannot drift out of sync with it. */
 type ServiceBinding = RegisteredModule['binding']
 
-/** Module names, in registry order — the `modules` list `GET /` advertises. */
-const SERVICE_MODULE_NAMES = SERVICE_MODULES.map(({ name }) => name)
+/** Module names, in registry order — the `modules` list `GET /` advertises. Aliases are not modules. */
+const SERVICE_MODULE_NAMES = SERVICE_MODULES.filter((module) => !('deprecated' in module)).map(({ name }) => name)
 
 /** Path prefixes the gateway's own CORS middleware must not touch. */
 const CORS_DELEGATED_PREFIXES = SERVICE_MODULES.filter((module) => 'ownsCors' in module && module.ownsCors).map(

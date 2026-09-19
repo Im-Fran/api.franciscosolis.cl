@@ -19,7 +19,38 @@ import { randomUUID, webcrypto } from 'node:crypto'
 import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 
-const DATABASE = 'franciscosolis_auth'
+/**
+ * The arguments to parse, with a leading `--` dropped.
+ *
+ * `pnpm run applications -- <args>` is the documented way to call this, and pnpm 11 forwards that
+ * separator into `process.argv` rather than swallowing it. `parseArgs` reads a bare `--` as the end
+ * of options, so every flag after it became a *positional*: `--remote` stopped being seen, the
+ * script silently fell back to the local database, and the run died on `no such table:
+ * applications` — while `--dev` kept working, because it is read straight off `process.argv` below
+ * and never went through `parseArgs` at all. That asymmetry is what made it look like a credentials
+ * problem.
+ *
+ * Only a *leading* separator is dropped: one appearing later is the caller's own and still ends
+ * option parsing where they asked it to.
+ */
+const ARGS = process.argv.slice(2)
+if (ARGS[0] === '--') {
+  ARGS.shift()
+}
+
+/**
+ * Which stack to act on. `--dev` targets the development Worker's own database, which is a separate
+ * D1 instance with its own client applications: the development stack signs in on
+ * dev.franciscosolis.cl, so its redirect URIs are different values, not the same ones with a flag.
+ *
+ * Read off `ARGS` rather than `process.argv` so it cannot disagree with everything `parseArgs`
+ * sees — the exact disagreement described above.
+ */
+const development = ARGS.includes('--dev')
+const DATABASE = development ? 'franciscosolis_auth_dev' : 'franciscosolis_auth'
+
+/** Wrangler needs the environment too, or it resolves the binding out of the top-level config. */
+const ENVIRONMENT_ARGS = development ? ['--env', 'dev'] : []
 
 /** Same rule as `createApplicationSchema` in src/routes/admin/applications.ts. */
 const CLIENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/
@@ -40,6 +71,7 @@ Commands:
 
 Options:
   --remote                    Act on the real franciscosolis_auth database (default: local)
+  --dev                       Act on the development stack (franciscosolis_auth_dev) instead
   --client-id <id>            Client id, lowercase alphanumeric and dashes
   --name <name>               Display name
   --description <text>        Description ("" clears it)
@@ -68,6 +100,7 @@ Options:
 Examples:
   pnpm run applications -- list --remote
   pnpm run applications -- create franciscosolis-web --name "Landing" --redirect-uri https://franciscosolis.cl/auth/callback
+  pnpm run applications -- create franciscosolis-web --name "Landing (dev)" --redirect-uri https://dev.franciscosolis.cl/auth/callback --dev --remote
   pnpm run applications -- update franciscosolis-cms --add-redirect-uri http://localhost:5174/auth/callback
   pnpm run applications -- rotate-secret my-backend --grace 86400 --remote
   pnpm run applications -- rotate-secret my-backend --grace 0 --remote     # a leak: cut the old one off now
@@ -77,6 +110,7 @@ Examples:
 
 const OPTIONS = {
   remote: { type: 'boolean' },
+  dev: { type: 'boolean' },
   json: { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   yes: { type: 'boolean', short: 'y' },
@@ -114,9 +148,22 @@ const fail = (message) => {
 let values
 let positionals
 try {
-  ;({ values, positionals } = parseArgs({ allowPositionals: true, options: OPTIONS }))
+  ;({ values, positionals } = parseArgs({ args: ARGS, allowPositionals: true, options: OPTIONS }))
 } catch (error) {
   console.error(`${error.message}\n${USAGE}`)
+  process.exit(1)
+}
+
+// A positional that looks like a flag means option parsing ended earlier than the caller meant it
+// to — a stray `--`, most likely — and every flag past that point is being ignored. Ignoring
+// `--remote` silently is how this script came to write to the wrong database, so it refuses instead.
+const swallowed = positionals.filter((positional) => positional.startsWith('-'))
+if (swallowed.length > 0) {
+  console.error(
+    `These look like options but were read as positional arguments: ${swallowed.join(', ')}\n` +
+      'Something ended option parsing early — usually a `--` in the middle of the command line. ' +
+      `Remove it and run again.\n${USAGE}`,
+  )
   process.exit(1)
 }
 
@@ -169,14 +216,42 @@ const auditStatement = (event, { applicationId = null, metadata = {} } = {}) =>
   `INSERT INTO audit_logs (id, event, application_id, metadata) VALUES (${quote(randomUUID())}, ${quote(event)}, ${quote(applicationId)}, ${quote(JSON.stringify({ source: 'cli', ...metadata }))});`
 
 /**
+ * Reads the failure Wrangler reports in `--json` mode, which it writes to *stdout*:
+ *
+ *     { "error": { "text": "no such table: applications: SQLITE_ERROR" } }
+ *
+ * Returns null when stdout holds nothing shaped like that, so the caller can fall back to printing
+ * it verbatim rather than deciding the run failed silently.
+ */
+const readWranglerError = (stdout) => {
+  const start = (stdout ?? '').indexOf('{')
+  if (start === -1) {
+    return null
+  }
+  try {
+    const { error } = JSON.parse(stdout.slice(start))
+    const text = error?.text ?? error?.message
+    return typeof text === 'string' && text.length > 0 ? text : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Runs SQL through `wrangler d1 execute` and returns the rows of every statement, flattened.
- * `--json` keeps Wrangler's banner out of the output; failures print Wrangler's own stderr, which
- * is more useful than anything this script could reword.
+ * `--json` keeps Wrangler's banner out of the output; a failure prints Wrangler's own words, which
+ * are more useful than anything this script could reword.
+ *
+ * Where those words are is the part worth knowing: in `--json` mode Wrangler puts the error on
+ * **stdout** and leaves stderr holding at most a proxy warning. This used to print stderr alone,
+ * which turned every SQL error, missing table and expired credential into a bare `exit 1` with
+ * nothing on screen — the failure mode that is hardest to debug and the easiest to mistake for the
+ * script's own bug.
  */
 const query = (sql) => {
   const result = spawnSync(
     'wrangler',
-    ['d1', 'execute', DATABASE, remote ? '--remote' : '--local', '--json', '--yes', '--command', sql],
+    ['d1', 'execute', DATABASE, ...ENVIRONMENT_ARGS, remote ? '--remote' : '--local', '--json', '--yes', '--command', sql],
     { encoding: 'utf8' },
   )
 
@@ -185,6 +260,9 @@ const query = (sql) => {
   }
   if (result.status !== 0) {
     process.stderr.write(result.stderr ?? '')
+    const reported = readWranglerError(result.stdout)
+    // Verbatim when it is not the documented shape: an unrecognised failure is still worth reading.
+    process.stderr.write(reported ? `Wrangler failed: ${reported}\n` : (result.stdout ?? ''))
     process.exit(result.status ?? 1)
   }
 

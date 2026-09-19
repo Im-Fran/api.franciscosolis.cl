@@ -2,7 +2,8 @@
 /**
  * Bootstraps the first administrator of the auth Worker.
  *
- * Usage: `pnpm run admin:bootstrap` (local D1) or `pnpm run admin:bootstrap -- --remote`.
+ * Usage: `pnpm run admin:bootstrap` (local D1) or `pnpm run admin:bootstrap -- --remote`. Add
+ * `--dev` to act on the development stack's database instead.
  *
  * Sign-up is invitation-only and there is no environment variable that bypasses it, so the very
  * first account has to be seeded into the database. This asks for an address and writes a pending,
@@ -18,9 +19,14 @@ import { createInterface } from 'node:readline/promises'
 const INVITATION_TTL_DAYS = 7
 
 const remote = process.argv.includes('--remote')
+// `--dev` targets the development stack's own database. It is a separate D1 instance with separate
+// users, so the first administrator of the development environment has to be invited separately.
+const development = process.argv.includes('--dev')
+const database = development ? 'franciscosolis_auth_dev' : 'franciscosolis_auth'
+const environmentArgs = development ? ['--env', 'dev'] : []
 
 const rl = createInterface({ input: process.stdin, output: process.stdout })
-const email = (await rl.question(`Email address to make admin (${remote ? 'REMOTE' : 'local'} database): `))
+const email = (await rl.question(`Email address to make admin (${remote ? 'REMOTE' : 'local'} ${database}): `))
   .trim()
   .toLowerCase()
 rl.close()
@@ -46,7 +52,7 @@ const sql = `
 
 const { status } = spawnSync(
   'wrangler',
-  ['d1', 'execute', 'franciscosolis_auth', remote ? '--remote' : '--local', '--command', sql],
+  ['d1', 'execute', database, ...environmentArgs, remote ? '--remote' : '--local', '--command', sql],
   { stdio: 'inherit' },
 )
 

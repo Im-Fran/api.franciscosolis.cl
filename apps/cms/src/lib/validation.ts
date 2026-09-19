@@ -1,5 +1,5 @@
 import * as v from 'valibot'
-import { PAGINATION } from '@/lib/config'
+import { PAGINATION, TRANSLATABLE_FIELD_LIMITS } from '@/lib/config'
 import { TRANSLATION_LOCALES } from '@/lib/locales'
 
 /**
@@ -49,8 +49,8 @@ const tagList = v.optional(
  * be longer than the text it translates is allowed to be.
  */
 const translationFields = {
-  title: v.optional(v.nullable(trimmedText(200))),
-  summary: v.optional(v.nullable(trimmedText(600))),
+  title: v.optional(v.nullable(trimmedText(TRANSLATABLE_FIELD_LIMITS.title))),
+  summary: v.optional(v.nullable(trimmedText(TRANSLATABLE_FIELD_LIMITS.summary))),
 }
 
 const contentTranslations = v.optional(
@@ -58,8 +58,8 @@ const contentTranslations = v.optional(
     v.picklist(TRANSLATION_LOCALES),
     v.strictObject({
       ...translationFields,
-      subtitle: v.optional(v.nullable(trimmedText(200))),
-      body: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(100_000)))),
+      subtitle: v.optional(v.nullable(trimmedText(TRANSLATABLE_FIELD_LIMITS.subtitle))),
+      body: v.optional(v.nullable(v.pipe(v.string(), v.maxLength(TRANSLATABLE_FIELD_LIMITS.body)))),
     }),
   ),
 )

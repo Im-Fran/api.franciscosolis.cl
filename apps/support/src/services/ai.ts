@@ -1,9 +1,11 @@
 import * as v from 'valibot'
+import { formatForField, translate } from '@franciscosolis/translate'
 import type { Database } from '@/db/client'
 import { aiRequests } from '@/db/schema'
 import type { Env } from '@/env'
-import { INBOUND, TICKET_PRIORITY } from '@/lib/config'
+import { INBOUND, TICKET_PRIORITY, TRANSLATION } from '@/lib/config'
 import { LOCALES } from '@/lib/locales'
+import type { Locale } from '@/lib/locales'
 
 /**
  * Every call this Worker makes to Workers AI, and the meter beside it.
@@ -12,11 +14,11 @@ import { LOCALES } from '@/lib/locales'
  * per-Worker spend cap, so without a log the first sign of a runaway loop in a front-end is the
  * invoice. The same table is the rate limiter's index.
  *
- * Nothing here is on a critical path. Both callers treat a failure as "no answer", never as an
+ * Nothing here is on a critical path. Every caller treats a failure as "no answer", never as an
  * error — see `enrichTicket` below for why that matters more than a fallback branch would.
  */
 
-type AiKind = 'assist' | 'email_extract' | 'embed'
+type AiKind = 'assist' | 'email_extract' | 'embed' | 'translate'
 
 /** Runs a model, records what it cost, and returns null rather than throwing. */
 const runModel = async (
@@ -167,6 +169,46 @@ const safeParse = (value: string): unknown => {
   }
 }
 
+/**
+ * Drafts one prose field of a help article, a category or a label in one other language.
+ *
+ * The prompt is not here. It lives in `@franciscosolis/translate`, shared with `apps/cms` and
+ * `apps/marketplace`, because the three Workers differ in the database the call is metered in and the
+ * gate in front of it, not in a single word of what the model is asked. What this adds is the
+ * meter: `runModel` writes the `ai_requests` row that `translationsByAgent` rate-limits on.
+ */
+const translateField = async (
+  db: Database,
+  env: Env,
+  input: {
+    text: string
+    field: string
+    sourceLocale: Locale
+    targetLocale: Locale
+    maxLength?: number
+    actorEmail: string
+  },
+): Promise<string | null> =>
+  translate(
+    (modelInput) =>
+      runModel(db, env, {
+        kind: 'translate',
+        model: env.AI_TEXT_MODEL,
+        input: modelInput,
+        inputChars: input.text.length,
+        actorEmail: input.actorEmail,
+        timeoutMs: TRANSLATION.timeoutMs,
+      }),
+    {
+      text: input.text,
+      field: input.field,
+      format: formatForField(input.field),
+      sourceLocale: input.sourceLocale,
+      targetLocale: input.targetLocale,
+      maxLength: input.maxLength,
+    },
+  )
+
 /** Embeds one piece of text. Returns null on any failure, like everything else here. */
 const embed = async (
   db: Database,
@@ -187,5 +229,5 @@ const embed = async (
   return Array.isArray(vector) ? vector : null
 }
 
-export { embed, extractFromEmail, runModel }
+export { embed, extractFromEmail, runModel, translateField }
 export type { AiKind, Extraction }

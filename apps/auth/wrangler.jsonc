@@ -18,6 +18,11 @@
   // Worker never uses (`pretty: true`), which drags ~1.5 MB of formatter into the bundle and into
   // every cold start. The stub throws if anything actually calls it, so the day that assumption
   // stops holding is a loud failure rather than silently unformatted output.
+  //
+  // Unlike the bindings below, this is *not* restated under `env.dev`: `alias` is one of the keys a
+  // named environment inherits, and Wrangler rejects it inside one ("Unexpected fields found in
+  // env.dev field"). It was restated there at first, which cost nothing but a warning on every
+  // deploy — the dev bundle came out byte for byte the size of the production one either way.
   "alias": {
     "prettier/standalone": "../../packages/emails/src/prettier-stub.ts",
     "prettier/plugins/html": "../../packages/emails/src/prettier-stub.ts"
@@ -72,6 +77,59 @@
     "traces": {
       "enabled": true,
       "head_sampling_rate": 0.25
+    }
+  },
+  // The development stack: `auth-dev`, issuing tokens for api-dev.franciscosolis.cl.
+  //
+  // A named environment inherits nothing but the top-level inheritable keys, so every binding and
+  // var below is restated rather than merged — the same rule `apps/support`'s `test` environment
+  // documents. The parts worth reading twice:
+  //
+  // - The database and the bucket are the `-dev` copies. Signing in on dev must never touch a real
+  //   account, and an avatar uploaded for a test must never land in the moderation queue that
+  //   serves franciscosolis.cl.
+  // - `AUTH_ISSUER` is the dev gateway, which makes a dev token structurally unusable against a
+  //   production module: every consumer compares `iss` exactly.
+  // - `JWT_PRIVATE_KEY` and the Google client are secrets, and secrets are per environment. Set
+  //   them with `wrangler secret put --env dev`; a key shared with production would make a dev
+  //   token verify against the production JWKS, which is the whole point of not sharing it.
+  "env": {
+    "dev": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_auth_dev",
+          "database_id": "8ffec362-35a5-43ec-ba1a-a51fe439f94d",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "AVATARS",
+          "bucket_name": "franciscosolis-avatars-dev"
+        }
+      ],
+      // The sending address is shared with production on purpose: Cloudflare verifies it per
+      // address, and a dev-only sender would be one more piece of dashboard configuration for no
+      // safety gained. What a test email says it comes from is the `MAIL_FROM_NAME` below.
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "hola@mail.franciscosolis.cl"
+          ]
+        }
+      ],
+      "vars": {
+        "AUTH_PUBLIC_URL": "https://api-dev.franciscosolis.cl/auth",
+        "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
+        "AUTH_LOGIN_URL": "https://dev.franciscosolis.cl/apps/auth",
+        "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+        // Suffixed so an email from the development stack is recognisable in an inbox before it is
+        // opened. Magic links in dev point at api-dev and work nowhere else, and somebody has to be
+        // able to tell that from the sender line.
+        "MAIL_FROM_NAME": "FranciscoSolis (dev)"
+      }
     }
   }
 }

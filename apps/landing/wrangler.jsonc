@@ -25,5 +25,14 @@
       "enabled": true,
       "head_sampling_rate": 0.25
     }
+  },
+  // The development stack: `landing-dev`, reached only through the `api-dev` gateway's service binding.
+  //
+  // The block is empty because this Worker holds no bindings of its own: everything it needs is an
+  // inheritable top-level key, and its one secret (`GH_TOKEN`) is set per environment with
+  // `wrangler secret put --env dev`. It still has to exist — `wrangler deploy --env dev` fails on
+  // an environment that is not declared, which is the failure mode worth having.
+  "env": {
+    "dev": {}
   }
 }

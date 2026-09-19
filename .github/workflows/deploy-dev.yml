@@ -1,0 +1,201 @@
+name: Deploy (development)
+
+# Deploys the development stack: `api-dev`, `landing-dev`, `auth-dev`, `cms-dev`, `marketplace-dev` and
+# `support-dev`, reachable at api-dev.franciscosolis.cl and paired with dev.franciscosolis.cl.
+#
+# Why this workflow exists at all, when production is deployed by Cloudflare's Git integration:
+# that integration builds one Worker per connected repository path and runs a plain
+# `wrangler deploy`, with no way to pass `--env dev`. Its configuration also lives in the
+# dashboard, where it cannot be reviewed in a pull request. The development stack is the half that
+# can live in git, so it does.
+#
+# The shape here is the one thing worth reading before changing it. Three stages, in order:
+#
+#  1. `migrate` applies pending D1 migrations to the four development databases. Production cannot
+#     do this in order — its migration workflow races Cloudflare's build, as .github/workflows/
+#     migrate.yml explains at length — but here both halves are ours, so the schema is always
+#     ahead of the code that reads it. That is worth having somewhere: a migration that breaks on
+#     a real database breaks here first, in an environment nobody is reading.
+#  2. `auth` deploys `auth-dev` on its own, ahead of the rest. `cms`, `marketplace` and `support` each
+#     bind it as a service, and a service binding is resolved at deploy time against a Worker that
+#     must already exist — so on a first deploy all three fail with "Service binding 'AUTH'
+#     references Worker 'auth-dev' which was not found" if they run as its peers. (They did, once.)
+#  3. `modules` deploys the four that are left, in parallel: none of them binds another.
+#  4. `gateway` deploys `api-dev` last, for the same reason as stage 2 — it binds all five.
+#     Deploying it first fails outright, and after that silently keeps the previous generation of a
+#     module bound.
+#
+# Until the `prd` branch exists, this runs on the same push to `dev` that ships production. That is
+# deliberate and temporary: today `dev` is the default branch and releases both. Once `prd` is
+# created, production moves behind it and this workflow keeps `dev` exactly as it is.
+
+on:
+  push:
+    branches: [dev]
+  # For re-running a deploy without a commit — a secret that was just set, or a module that failed
+  # to deploy after its dependency was fixed.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy of the development stack at a time, and never cancel one in flight: a run interrupted
+# between the modules and the gateway leaves the two halves on different generations.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+jobs:
+  # The four Workers that own a database. `api` and `landing` are stateless, which is why this list
+  # is shorter than the one below.
+  migrate:
+    name: migrate ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      # One database failing must not leave the others un-migrated as a side effect.
+      fail-fast: false
+      matrix:
+        app: [auth, cms, marketplace, support]
+
+    steps:
+      # First, before anything installs, so a missing secret reads as a missing secret rather than
+      # as a Wrangler authentication error several minutes later.
+      - name: Check credentials
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set as repository secrets. The token needs D1:Edit, Workers Scripts:Edit and Workers R2 Storage:Edit on this account — `auth` and `marketplace` each bind a bucket, and a deploy that cannot read it fails with an authentication error."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Recorded before the apply because this is the only moment it is knowable: once applied,
+      # `list` reports nothing and this log is the only record of what ran.
+      - name: List pending migrations
+        run: |
+          echo "## ${{ matrix.app }} (dev)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          pnpm --filter ${{ matrix.app }} run db:migrate:list:dev 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # Wrangler skips its confirmation prompt in a non-interactive shell, captures a backup before
+      # applying, and rolls back a migration that errors while leaving the previous one applied. So
+      # a failure here is safe to re-run once the migration itself is fixed.
+      - name: Apply migrations
+        run: pnpm --filter ${{ matrix.app }} run db:migrate:remote:dev
+
+  # `auth-dev` on its own, and ahead of the rest: three of the modules below bind it as a service,
+  # and a service binding has to name a Worker that already exists at deploy time. It is the same
+  # constraint that puts the gateway last, one level further down.
+  auth:
+    name: deploy auth-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: migrate
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy
+        run: pnpm --filter auth run deploy:dev
+
+  # The rest of the internal Workers. None is publicly routed: each answers only through the
+  # gateway's service binding, plus — for `support` — an Email Routing rule and a cron trigger.
+  # `landing` binds nothing and only waits here for the sake of one ordering rule instead of two.
+  modules:
+    name: deploy ${{ matrix.app }}-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: auth
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [landing, cms, marketplace, support]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy
+        run: pnpm --filter ${{ matrix.app }} run deploy:dev
+
+  # `api-dev` last: its five service bindings are resolved at deploy time against Workers that must
+  # already exist under exactly those names.
+  gateway:
+    name: deploy api-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: modules
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy
+        run: pnpm --filter api run deploy:dev
+
+      - name: Record what is deployed
+        run: |
+          {
+            echo '## Development stack'
+            echo
+            echo '- Gateway: https://api-dev.franciscosolis.cl'
+            echo '- Front-end: https://dev.franciscosolis.cl'
+          } >> "$GITHUB_STEP_SUMMARY"

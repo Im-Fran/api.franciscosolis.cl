@@ -122,9 +122,74 @@
   // `test/unit/wrangler-config.test.ts` fails if the two copies drift apart.
   //
   // The suite supplies its own `env.AI` and `env.VECTORIZE` by assignment instead — see
-  // `test/helpers/ai.ts`. That is the same technique `apps/pages` uses to stub its AUTH binding, and
+  // `test/helpers/ai.ts`. That is the same technique `apps/marketplace` uses to stub its AUTH binding, and
   // it has the useful property that any code path reaching the real service in a test throws loudly.
   "env": {
+    // The development stack: `support-dev`, behind api-dev.franciscosolis.cl/support.
+    //
+    // Two of this Worker's entry points do not come through the gateway, and that is what makes its
+    // development environment different from every other one here:
+    //
+    // - `scheduled` is inherited from the top-level `triggers`, so the dev Worker sweeps on the same
+    //   five-minute cron against its own database. That is wanted: the deferred-reply rule is one of
+    //   the things worth testing before it ships.
+    // - `email` is dispatched by Cloudflare Email Routing, which is dashboard configuration this
+    //   repository cannot hold. The addresses below are the `-dev` ones precisely so that nothing
+    //   routes to them until somebody configures it: until then the development Worker sends mail
+    //   but receives none, which is the safe half to be missing. Pointing them at
+    //   soporte@franciscosolis.cl instead would make a reply to a test email open a real ticket in
+    //   the production system.
+    "dev": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_support_dev",
+          "database_id": "477d05f2-a95a-44fe-b412-1c90014ab61f",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "soporte@mail.franciscosolis.cl"
+          ]
+        }
+      ],
+      "ai": {
+        "binding": "AI"
+      },
+      // A separate index, not the production one. The embeddings of a half-written test article have
+      // no business being returned by the help centre people actually read, and an index cannot be
+      // filtered back out after the fact.
+      "vectorize": [
+        {
+          "binding": "VECTORIZE",
+          "index_name": "franciscosolis-support-help-dev"
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth-dev"
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
+        "SUPPORT_ALLOWED_AUDIENCES": "franciscosolis-support",
+        "SUPPORT_REQUESTER_AUDIENCES": "franciscosolis-web,franciscosolis-cms,franciscosolis-support",
+        "SUPPORT_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+        "SUPPORT_INBOX_ADDRESSES": "soporte-dev@franciscosolis.cl,support-dev@franciscosolis.cl",
+        "SUPPORT_REPLY_DOMAIN": "dev.franciscosolis.cl",
+        "SUPPORT_TICKET_URL": "https://dev.franciscosolis.cl/tickets",
+        "MAIL_FROM_EMAIL": "soporte@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "FranciscoSolis Support (dev)",
+        "MAIL_REPLY_TO": "soporte-dev@franciscosolis.cl",
+        "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "AI_EMBEDDING_MODEL": "@cf/baai/bge-m3"
+      }
+    },
     "test": {
       "d1_databases": [
         {

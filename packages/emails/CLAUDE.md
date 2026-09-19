@@ -10,9 +10,10 @@ language) into files, commits, or code in this repo.
 ## Purpose
 
 `@franciscosolis/emails` holds every email body the monorepo sends, written as
-[react-email](https://react.email) components. `apps/auth` uses it for magic links,
-invitations and account access notices, `apps/cms` for editorial messages. It is the first entry under `packages/`
-and the only non-Worker workspace package.
+[react-email](https://react.email) components. `apps/auth` uses it for magic links, invitations and
+account access notices, `apps/cms` for editorial messages, `apps/support` for ticket correspondence,
+and `apps/marketplace` for the two documents that come with a sale: the voucher and the notice that one was
+refunded. It is the first entry under `packages/` and the only non-Worker workspace package.
 
 A consumer imports a `render*Email` function, gets `{ subject, html, text }` and hands
 that to its Cloudflare Email Sending binding. No Worker builds markup itself any more.
@@ -35,7 +36,9 @@ package. That is deliberate on all four counts — see below.
 - `src/theme.ts` — `palette` (the brand's published colours) and `theme` (what the components
   actually reference). The only place a hex code belongs.
 - `src/render.ts` — `renderEmail`, the primitive every template's wrapper calls.
-- `src/components/` — `email-layout.tsx` (the shell), `action-link.tsx`, `paragraph.tsx`.
+- `src/components/` — `email-layout.tsx` (the shell), `action-link.tsx`, `paragraph.tsx`,
+  `detail-rows.tsx` (the label/value block a receipt states its facts in).
+- `src/money.ts` — `formatMoney`, the one place an amount is turned into a string.
 - `src/templates/` — one file per email. Also the directory the preview server reads.
 - `src/prettier-stub.ts` — not a template; see the bundle note below.
 - `assets/lockup.png` — the logo the layout points at. The bytes that actually get served live in
@@ -82,6 +85,23 @@ package. That is deliberate on all four counts — see below.
   which is exactly the half a recipient skimming "where was this from" needs. It also renders a
   detail it does not have as `Unknown` rather than dropping the row: the sender decides what is
   known, and a silently missing line reads as nothing at all.
+- **`DetailRows` is a `<table>`, and every pair is its own `<Row>`.** Outlook's Word engine ignores
+  `display` on anything, so a two-column layout that is not a table is a two-line layout there — and a
+  stacked-on-mobile layout would need a client that supports stacking, which Word never will. Two
+  narrow columns read correctly at every width; a stacked layout that silently does not is worse.
+- **Amounts are formatted here, dates are not** (`money.ts`). `formatMoney` pins
+  `maximumFractionDigits` to zero because every amount this monorepo charges is an integer of the
+  currency's major unit — CLP has no minor unit, and `$1.990,00` on a peso receipt is the kind of thing
+  somebody writes in asking about. An unrecognised currency falls back to `<code> <amount>` rather than
+  throwing: an exception while rendering a receipt loses the whole message. Dates are deliberately
+  *not* done here — a template takes an already-formatted string, because the sending Worker is the
+  only thing that knows the recipient's language and the timezone the business runs in.
+- **The sale templates say what they are for, and the refund one is not sent for a chargeback.** A
+  refund is us giving money back and there is something reassuring to say about it; a chargeback is the
+  payer's bank having already taken it — they know, and writing to tell them reads as a challenge. The
+  right-of-withdrawal line on the receipt is shown only for a purchase: a donation is not a sale under
+  the Chilean consumer statute and a gift has nothing to give back. It states the statutory ten days
+  rather than a date, because this package does no date arithmetic — `apps/marketplace` owns the deadline.
 - **`ContentEmail` inserts its body with `dangerouslySetInnerHTML`, deliberately.** It exists
   to wrap markup an authenticated CMS editor wrote; that editor already controls the whole
   document, and re-serialising their HTML would silently rewrite it. Do not point any

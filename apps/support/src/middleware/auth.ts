@@ -74,13 +74,13 @@ const isAllowedEmail = (env: Env, email: string) => {
  * must have been verified by its provider; that address must belong to an allowed domain; and the
  * token must carry the `support:agent` permission.
  *
- * `apps/cms` and `apps/pages` deliberately stop at the domain check and never look at `permissions`.
+ * `apps/cms` deliberately stops at the domain check and never looks at `permissions`; `apps/marketplace` is the other Worker that does check one.
  * This Worker cannot, because tickets are *assignable to people*, and "assign to a person" only
  * means something if there is a defined set of people. Under a domain check alone that set is
  * "everyone with a company address", which is not a roster. `apps/auth` resolves roles and
  * permissions per client application, so a distinct audience plus a granted permission is exactly
  * the mechanism that produces one — and it is why the support console is registered as its own
- * application rather than reusing the CMS's the way `apps/pages` does.
+ * application rather than reusing the CMS's, which is the same reason `apps/marketplace` was given one of its own.
  *
  * The cost, inherited from `lib/jwks.ts`: `permissions` is a snapshot taken when the token was
  * minted, so revoking an agent takes effect within one access-token lifetime (15 minutes) rather

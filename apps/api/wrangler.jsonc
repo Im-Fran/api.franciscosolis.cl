@@ -35,8 +35,8 @@
       "service": "cms"
     },
     {
-      "binding": "PAGES",
-      "service": "pages"
+      "binding": "MARKETPLACE",
+      "service": "marketplace"
     },
     {
       "binding": "SUPPORT",
@@ -53,6 +53,48 @@
     "traces": {
       "enabled": true,
       "head_sampling_rate": 0.25
+    }
+  },
+  // The development stack: `api-dev`, on api-dev.franciscosolis.cl.
+  //
+  // A named environment inherits the top-level *inheritable* keys and nothing else, and `routes` is
+  // one of the inheritable ones — so this block has to restate it. Without the override the dev
+  // gateway would claim api.franciscosolis.cl the first time it deployed, taking production's
+  // hostname with it.
+  "env": {
+    "dev": {
+      "routes": [
+        {
+          "pattern": "api-dev.franciscosolis.cl",
+          "zone_name": "franciscosolis.cl",
+          "custom_domain": true
+        }
+      ],
+      // Every binding names the `-dev` half of the stack. A service binding resolves by Worker
+      // name, so leaving `landing` here would wire the development gateway straight into the
+      // production modules — the one mistake this whole environment exists to make impossible.
+      "services": [
+        {
+          "binding": "LANDING",
+          "service": "landing-dev"
+        },
+        {
+          "binding": "AUTH",
+          "service": "auth-dev"
+        },
+        {
+          "binding": "CMS",
+          "service": "cms-dev"
+        },
+        {
+          "binding": "MARKETPLACE",
+          "service": "marketplace-dev"
+        },
+        {
+          "binding": "SUPPORT",
+          "service": "support-dev"
+        }
+      ]
     }
   }
 }
