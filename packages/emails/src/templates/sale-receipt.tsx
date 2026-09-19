@@ -14,7 +14,7 @@ type SaleReceiptEmailProps = {
   /** Voucher number, e.g. `FS-2026-000042`. The one thing a recipient quotes back at us. */
   voucherNumber: string
   /** Application the sale was for, by name rather than by slug. */
-  applicationName: string
+  productName: string
   /** `purchase` for a licence, `donation` for an optional payment. Changes the wording, not the shape. */
   kind: 'purchase' | 'donation'
   amount: number
@@ -43,7 +43,7 @@ const copy = {
     action: { purchase: 'Go to your download', donation: 'Open the page' },
     labels: {
       number: 'Receipt',
-      application: 'Application',
+      product: 'Product',
       amount: 'Amount',
       source: 'Paid with',
       date: 'Date',
@@ -71,7 +71,7 @@ const copy = {
     action: { purchase: 'Ir a tu descarga', donation: 'Abrir la página' },
     labels: {
       number: 'Comprobante',
-      application: 'Aplicación',
+      product: 'Producto',
       amount: 'Monto',
       source: 'Pagado con',
       date: 'Fecha',
@@ -105,7 +105,7 @@ const copy = {
  */
 const SaleReceiptEmail = ({
   voucherNumber,
-  applicationName,
+  productName,
   kind,
   amount,
   currency,
@@ -122,12 +122,12 @@ const SaleReceiptEmail = ({
 
   return (
     <EmailLayout preview={t.subject(voucherNumber)} heading={heading} brandName={brandName}>
-      <Paragraph>{t.intro[kind](applicationName)}</Paragraph>
+      <Paragraph>{t.intro[kind](productName)}</Paragraph>
 
       <DetailRows
         rows={[
           { label: t.labels.number, value: voucherNumber, mono: true },
-          { label: t.labels.application, value: applicationName },
+          { label: t.labels.product, value: productName },
           { label: t.labels.amount, value: formatMoney(amount, currency, locale) },
           { label: t.labels.source, value: t.sources[source] },
           { label: t.labels.date, value: issuedAt },
@@ -145,14 +145,14 @@ const SaleReceiptEmail = ({
 
 SaleReceiptEmail.PreviewProps = {
   voucherNumber: 'FS-2026-000042',
-  applicationName: 'OpenBattery',
+  productName: 'OpenBattery',
   kind: 'purchase',
   amount: 4990,
   currency: 'CLP',
   source: 'mercadopago',
   issuedAt: '19 September 2026',
   reference: '7f3c1a9e-2d51-4c1a-9a12-6b0f0d9a1c77',
-  url: 'https://franciscosolis.cl/application/openbattery',
+  url: 'https://franciscosolis.cl/product/openbattery',
   locale: 'en',
 } satisfies SaleReceiptEmailProps
 

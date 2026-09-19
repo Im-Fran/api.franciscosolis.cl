@@ -15,7 +15,7 @@
 Four Workers in this monorepo send mail — [`apps/auth`](../../apps/auth/README.md) (sign-in links,
 invitations and account access notices), [`apps/cms`](../../apps/cms/README.md) (editorial messages),
 [`apps/support`](../../apps/support/README.md) (ticket correspondence) and
-[`apps/pages`](../../apps/pages/README.md) (the voucher for a sale, and the notice that one was
+[`apps/marketplace`](../../apps/marketplace/README.md) (the voucher for a sale, and the notice that one was
 refunded). Before this package they each assembled their own HTML with template literals, which
 meant hand-escaping every interpolated value, hand-writing a plain-text twin of each body, and subtly
 different visual identities arriving from the same domain.
@@ -60,8 +60,8 @@ esbuild, so a build step here would only add an artifact to keep in sync.
 | `renderSupportTicketReceivedEmail` | Confirmation that a ticket was opened, carrying its access link. Used by `apps/support`. |
 | `renderSupportTicketReplyEmail` | A reply on a ticket. Used by `apps/support`. |
 | `renderSupportParticipantAddedEmail` | Notice that somebody was added to a ticket. Used by `apps/support`. |
-| `renderSaleReceiptEmail` | The voucher: the receipt for a sale, whether it was paid by card, in cash, by transfer, or given away. Used by `apps/pages`. |
-| `renderSaleRefundEmail` | Notice that a payment was refunded, with the reason. Used by `apps/pages`. Deliberately not sent for a chargeback. |
+| `renderSaleReceiptEmail` | The voucher: the receipt for a sale, whether it was paid by card, in cash, by transfer, or given away. Used by `apps/marketplace`. |
+| `renderSaleRefundEmail` | Notice that a payment was refunded, with the reason. Used by `apps/marketplace`. Deliberately not sent for a chargeback. |
 | `renderEmail` | The primitive every one of the above is built on: element in, `{ subject, html, text }` out. |
 | `EmailLayout`, `ActionLink`, `Paragraph`, `DetailRows` | The building blocks a new template is assembled from. |
 | `formatMoney` | An amount as a receipt prints it — no fraction digits on a currency that has no minor unit. |

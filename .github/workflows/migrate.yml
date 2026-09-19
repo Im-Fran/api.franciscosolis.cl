@@ -39,7 +39,7 @@ permissions:
   contents: read
 
 jobs:
-  # One job per database. `auth`, `cms`, `pages` and `support` are the Workers that own one; `api`
+  # One job per database. `auth`, `cms`, `marketplace` and `support` are the Workers that own one; `api`
   # and `landing` are stateless, which is why this list is shorter than the CI matrix.
   # `fail-fast: false` so one database failing never leaves the others un-migrated as a side effect.
   migrate:
@@ -50,7 +50,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [auth, cms, pages, support]
+        app: [auth, cms, marketplace, support]
 
     # Never two runs against the same database at once, and never cancel one mid-apply: an
     # interrupted migration is the one state that is awkward to reason about afterwards.

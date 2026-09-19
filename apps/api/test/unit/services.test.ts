@@ -17,9 +17,33 @@ describe('service registry', () => {
     expect(typeof bindings[binding]?.fetch).toBe('function')
   })
 
-  it('declares one module per name, with no duplicated prefix or binding', () => {
-    expect(new Set(SERVICE_MODULE_NAMES).size).toBe(SERVICE_MODULES.length)
-    expect(new Set(SERVICE_MODULES.map(({ binding }) => binding)).size).toBe(SERVICE_MODULES.length)
+  it('declares one entry per path, and one binding per module', () => {
+    // Every entry owns a distinct `/<name>/*` route, aliases included: two entries on one path
+    // would mean whichever was registered first silently won.
+    expect(new Set(SERVICE_MODULES.map(({ name }) => name)).size).toBe(SERVICE_MODULES.length)
+    // Bindings are counted over the modules only. A deprecated alias shares its target's binding on
+    // purpose — that is what makes it an alias rather than a second Worker.
+    expect(new Set(SERVICE_MODULE_NAMES).size).toBe(SERVICE_MODULE_NAMES.length)
+    const modules = SERVICE_MODULES.filter((module) => !('deprecated' in module))
+    expect(new Set(modules.map(({ binding }) => binding)).size).toBe(modules.length)
+  })
+
+  /**
+   * An alias is a path this gateway still answers on for compatibility. It is proxied like anything
+   * else and left out of everything that *describes* the service, so a client reading `GET /` or
+   * the OpenAPI document is never pointed at a path that is on its way out.
+   */
+  it('keeps a deprecated alias out of the advertised module list, and says why it exists', () => {
+    for (const module of SERVICE_MODULES) {
+      if ('deprecated' in module) {
+        expect(SERVICE_MODULE_NAMES).not.toContain(module.name)
+        expect(module.deprecated).not.toBe('')
+        // It has to forward somewhere real, or it is a 404 with extra steps.
+        expect(SERVICE_MODULES.some((target) => !('deprecated' in target) && target.binding === module.binding)).toBe(
+          true,
+        )
+      }
+    }
   })
 
   // The name becomes a `/<name>/*` route, a stripped path prefix and an OpenAPI mount point, so

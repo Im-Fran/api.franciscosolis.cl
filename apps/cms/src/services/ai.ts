@@ -15,7 +15,7 @@ import type { Locale } from '@/lib/locales'
  * That is why nothing here throws: the failure modes are all the same failure to the person in
  * front of it.
  *
- * The prompt itself is not here. It lives in `@franciscosolis/translate`, shared with `apps/pages`
+ * The prompt itself is not here. It lives in `@franciscosolis/translate`, shared with `apps/marketplace`
  * and `apps/support`, because the three Workers differ in the database the call is metered in and
  * the gate in front of it, not in a single word of what the model is asked.
  */

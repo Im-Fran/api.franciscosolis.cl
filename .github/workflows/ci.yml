@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [api, landing, auth, cms, pages, support]
+        app: [api, landing, auth, cms, marketplace, support]
 
     steps:
       - name: Checkout

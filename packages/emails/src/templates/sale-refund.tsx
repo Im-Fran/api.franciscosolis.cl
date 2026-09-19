@@ -12,7 +12,7 @@ type RefundReason = 'withdrawal' | 'duplicate' | 'not_delivered' | 'goodwill' | 
 type SaleRefundEmailProps = {
   /** Voucher number of the sale being refunded, so the two emails can be put side by side. */
   voucherNumber: string | null
-  applicationName: string
+  productName: string
   /** What was given back. A partial refund is why this is not simply the sale's amount. */
   amount: number
   currency: string
@@ -38,7 +38,7 @@ const copy = {
     access: 'The download that came with the payment is closed along with it.',
     labels: {
       number: 'Receipt',
-      application: 'Application',
+      product: 'Product',
       amount: 'Refunded',
       reason: 'Reason',
       date: 'Date',
@@ -64,7 +64,7 @@ const copy = {
     access: 'La descarga que venía con el pago queda cerrada junto con él.',
     labels: {
       number: 'Comprobante',
-      application: 'Aplicación',
+      product: 'Producto',
       amount: 'Reembolsado',
       reason: 'Motivo',
       date: 'Fecha',
@@ -95,7 +95,7 @@ const copy = {
  */
 const SaleRefundEmail = ({
   voucherNumber,
-  applicationName,
+  productName,
   amount,
   currency,
   reason,
@@ -109,12 +109,12 @@ const SaleRefundEmail = ({
 
   return (
     <EmailLayout preview={t.heading} heading={t.heading} brandName={brandName}>
-      <Paragraph>{t.intro(applicationName)}</Paragraph>
+      <Paragraph>{t.intro(productName)}</Paragraph>
 
       <DetailRows
         rows={[
           ...(voucherNumber ? [{ label: t.labels.number, value: voucherNumber, mono: true }] : []),
-          { label: t.labels.application, value: applicationName },
+          { label: t.labels.product, value: productName },
           { label: t.labels.amount, value: formatMoney(amount, currency, locale) },
           { label: t.labels.reason, value: t.reasons[reason] },
           { label: t.labels.date, value: refundedAt },
@@ -130,7 +130,7 @@ const SaleRefundEmail = ({
 
 SaleRefundEmail.PreviewProps = {
   voucherNumber: 'FS-2026-000042',
-  applicationName: 'OpenBattery',
+  productName: 'OpenBattery',
   amount: 4990,
   currency: 'CLP',
   reason: 'withdrawal',
@@ -141,7 +141,7 @@ SaleRefundEmail.PreviewProps = {
 } satisfies SaleRefundEmailProps
 
 const renderSaleRefundEmail = (props: SaleRefundEmailProps): Promise<RenderedEmail> =>
-  renderEmail(copy[props.locale ?? 'en'].subject(props.applicationName), <SaleRefundEmail {...props} />)
+  renderEmail(copy[props.locale ?? 'en'].subject(props.productName), <SaleRefundEmail {...props} />)
 
 export { renderSaleRefundEmail, SaleRefundEmail }
 export type { RefundReason, SaleRefundEmailProps }
