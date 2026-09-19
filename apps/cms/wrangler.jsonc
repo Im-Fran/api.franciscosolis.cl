@@ -18,6 +18,11 @@
   // Worker never uses (`pretty: true`), which drags ~1.5 MB of formatter into the bundle and into
   // every cold start. The stub throws if anything actually calls it, so the day that assumption
   // stops holding is a loud failure rather than silently unformatted output.
+  //
+  // Unlike the bindings below, this is *not* restated under `env.dev`: `alias` is one of the keys a
+  // named environment inherits, and Wrangler rejects it inside one ("Unexpected fields found in
+  // env.dev field"). It was restated there at first, which cost nothing but a warning on every
+  // deploy — the dev bundle came out byte for byte the size of the production one either way.
   "alias": {
     "prettier/standalone": "../../packages/emails/src/prettier-stub.ts",
     "prettier/plugins/html": "../../packages/emails/src/prettier-stub.ts"
@@ -90,10 +95,6 @@
   // token is refused in production.
   "env": {
     "dev": {
-      "alias": {
-        "prettier/standalone": "../../packages/emails/src/prettier-stub.ts",
-        "prettier/plugins/html": "../../packages/emails/src/prettier-stub.ts"
-      },
       "d1_databases": [
         {
           "binding": "DB",
