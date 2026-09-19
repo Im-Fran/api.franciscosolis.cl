@@ -12,6 +12,7 @@ import {
   resolveLocale,
   type Locale,
 } from '@/lib/locales'
+import { describePricing } from '@/lib/pricing'
 import { parseTabs } from '@/lib/tabs'
 
 type Application = typeof applications.$inferSelect
@@ -54,6 +55,9 @@ const toPublicApplication = (application: Application, requested: Locale = DEFAU
     accent_color: application.accentColor,
     tabs: parseTabs(application.tabs),
     links: parseLinks(application.links),
+    // Derived rather than raw: `describePricing` nulls the price of an application that is no longer
+    // paid, so a listing can never quote a figure for something currently free. See `lib/pricing.ts`.
+    pricing: describePricing(application),
     published_at: application.publishedAt?.toISOString() ?? null,
     updated_at: application.updatedAt.toISOString(),
   }

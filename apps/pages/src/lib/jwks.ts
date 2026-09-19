@@ -92,9 +92,16 @@ const findKey = (keys: HonoJsonWebKey[], kid: string | undefined) =>
  * would mean up to an hour of rejected logins.
  *
  * The `aud` allowlist matters as much as the signature — a token minted for the public website is
- * a valid token, it is just not a token this Worker accepts a write from.
+ * a valid token, it is just not a token this Worker accepts a write from. It is a *parameter* rather
+ * than read off `env` here, because this Worker now accepts two different populations: editors from
+ * `PAGES_ALLOWED_AUDIENCES`, and buyers reading their own purchases from `PAGES_ACCOUNT_AUDIENCES`.
+ * Every caller names the list it means, so widening one can never silently widen the other.
  */
-const verifyAccessToken = async (env: Env, token: string): Promise<AccessTokenClaims> => {
+const verifyAccessToken = async (
+  env: Env,
+  token: string,
+  allowedAudiences: string,
+): Promise<AccessTokenClaims> => {
   const { header } = decode(token)
 
   let keys = await getJwks(env)
@@ -107,9 +114,9 @@ const verifyAccessToken = async (env: Env, token: string): Promise<AccessTokenCl
     throw new Error(`no published key matches kid "${header.kid}"`)
   }
 
-  const audiences = env.PAGES_ALLOWED_AUDIENCES.split(',').map((entry) => entry.trim()).filter(Boolean)
+  const audiences = allowedAudiences.split(',').map((entry) => entry.trim()).filter(Boolean)
   if (audiences.length === 0) {
-    throw new Error('PAGES_ALLOWED_AUDIENCES is empty, so no token can be accepted')
+    throw new Error('the audience allowlist is empty, so no token can be accepted')
   }
 
   const payload = await verify(token, key, {

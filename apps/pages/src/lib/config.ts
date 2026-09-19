@@ -22,5 +22,28 @@ const BODY_LIMITS = {
 /** `public, max-age=` value on published content, the only responses a shared cache may keep. */
 const PUBLIC_CACHE_SECONDS = 60
 
-export { BODY_LIMITS, CONTENT_STATUS, JWKS_CACHE_TTL, PAGINATION, PUBLIC_CACHE_SECONDS }
-export type { ContentStatus }
+/**
+ * States a payment row moves through. A superset of what the provider reports, mapped in
+ * `src/lib/mercadopago.ts` — `in_process` covers everything that is neither settled nor refused, so
+ * a front-end has one "we are waiting" state rather than a provider's vocabulary.
+ *
+ * Only `approved` grants access. `refunded` is deliberately in the same column rather than a boolean
+ * beside it: a refund is the payment's current state, and a row that says both "paid" and "refunded"
+ * is a row two code paths will disagree about.
+ */
+const PURCHASE_STATUSES = ['pending', 'in_process', 'approved', 'rejected', 'cancelled', 'refunded'] as const
+type PurchaseStatus = (typeof PURCHASE_STATUSES)[number]
+
+/** The one status that entitles an account to a download. Stated once so nothing widens it locally. */
+const ENTITLING_STATUS: PurchaseStatus = 'approved'
+
+export {
+  BODY_LIMITS,
+  CONTENT_STATUS,
+  ENTITLING_STATUS,
+  JWKS_CACHE_TTL,
+  PAGINATION,
+  PUBLIC_CACHE_SECONDS,
+  PURCHASE_STATUSES,
+}
+export type { ContentStatus, PurchaseStatus }

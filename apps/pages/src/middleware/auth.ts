@@ -100,7 +100,7 @@ const requireEditor = createMiddleware<AppEnv>(async (c, next) => {
 
   let claims: AccessTokenClaims
   try {
-    claims = await verifyAccessToken(c.env, token)
+    claims = await verifyAccessToken(c.env, token, c.env.PAGES_ALLOWED_AUDIENCES)
   } catch (error) {
     throw new HTTPException(401, { message: `Invalid access token: ${describeTokenError(error)}` })
   }
@@ -129,5 +129,5 @@ const requireEditor = createMiddleware<AppEnv>(async (c, next) => {
   await next()
 })
 
-export { isAllowedEmail, requireEditor }
+export { bearerToken, describeTokenError, isAllowedEmail, requireEditor }
 export type { Editor }

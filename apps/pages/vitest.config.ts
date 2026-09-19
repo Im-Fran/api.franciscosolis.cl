@@ -22,6 +22,16 @@ export default defineConfig({
           // Worker.
           AUTH_JWKS_URL: 'https://auth.test/.well-known/jwks.json',
           AUTH_ISSUER: 'https://auth.test',
+          // Test-only values for the three secrets this Worker holds in production. The signing key
+          // is committed on purpose: it signs nothing outside the suite, exactly as the auth Worker's
+          // test key does. The MercadoPago credential is a placeholder — every outbound call to the
+          // provider is stubbed, and a suite that could reach the real API is a suite that can charge
+          // a card.
+          MERCADOPAGO_ACCESS_TOKEN: 'TEST-access-token',
+          MERCADOPAGO_WEBHOOK_SECRET: 'test-webhook-secret',
+          DOWNLOAD_SIGNING_KEY: 'test-download-signing-key',
+          PAGES_PUBLIC_URL: 'https://api.test/pages',
+          SITE_BASE_URL: 'https://site.test',
         },
         // The real binding points at the deployed `auth` Worker, which is not part of this project.
         // `stubJwks` replaces `env.AUTH` per test file; this stands in so the runtime can start at

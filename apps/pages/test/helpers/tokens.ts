@@ -112,7 +112,39 @@ const asEditor = async (overrides: Partial<AccessTokenClaims> = {}): Promise<Rec
   }
 }
 
+/**
+ * Claims a *buyer* token carries: the website's audience, and an address on no particular domain.
+ *
+ * The domain is the point. An editor token is gated on `@franciscosolis.cl`; a buyer's is gated on
+ * nothing but a verified address, because the whole feature is that anybody can pay. A test that
+ * bought something as `fran@franciscosolis.cl` would pass whether or not that gate was wired
+ * correctly.
+ */
+const accountClaims = (overrides: Partial<AccessTokenClaims> = {}): AccessTokenClaims =>
+  editorClaims({
+    sub: 'buyer-1',
+    aud: 'franciscosolis-web',
+    email: 'buyer@example.com',
+    name: 'Buyer',
+    provider: 'magic_link',
+    roles: [],
+    permissions: [],
+    ...overrides,
+  })
+
+/** Publishes the file's public key and returns headers carrying a token a buyer would send. */
+const asBuyer = async (overrides: Partial<AccessTokenClaims> = {}): Promise<Record<string, string>> => {
+  const { publicJwk } = await testKeyPair()
+  stubJwks([publicJwk])
+  return {
+    Authorization: `Bearer ${await mintToken(accountClaims(overrides))}`,
+    'Content-Type': 'application/json',
+  }
+}
+
 export {
+  accountClaims,
+  asBuyer,
   DEFAULT_KID,
   asEditor,
   editorClaims,
