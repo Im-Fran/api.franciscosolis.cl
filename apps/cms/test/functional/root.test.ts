@@ -1,6 +1,7 @@
 import { SELF } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
 import { COLLECTION_NAMES, COLLECTIONS } from '@/lib/collections'
+import { TRANSLATION } from '@/lib/config'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
 
 describe('GET /', () => {
@@ -16,6 +17,11 @@ describe('GET /', () => {
         // A front-end builds its language switcher from this rather than from a list of its own.
         locales: [...LOCALES],
         default_locale: DEFAULT_LOCALE,
+        // And the editor's translation modal decides from this whether to offer an AI draft at all.
+        translation: {
+          ai: true,
+          max_source_chars: TRANSLATION.maxSourceChars,
+        },
       },
     })
   })

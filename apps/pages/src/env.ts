@@ -26,11 +26,24 @@ type EmailSender = {
   send(message: EmailMessage): Promise<{ messageId: string }>
 }
 
+/**
+ * The Workers AI binding, narrowed to the one method this Worker calls.
+ *
+ * Written out here rather than taken from `@cloudflare/workers-types`, whose types for this binding
+ * have historically lagged the runtime. Every call goes through `src/services/ai.ts`, so this is
+ * the complete surface.
+ */
+type AiBinding = {
+  run(model: string, input: Record<string, unknown>): Promise<unknown>
+}
+
 type Env = {
   /** D1 database `franciscosolis_pages`. */
   DB: D1Database
   /** Service binding to the auth Worker. Used for one thing only: reading its published JWKS. */
   AUTH: Fetcher
+  /** Workers AI. Used for one thing only: drafting a translation of a prose field. */
+  AI: AiBinding
   /** R2 bucket `franciscosolis-app-releases`: the downloadable builds. No public access of its own. */
   RELEASES: R2Bucket
   /**
@@ -89,6 +102,9 @@ type Env = {
   MERCADOPAGO_ENVIRONMENT: string
   /** HMAC key the download tickets in `src/lib/downloads.ts` are signed with. */
   DOWNLOAD_SIGNING_KEY: string
+
+  /** Workers AI text model behind the translation drafts. A var so a retired model is a deploy. */
+  AI_TEXT_MODEL: string
 }
 
 /** Values the auth middlewares put on the Hono context for downstream handlers. */
@@ -110,4 +126,4 @@ type AppEnv = {
   Variables: Variables
 }
 
-export type { AppEnv, EmailAddress, EmailMessage, EmailSender, Env, Variables }
+export type { AiBinding, AppEnv, EmailAddress, EmailMessage, EmailSender, Env, Variables }

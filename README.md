@@ -28,10 +28,13 @@ is not just its own spec: it fetches each internal module's spec over its servic
 merges the paths/components under a prefix (e.g. `/landing/*`), so consumers get one combined
 API description without the internal modules needing to be public.
 
-Shared code lives under `packages/`. The one package so far is
+Shared code lives under `packages/`. There are two packages:
 [`@franciscosolis/emails`](packages/emails/README.md), which holds every email body in the
-monorepo as **react-email** components, so `auth` and `cms` render mail from the same templates
-instead of assembling HTML each on their own.
+monorepo as **react-email** components, so `auth`, `cms` and `support` render mail from the same
+templates instead of assembling HTML each on their own; and
+[`@franciscosolis/translate`](packages/translate/README.md), which holds the one prompt behind every
+machine translation here, so `cms`, `pages` and `support` ask Workers AI the same thing in the same
+words.
 
 The workspace is managed with **pnpm workspaces**, sharing dependency versions through a
 pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
@@ -122,6 +125,7 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 | Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth`, `apps/cms`, `apps/pages`) |
 | Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`apps/auth`, `apps/cms`) |
 | Email templates | [react-email](https://react.email) in the shared `@franciscosolis/emails` package |
+| Machine translation | [Workers AI](https://developers.cloudflare.com/workers-ai/) behind the shared `@franciscosolis/translate` package (`apps/cms`, `apps/pages`, `apps/support`) |
 | HTTP client | axios |
 | Language | TypeScript (strict) |
 | Package manager | pnpm workspaces (11.17.0) with a shared dependency catalog |

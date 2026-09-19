@@ -43,6 +43,9 @@ Reading published content is **public** — that is what the website itself call
   everything else, so an unfinished draft is not even discoverable.
 - **Manual ordering** — `position` first, then most recent, then title, with a bulk
   `POST /admin/content/:collection/reorder` for drag-and-drop front-ends.
+- **Translations drafted by Workers AI, published by a person** — `POST /admin/translate` answers
+  with a draft of one field in one language and writes nothing, so a model outage cannot corrupt an
+  entry and nothing machine-translated reaches the site unread.
 - **Bilingual content** — every entry and legal page carries a `translations` map (`en` lives in
   the row itself, other locales override it field by field). Public reads take `?locale=es` and
   answer with the text already resolved, plus a `locale` saying which language actually came back
@@ -198,6 +201,7 @@ Paths below are relative to `https://api.franciscosolis.cl/cms`.
 | `POST` | `/admin/emails` | Send an email |
 | `GET` | `/admin/emails` | Log of every send attempt |
 | `GET` | `/admin/emails/:id` | A single logged message |
+| `POST` | `/admin/translate` | Draft a translation of one prose field with Workers AI |
 
 ### Example — publish a project
 
@@ -286,6 +290,36 @@ Editorial responses always come back in the default locale with the raw map besi
 localized `title` there would be an editor saving the Spanish back over the English row. `PATCH`
 replaces the map wholesale, exactly like `data`. The published languages are listed by `GET /`.
 
+#### Drafting one with Workers AI
+
+`POST /admin/translate` answers with a machine-translated draft of a single field, and **writes
+nothing**:
+
+```bash
+curl -s https://api.franciscosolis.cl/cms/admin/translate \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"Edge-routed gateway","field":"title","target_locale":"es"}'
+```
+
+```json
+{ "code": 200, "data": { "translation": "Puerta de enlace enrutada en el borde", "field": "title", "source_locale": "en", "target_locale": "es", "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast" } }
+```
+
+The draft is saved, edited or discarded through the ordinary `PATCH`, and four things follow from
+that. A model outage cannot corrupt an entry, because the route touches no table. Nothing
+machine-translated is published without somebody having read it, because publishing is a separate
+request a human makes. There is no "translated by AI" flag to keep in sync, because by the time the
+text is stored it is simply what the editor wrote. And a failed, timed-out or unreadable answer is a
+`200` with `translation: null` — an outage costs a button that produced nothing, not a draft.
+
+Only the caller's own mistakes are errors: an unknown `field`, a blank `text`, a source over
+`translation.max_source_chars` (reported by `GET /`) or the same locale twice. One editor may ask for
+120 drafts an hour, counted in `ai_requests`, successful or not — Workers AI is billed per neuron
+with no per-Worker spend cap, and that limit is the ceiling on what a loop in a front-end can cost.
+
+The prompt itself lives in [`@franciscosolis/translate`](../../packages/translate/README.md), shared
+with [`apps/pages`](../pages/README.md) and [`apps/support`](../support/README.md).
+
 ---
 
 ## ⚙️ Configuration
@@ -300,10 +334,12 @@ All configuration lives in `wrangler.jsonc` under `vars`:
 | `CMS_ALLOWED_EMAIL_DOMAINS` | Email domains allowed into the CMS |
 | `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Default sender identity |
 | `MAIL_ALLOWED_SENDERS` | Addresses an editor may send as |
+| `AI_TEXT_MODEL` | Workers AI model behind the translation drafts |
 
 Bindings: `DB` (D1 `franciscosolis_cms`), `EMAIL` (Cloudflare Email Sending, restricted by
-`allowed_sender_addresses`) and `AUTH` (service binding to the auth Worker, used only to read its
-published JWKS — see the note on offline verification below).
+`allowed_sender_addresses`), `AI` (Workers AI, used only by `POST /admin/translate`) and `AUTH`
+(service binding to the auth Worker, used only to read its published JWKS — see the note on offline
+verification below).
 
 ---
 

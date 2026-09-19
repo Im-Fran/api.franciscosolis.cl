@@ -2,7 +2,7 @@
   "name": "support",
   "type": "module",
   "license": "GPL-3.0-only",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8793 --inspector-port 9234",
     "build": "wrangler deploy --dry-run --outdir dist",
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@franciscosolis/emails": "workspace:*",
+    "@franciscosolis/translate": "workspace:*",
     "@hono/standard-validator": "catalog:",
     "@valibot/to-json-schema": "catalog:",
     "drizzle-orm": "catalog:",

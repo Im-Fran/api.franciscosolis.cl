@@ -34,7 +34,8 @@ works the queue at `franciscosolis.cl/support`.
 - **Drizzle ORM** over D1 (`drizzle-orm/d1`), backed by the `franciscosolis_support` database.
 - **Workers AI** (`AI`) and **Vectorize** (`VECTORIZE`) — the first use of either in this monorepo.
 - **Cloudflare Email Sending** (`EMAIL`) out, **Email Routing** in, and a **cron trigger**.
-- `postal-mime` for parsing inbound MIME, and `@franciscosolis/emails` for every outgoing body.
+- `postal-mime` for parsing inbound MIME, `@franciscosolis/emails` for every outgoing body, and
+  `@franciscosolis/translate` for the prompt behind `POST /admin/translate`.
 - Dependency versions come from the parent workspace's pnpm `catalog` — use `catalog:`, never a
   hardcoded version.
 - `pnpm` install/deps are managed from the **monorepo root**.
@@ -190,8 +191,17 @@ stored as a hash on the row, not a key held here. `.dev.vars` (gitignored, copy 
   what was actually retrieved, because it *will* cite slugs it invented. With no surviving sources it
   returns without calling the text model at all. **The model drafts; a human sends.**
 - **Workers AI is metered per neuron with no per-Worker spend cap**, which is why every call is
-  logged in `ai_requests` — the same table the assistant's hourly limit reads. Without it the first
-  sign of a runaway loop in a front-end is the invoice.
+  logged in `ai_requests` — the same table the assistant's and the translator's hourly limits read.
+  Without it the first sign of a runaway loop in a front-end is the invoice. The two limits are
+  counted **separately, by `kind`**: drafting a reply and translating the help centre are two
+  different spends by the same person, and exhausting one must not close the other.
+- **`POST /admin/translate` drafts one field of prose and writes nothing.** Same rule as the
+  assistant, for the same reason: the model drafts, a human sends. It touches no table, so it cannot
+  reach the FTS index or the vectors either, and a failed or unreadable answer is a **200 with
+  `translation: null`** rather than an error status. One route serves an article, a category and a
+  label, because the field's name is all it is told. The prompt is `@franciscosolis/translate`,
+  shared with `apps/cms` and `apps/pages`; the gate is `support:admin`, which is what makes this
+  Worker's copy different from theirs.
 - **The migration and deploy race documented in the root `CLAUDE.md` is worse here**: `email()` and
   `scheduled()` run against whatever schema is deployed. A message arriving mid-migration can fail,
   which is why `inbound_emails` records the failure rather than losing it.

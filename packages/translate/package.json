@@ -1,0 +1,19 @@
+{
+  "name": "@franciscosolis/translate",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "valibot": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

@@ -58,6 +58,16 @@
       ]
     }
   ],
+  // Workers AI, and the only thing this Worker asks it for: a first-draft translation of one prose
+  // field, offered in the editor's translation modal and saved like any other override. It is never
+  // on the path that saves a record — see `src/routes/admin/translate.ts`.
+  //
+  // Workers AI has no local simulation, so it always runs against the real service. That is also
+  // why the `test` environment below leaves this binding out: the Vitest pool answers an `ai`
+  // binding by opening a remote proxy session against the real account.
+  "ai": {
+    "binding": "AI"
+  },
   "services": [
     {
       // Only ever asked for `/.well-known/jwks.json`, and a binding rather than a public fetch for
@@ -102,7 +112,10 @@
     // checkout URLs a created preference is answered with. `live` here and `sandbox` under env.dev;
     // it is also stamped onto every purchase, so a test payment can never be counted as revenue and
     // a refund is never attempted against the account that never saw the payment.
-    "MERCADOPAGO_ENVIRONMENT": "live"
+    "MERCADOPAGO_ENVIRONMENT": "live",
+    // Workers AI model behind the translation drafts. A var rather than a constant so a model that
+    // Cloudflare retires — on their schedule, not ours — is a deploy rather than a code change.
+    "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
   },
   "observability": {
     "enabled": true,
@@ -157,6 +170,9 @@
           ]
         }
       ],
+      "ai": {
+        "binding": "AI"
+      },
       "services": [
         {
           "binding": "AUTH",
@@ -183,7 +199,70 @@
         // provider's test cards work on — and every purchase taken here is stamped `sandbox`, so it
         // is structurally impossible for one to be read as revenue or refunded against the live
         // account. Pair it with a *test* credential in `wrangler secret put --env dev`.
-        "MERCADOPAGO_ENVIRONMENT": "sandbox"
+        "MERCADOPAGO_ENVIRONMENT": "sandbox",
+        "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+      }
+    },
+    // The environment the test suite runs against, and the only reason it exists is the `ai`
+    // binding above. Workers AI has no local emulation, so @cloudflare/vitest-pool-workers responds
+    // to that binding by opening a *remote proxy session* against the real account — which needs a
+    // CLOUDFLARE_API_TOKEN, which CI deliberately does not have, and which would bill real neurons
+    // for a unit test either way. A named environment inherits nothing, so everything the suite
+    // needs is restated here and the binding that must not be reached is simply absent.
+    //
+    // The suite supplies its own `env.AI` by assignment instead — see `test/helpers/ai.ts`. That has
+    // the useful property that any code path reaching the real service in a test throws loudly, and
+    // it is the same technique already used for the AUTH service binding.
+    //
+    // The MercadoPago credentials are secrets and therefore absent here too, which is wanted: a
+    // suite that could reach the provider would be one bad mock away from creating a real
+    // preference. `test/helpers/` supplies them per test file.
+    "test": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_pages",
+          "database_id": "9fe9b5de-c4aa-42e9-88a5-72347ca41712",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "RELEASES",
+          "bucket_name": "franciscosolis-app-releases"
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth"
+        }
+      ],
+      // Restated here because a named environment inherits nothing. Unlike the `ai` binding above
+      // this one is safe under test: Miniflare implements it locally, writing the message out
+      // rather than delivering it, and the suite replaces `env.EMAIL` with a spy where it asserts
+      // on what was sent. Leaving it out would make `env.EMAIL` undefined, which the voucher path
+      // swallows — a suite that passes while never sending a receipt.
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "no-reply@mail.franciscosolis.cl"
+          ]
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.test/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://auth.test",
+        "PAGES_ALLOWED_AUDIENCES": "franciscosolis-cms",
+        "PAGES_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+        "PAGES_ACCOUNT_AUDIENCES": "franciscosolis-web",
+        "PAGES_PUBLIC_URL": "https://api.test/pages",
+        "SITE_BASE_URL": "https://site.test",
+        "MAIL_FROM_EMAIL": "no-reply@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "FranciscoSolis (test)",
+        "MERCADOPAGO_ENVIRONMENT": "sandbox",
+        "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       }
     }
   }

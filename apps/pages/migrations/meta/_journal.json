@@ -26,8 +26,15 @@
     {
       "idx": 3,
       "version": "6",
-      "when": 1789795088762,
-      "tag": "0003_manual_sales_and_vouchers",
+      "when": 1789794667629,
+      "tag": "0003_ai_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789801239405,
+      "tag": "0004_manual_sales_and_vouchers",
       "breakpoints": true
     }
   ]

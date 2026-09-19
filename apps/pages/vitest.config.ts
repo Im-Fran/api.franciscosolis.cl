@@ -13,7 +13,10 @@ const migrations = await readD1Migrations(fileURLToPath(new URL('./migrations', 
 export default defineConfig({
   plugins: [
     cloudflareTest({
-      wrangler: { configPath: './wrangler.jsonc' },
+      // The `test` environment, not the top-level config. It is identical apart from leaving out
+      // the `ai` binding, which this pool answers by opening a remote proxy session against the
+      // real Cloudflare account — see the long comment on `env.test` in wrangler.jsonc.
+      wrangler: { configPath: './wrangler.jsonc', environment: 'test' },
       miniflare: {
         bindings: {
           TEST_MIGRATIONS: migrations,

@@ -3,6 +3,7 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, openAPIRouteHandler, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import type { AppEnv } from '@/env'
+import { TRANSLATION } from '@/lib/config'
 import { LINK_KINDS } from '@/lib/links'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
 import { AMOUNT_LIMITS, CURRENCY, PRICING_MODES } from '@/lib/pricing'
@@ -58,6 +59,12 @@ const rootResponseSchema = v.object({
     pricing_modes: v.array(v.string()),
     currency: v.string(),
     minimum_amount: v.number(),
+    translation: v.object({
+      /** Whether machine-translation drafts are offered. False would mean the editor hides the button. */
+      ai: v.boolean(),
+      /** Longest source text `POST /admin/translate` accepts, in characters. */
+      max_source_chars: v.number(),
+    }),
   }),
 })
 
@@ -91,6 +98,13 @@ app.get(
         pricing_modes: [...PRICING_MODES],
         currency: CURRENCY,
         minimum_amount: AMOUNT_LIMITS.min,
+        // Advertised for the same reason as the locale list: the editor's translation modal only
+        // offers to draft a field with Workers AI when the service it is talking to says it can,
+        // and only up to the length that service will actually accept.
+        translation: {
+          ai: true,
+          max_source_chars: TRANSLATION.maxSourceChars,
+        },
       },
     }),
 )

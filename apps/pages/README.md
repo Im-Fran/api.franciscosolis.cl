@@ -69,6 +69,16 @@ why there is no second application to register.
   map holds `{"es":{"name":"…"}}` for the rest. Public reads take `?locale=es` and answer with the
   text already resolved, plus the `locale` that actually came back. Only prose is translated: tabs,
   slugs, ordering, versions and icons are the same fact in every language.
+- **Translations drafted by Workers AI, published by a person** — `POST /admin/translate` answers with
+  a draft of one field in one language and **writes nothing**: the editor saves it through the
+  ordinary `PATCH` that saves every other override. A failed, timed-out or unreadable model answer is
+  a `200` with `translation: null`, so an outage costs a button that produced nothing rather than a
+  page. One route serves an application, a release note and a wiki page, because the field's *name*
+  is all it is told. The prompt lives in
+  [`@franciscosolis/translate`](../../packages/translate/README.md), shared with
+  [`apps/cms`](../cms/README.md) and [`apps/support`](../support/README.md); the meter
+  (`ai_requests`, 120 drafts per editor per hour, successful or not) is this Worker's own, because
+  Workers AI is billed per neuron with no per-Worker spend cap.
 - **A closed link vocabulary** — eleven kinds (`website`, `github`, `app_store`, `play_store`,
   `sponsor`, … with `other` as the escape hatch), because the website renders an icon from `kind`
   and free text is a list of icons nobody can finish. At most 12 links per row, stored as JSON and
@@ -270,6 +280,7 @@ verified `@franciscosolis.cl` address.
 | `GET` | `/admin/purchases` | Every payment taken, across every application, with totals over the page |
 | `GET` | `/admin/applications/:applicationId/downloads` | Served downloads of one application |
 | `GET` | `/admin/audit` | The trail of every write |
+| `POST` | `/admin/translate` | Draft a translation of one prose field with Workers AI |
 
 The back office of one application, all nested under it:
 
@@ -341,6 +352,7 @@ All configuration lives in `wrangler.jsonc` under `vars`:
 | `SITE_BASE_URL` | Where a buyer is returned to after checkout — a page on the website, never the API |
 | `MERCADOPAGO_ENVIRONMENT` | `live` or `sandbox`: which account takes the money, which checkout URL is handed back, and what is stamped on every purchase |
 | `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Sender of the vouchers and refund notices |
+| `AI_TEXT_MODEL` | Workers AI model behind the translation drafts |
 
 Secrets, set with `wrangler secret put` and listed in `.dev.vars.example` for local work:
 
@@ -357,10 +369,11 @@ either one is a checkbox; the third is how a dispute arrives in the old model. A
 acknowledged and dropped.
 
 Bindings: `DB` (D1 `franciscosolis_pages`), `RELEASES` (R2 `franciscosolis-app-releases`, no public
-access of its own), `AUTH` (service binding to the auth Worker, used only to read its published JWKS)
-and `EMAIL` (Cloudflare Email Sending, used for the voucher and the refund notice and nothing else —
-this Worker has no inbox, and a reply belongs on a support ticket). Token verification still needs
-public keys rather than a signing key — this Worker is not an OAuth client of anything.
+access of its own), `AUTH` (service binding to the auth Worker, used only to read its published
+JWKS), `AI` (Workers AI, used only by `POST /admin/translate`) and `EMAIL` (Cloudflare Email Sending,
+used for the voucher and the refund notice and nothing else — this Worker has no inbox, and a reply
+belongs on a support ticket). Token verification still needs public keys rather than a signing key —
+this Worker is not an OAuth client of anything.
 
 ---
 

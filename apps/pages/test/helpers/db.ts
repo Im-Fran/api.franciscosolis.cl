@@ -41,6 +41,7 @@ const clearDatabase = async () => {
     env.DB.prepare('DELETE FROM payment_events'),
     env.DB.prepare('DELETE FROM download_events'),
     env.DB.prepare('DELETE FROM sale_vouchers'),
+    env.DB.prepare('DELETE FROM ai_requests'),
   ])
 }
 
