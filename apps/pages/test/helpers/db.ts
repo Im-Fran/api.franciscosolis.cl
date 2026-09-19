@@ -1,6 +1,16 @@
 import { env } from 'cloudflare:test'
 import { getDb } from '@/db/client'
-import { applications, applicationUpdates, applicationWikiPages, auditLogs } from '@/db/schema'
+import {
+  applicationReleaseFiles,
+  applications,
+  applicationUpdates,
+  applicationWikiPages,
+  auditLogs,
+  downloadEvents,
+  paymentEvents,
+  purchases,
+} from '@/db/schema'
+import { objectKeyFor } from '@/lib/files'
 
 /**
  * Seeding helpers over the live D1 instance.
@@ -18,10 +28,17 @@ const db = () => getDb(env)
  */
 const clearDatabase = async () => {
   await env.DB.batch([
+    // Before `application_updates`, which it holds a foreign key onto.
+    env.DB.prepare('DELETE FROM application_release_files'),
     env.DB.prepare('DELETE FROM application_updates'),
     env.DB.prepare('DELETE FROM application_wiki_pages'),
     env.DB.prepare('DELETE FROM applications'),
     env.DB.prepare('DELETE FROM audit_logs'),
+    // No foreign keys on these three, deliberately: a payment and a download outlive the page they
+    // were made for. They still have to be cleared between tests.
+    env.DB.prepare('DELETE FROM purchases'),
+    env.DB.prepare('DELETE FROM payment_events'),
+    env.DB.prepare('DELETE FROM download_events'),
   ])
 }
 
@@ -106,6 +123,71 @@ const seedWikiPage = async (seed: WikiSeed) => {
   return row
 }
 
+type ReleaseFileSeed = Partial<typeof applicationReleaseFiles.$inferInsert> & {
+  applicationId: string
+  updateId: string
+}
+
+/**
+ * Seeds a release file *and its bytes*, because a row without an upload is invisible to every public
+ * route — `uploadedAt` being null is exactly what "this file is not ready" means.
+ */
+const seedReleaseFile = async (seed: ReleaseFileSeed, contents = 'seeded-build-bytes') => {
+  const now = new Date()
+  const id = seed.id ?? crypto.randomUUID()
+  const row = {
+    id,
+    objectKey: objectKeyFor(seed.applicationId, seed.updateId, id),
+    filename: seed.filename ?? 'seeded.zip',
+    contentType: 'application/zip',
+    size: contents.length,
+    checksum: null,
+    platform: 'any',
+    label: null,
+    position: 0,
+    status: 'published',
+    uploadedAt: now,
+    downloadCount: 0,
+    createdBy: 'seed@franciscosolis.cl',
+    updatedBy: 'seed@franciscosolis.cl',
+    createdAt: now,
+    updatedAt: now,
+    ...seed,
+  }
+  await db().insert(applicationReleaseFiles).values(row)
+  if (row.uploadedAt !== null) {
+    await env.RELEASES.put(row.objectKey, contents)
+  }
+  return row
+}
+
+type PurchaseSeed = Partial<typeof purchases.$inferInsert> & { applicationId: string; applicationSlug: string }
+
+const seedPurchase = async (seed: PurchaseSeed) => {
+  const now = new Date()
+  const row = {
+    id: crypto.randomUUID(),
+    kind: 'purchase',
+    userId: 'buyer-1',
+    email: 'buyer@example.com',
+    status: 'approved',
+    amount: 4990,
+    currency: 'CLP',
+    provider: 'mercadopago',
+    preferenceId: 'pref-1',
+    paymentId: null,
+    externalReference: crypto.randomUUID(),
+    approvedAt: now,
+    refundedAt: null,
+    metadata: null,
+    createdAt: now,
+    updatedAt: now,
+    ...seed,
+  }
+  await db().insert(purchases).values(row)
+  return row
+}
+
 const countRows = async (table: string): Promise<number> => {
   const row = await env.DB.prepare(`SELECT count(*) AS total FROM ${table}`).first<{ total: number }>()
   return row?.total ?? 0
@@ -133,6 +215,7 @@ const readAuditLog = async () => {
 }
 
 export {
+  applicationReleaseFiles,
   applications,
   applicationUpdates,
   applicationWikiPages,
@@ -140,8 +223,13 @@ export {
   clearDatabase,
   countRows,
   db,
+  downloadEvents,
+  paymentEvents,
+  purchases,
   readAuditLog,
   seedApplication,
+  seedPurchase,
+  seedReleaseFile,
   seedUpdate,
   seedWikiPage,
 }

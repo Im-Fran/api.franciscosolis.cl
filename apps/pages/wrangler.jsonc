@@ -22,6 +22,15 @@
       "migrations_dir": "migrations"
     }
   ],
+  "r2_buckets": [
+    {
+      // The downloadable builds. No public access of its own and no custom domain: every byte is
+      // served by `GET /downloads/:ticket`, which is the only place the payment state of an
+      // application can be consulted. A public bucket cannot be asked whether somebody paid.
+      "binding": "RELEASES",
+      "bucket_name": "franciscosolis-app-releases"
+    }
+  ],
   "services": [
     {
       // Only ever asked for `/.well-known/jwks.json`, and a binding rather than a public fetch for
@@ -45,7 +54,18 @@
     "PAGES_ALLOWED_AUDIENCES": "franciscosolis-cms",
     // Comma-separated email domains allowed to edit. This is the access gate: an account outside
     // these domains is refused even with a perfectly valid access token.
-    "PAGES_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl"
+    "PAGES_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+    // Client ids whose tokens identify a *buyer* rather than an editor: the public website. A second
+    // list rather than an addition to the one above, so widening the website's reach can never widen
+    // `/admin`'s — the same split `apps/support` keeps between its console and its requesters.
+    "PAGES_ACCOUNT_AUDIENCES": "franciscosolis-web",
+    // Public base URL of this Worker through the gateway. Used to build the download links handed to a
+    // browser and the notification URL MercadoPago posts to; neither is derivable from the request,
+    // because behind a service binding the incoming URL is an internal one.
+    "PAGES_PUBLIC_URL": "https://api.franciscosolis.cl/pages",
+    // Website the buyer is returned to after checkout. `back_urls` point at pages here, never at the
+    // API: a person coming back from MercadoPago should land on the application page.
+    "SITE_BASE_URL": "https://franciscosolis.cl"
   },
   "observability": {
     "enabled": true,

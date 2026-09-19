@@ -1,7 +1,25 @@
-# This Worker holds no secrets: access tokens are verified offline against the auth Worker's
-# published JWKS, so there is no signing key and no client secret here.
+# Local overrides for the Pages Worker.
 #
-# Copy to `.dev.vars` only to point a local Pages Worker at a local auth Worker. `AUTH_JWKS_URL` is
-# fetched over the AUTH service binding, so the host is a placeholder either way — what has to match
-# is the issuer the local auth Worker stamps into its tokens.
+# Unlike the CMS Worker, this one *does* hold secrets — the payment provider's credential and the key
+# the download links are signed with. None of them may ever be committed: `.dev.vars` is gitignored,
+# and production values are set with `wrangler secret put`.
+
+# Issuer a local auth Worker stamps into its tokens. `AUTH_JWKS_URL` is fetched over the AUTH service
+# binding, so its host is a placeholder either way — what has to match is the issuer.
 AUTH_ISSUER=http://localhost:8787/auth
+
+# MercadoPago. Use a *test* credential for local work: with one, a created preference comes back with
+# a `sandbox_init_point` and this Worker hands that to the browser, so nothing charges a real card.
+MERCADOPAGO_ACCESS_TOKEN=TEST-0000000000000000-000000-00000000000000000000000000000000-000000000
+# Webhook signing secret from the MercadoPago dashboard. Without it every notification is refused —
+# the endpoint fails closed, because it is the endpoint that can grant a licence.
+MERCADOPAGO_WEBHOOK_SECRET=replace-me
+
+# HMAC key the download tickets are signed with. Any high-entropy string; rotating it invalidates
+# every ticket already minted, which is at most five minutes of downloads.
+DOWNLOAD_SIGNING_KEY=local-development-download-signing-key
+
+# Where a local Worker thinks it is reachable, so a minted download link points at it rather than at
+# production. Through the local gateway that is the API on :8787.
+PAGES_PUBLIC_URL=http://localhost:8787/pages
+SITE_BASE_URL=http://localhost:5173

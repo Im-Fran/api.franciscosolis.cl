@@ -5,11 +5,15 @@ import * as v from 'valibot'
 import type { AppEnv } from '@/env'
 import { LINK_KINDS } from '@/lib/links'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
+import { AMOUNT_LIMITS, CURRENCY, PRICING_MODES } from '@/lib/pricing'
 import { TAB_KEYS, TABS } from '@/lib/tabs'
 
 /* Routes */
 import admin from '@/routes/admin'
 import applications from '@/routes/applications'
+import downloads from '@/routes/downloads'
+import payments from '@/routes/payments'
+import store from '@/routes/store'
 
 const app = new Hono<AppEnv>()
 
@@ -51,6 +55,9 @@ const rootResponseSchema = v.object({
     link_kinds: v.array(v.string()),
     locales: v.array(v.string()),
     default_locale: v.string(),
+    pricing_modes: v.array(v.string()),
+    currency: v.string(),
+    minimum_amount: v.number(),
   }),
 })
 
@@ -78,11 +85,20 @@ app.get(
         link_kinds: [...LINK_KINDS],
         locales: [...LOCALES],
         default_locale: DEFAULT_LOCALE,
+        // Advertised for the same reason the tabs are: the pricing picker in the editor and the
+        // payment modal on the website both build themselves from this rather than from a copy of the
+        // list that drifts the day a mode is added.
+        pricing_modes: [...PRICING_MODES],
+        currency: CURRENCY,
+        minimum_amount: AMOUNT_LIMITS.min,
       },
     }),
 )
 
 app.route('/', applications)
+app.route('/', store)
+app.route('/', downloads)
+app.route('/', payments)
 app.route('/admin', admin)
 
 app.get(
@@ -93,7 +109,7 @@ app.get(
         title: 'FranciscoSolis - Standalone App Pages API',
         version: '1.0.0',
         description:
-          'Standalone pages for the applications built at franciscosolis.cl, all to one house standard: a banner, a tab bar and the content behind it. Reads of published pages are public and take an optional `?locale`; everything under /admin requires an access token from the auth service belonging to an allowed email domain.',
+          'Standalone pages for the applications built at franciscosolis.cl, all to one house standard: a banner, a tab bar and the content behind it. Reads of published pages are public and take an optional `?locale`; everything under /admin requires an access token from the auth service belonging to an allowed email domain. An application can also be paid for or donated to through MercadoPago, in which case its downloads are served by this Worker against a per-request ticket rather than from a bucket URL — see the Store and Downloads tags.',
       },
       components: {
         securitySchemes: {
@@ -101,7 +117,8 @@ app.get(
             type: 'http',
             scheme: 'bearer',
             bearerFormat: 'JWT',
-            description: 'Access token obtained from POST /auth/oauth/token, minted for the CMS client application.',
+            description:
+              'Access token obtained from POST /auth/oauth/token. Editorial routes (/admin) need one minted for the CMS client application; the store routes (checkout, /me/purchases, /me/downloads) take one minted for the website, which is a separate audience list.',
           },
         },
       },

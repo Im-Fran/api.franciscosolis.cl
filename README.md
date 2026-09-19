@@ -60,7 +60,11 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   The tab set is a registry rather than a per-page layout field, which is what keeps a dozen pages
   looking like one product family instead of a dozen bespoke sites. The website renders them at
   `franciscosolis.cl/application/<slug>` and the CMS front-end edits them, so the Worker needs no
-  client application of its own.
+  client application of its own. An application can also be **paid for or donated to** through
+  MercadoPago Checkout Pro, tied to an account on the franciscosolis.cl SSO: its builds sit in R2 with
+  no public access and are served by the Worker against a signed per-request ticket, so the download
+  itself is what knows whether the person taking it has paid — a non-payer is always shown the offer and
+  waits five seconds, somebody who paid gets the link straight away.
 - **Support tickets and a help centre** — `apps/support` takes a request for help from the website
   or from `soporte@franciscosolis.cl`, and the conversation works in both places: replies, internal
   notes only the team sees, labels, assignment and watchers. When the team answers and nobody comes
@@ -157,14 +161,18 @@ cp apps/pages/.dev.vars.example apps/pages/.dev.vars
 cd apps/auth && pnpm run keys:generate   # prints the JWT_PRIVATE_KEY to paste in
 ```
 
-`apps/cms` and `apps/pages` have no secrets of their own — their `.dev.vars` only point
-`AUTH_JWKS_URL` and `AUTH_ISSUER` at the local auth Worker.
+`apps/cms` has no secrets of its own — its `.dev.vars` only points `AUTH_JWKS_URL` and `AUTH_ISSUER`
+at the local auth Worker. `apps/pages` does hold three: a MercadoPago credential (use a **test** one,
+so nothing charges a real card), its webhook secret, and the key its download links are signed with.
 
 | Variable | Description | Where |
 |----------|-------------|-------|
 | `GH_TOKEN` | GitHub API token used by `apps/landing`'s `/stats/github` route | `apps/landing/.dev.vars` |
 | `JWT_PRIVATE_KEY` | Ed25519 JWK signing the access tokens issued by `apps/auth` | `apps/auth/.dev.vars` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 client used by `apps/auth` | `apps/auth/.dev.vars` |
+| `MERCADOPAGO_ACCESS_TOKEN` | MercadoPago credential `apps/pages` creates preferences and reads payments with | `apps/pages/.dev.vars` |
+| `MERCADOPAGO_WEBHOOK_SECRET` | Verifies MercadoPago notifications; without it every one is refused | `apps/pages/.dev.vars` |
+| `DOWNLOAD_SIGNING_KEY` | HMAC key the download tickets in `apps/pages` are signed with | `apps/pages/.dev.vars` |
 
 Then create the database tables:
 
@@ -308,7 +316,19 @@ pnpm exec wrangler secret put GOOGLE_CLIENT_ID
 pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
 ```
 
-`apps/cms` and `apps/pages` need no secrets at all.
+`apps/pages` needs its three:
+
+```bash
+cd apps/pages
+pnpm exec wrangler secret put MERCADOPAGO_ACCESS_TOKEN
+pnpm exec wrangler secret put MERCADOPAGO_WEBHOOK_SECRET
+pnpm exec wrangler secret put DOWNLOAD_SIGNING_KEY
+```
+
+It also needs the `franciscosolis-app-releases` R2 bucket to exist, with no public access and no custom
+domain: every byte is served through the Worker.
+
+`apps/cms` needs no secrets at all.
 
 ### Database migrations
 
@@ -362,7 +382,7 @@ pnpm run cf-typegen
 | `apps/auth/migrations/` | D1 migrations for `franciscosolis_auth` |
 | `apps/cms/wrangler.jsonc` | Worker name/config for the `cms` service, D1 binding, email sending binding, JWKS/issuer, allowed audiences, email domains and senders |
 | `apps/cms/migrations/` | D1 migrations for `franciscosolis_cms` |
-| `apps/pages/wrangler.jsonc` | Worker name/config for the `pages` service, D1 binding, JWKS/issuer, allowed audiences and email domains |
+| `apps/pages/wrangler.jsonc` | Worker name/config for the `pages` service, D1 and R2 bindings, JWKS/issuer, the editorial and buyer audience lists, allowed email domains, and the public/site base URLs |
 | `apps/pages/migrations/` | D1 migrations for `franciscosolis_pages` |
 | `pnpm-workspace.yaml` | Workspace packages (`apps/*`, `packages/*`) and shared dependency catalog |
 | `apps/*/vitest.config.ts` | Test runtime for that app — bindings, D1 migrations and service-binding stubs |

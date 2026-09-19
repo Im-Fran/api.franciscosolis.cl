@@ -16,6 +16,11 @@ type AuditEvent =
   | 'wiki.updated'
   | 'wiki.deleted'
   | 'wiki.reordered'
+  | 'file.created'
+  | 'file.uploaded'
+  | 'file.updated'
+  | 'file.deleted'
+  | 'pricing.updated'
 
 type AuditInput = {
   event: AuditEvent

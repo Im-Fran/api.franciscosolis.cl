@@ -10,6 +10,7 @@ import { BODY_LIMITS, CONTENT_STATUS, PAGINATION } from '@/lib/config'
 import { asConflict } from '@/lib/errors'
 import { linkListSchema, serializeLinks } from '@/lib/links'
 import { serializeTranslations } from '@/lib/locales'
+import { optionalAmount, PRICING_MODES } from '@/lib/pricing'
 import { SLUG_PATTERN, slugify } from '@/lib/slug'
 import { serializeTabs, TAB_KEYS } from '@/lib/tabs'
 import {
@@ -135,6 +136,15 @@ const createSchema = v.object({
   links: linkListSchema,
   overview_body: optionalBody(BODY_LIMITS.page),
   contact_body: optionalBody(BODY_LIMITS.page),
+  /**
+   * How the page takes money: `free`, `donation` (optional payment, skipping allowed) or `paid` (a
+   * download needs an approved purchase). See `src/lib/pricing.ts`.
+   */
+  pricing_mode: v.optional(v.picklist(PRICING_MODES)),
+  /** Price of a `paid` application, in whole CLP. */
+  price_amount: optionalAmount,
+  /** Amount a `donation` application suggests in its modal, in whole CLP. */
+  suggested_amount: optionalAmount,
   translations: applicationTranslations,
 })
 
@@ -181,6 +191,9 @@ app.post(
       links: serializeLinks(body.links),
       overviewBody: body.overview_body ?? null,
       contactBody: body.contact_body ?? null,
+      pricingMode: body.pricing_mode ?? 'free',
+      priceAmount: body.price_amount ?? null,
+      suggestedAmount: body.suggested_amount ?? null,
       translations: serializeTranslations(body.translations),
       publishedAt: status === 'published' ? now : null,
       createdBy: editor.email,
@@ -246,6 +259,15 @@ const updateSchema = v.object({
   links: linkListSchema,
   overview_body: optionalBody(BODY_LIMITS.page),
   contact_body: optionalBody(BODY_LIMITS.page),
+  /**
+   * How the page takes money: `free`, `donation` (optional payment, skipping allowed) or `paid` (a
+   * download needs an approved purchase). See `src/lib/pricing.ts`.
+   */
+  pricing_mode: v.optional(v.picklist(PRICING_MODES)),
+  /** Price of a `paid` application, in whole CLP. */
+  price_amount: optionalAmount,
+  /** Amount a `donation` application suggests in its modal, in whole CLP. */
+  suggested_amount: optionalAmount,
   /** Replaces the whole translation map — send every locale you want to keep. */
   translations: applicationTranslations,
 })
@@ -294,6 +316,12 @@ app.patch(
       links: body.links === undefined ? current.links : serializeLinks(body.links),
       overviewBody: body.overview_body === undefined ? current.overviewBody : body.overview_body,
       contactBody: body.contact_body === undefined ? current.contactBody : body.contact_body,
+      pricingMode: body.pricing_mode ?? current.pricingMode,
+      // Kept when the mode changes rather than cleared: an editor switching a paid application to
+      // `donation` for a launch week should not have to retype its price to switch back, and
+      // `describePricing` is what stops the stale figure from ever being quoted publicly.
+      priceAmount: body.price_amount === undefined ? current.priceAmount : body.price_amount,
+      suggestedAmount: body.suggested_amount === undefined ? current.suggestedAmount : body.suggested_amount,
       translations: body.translations === undefined ? current.translations : serializeTranslations(body.translations),
       // Stamped the first time a page goes live and kept from then on, so unpublishing and
       // republishing does not rewrite the date the application was originally announced.
@@ -320,6 +348,9 @@ app.patch(
           links: updated.links,
           overviewBody: updated.overviewBody,
           contactBody: updated.contactBody,
+          pricingMode: updated.pricingMode,
+          priceAmount: updated.priceAmount,
+          suggestedAmount: updated.suggestedAmount,
           translations: updated.translations,
           publishedAt: updated.publishedAt,
           updatedBy: updated.updatedBy,
@@ -330,13 +361,27 @@ app.patch(
       throw asConflict(error, `An application with slug "${updated.slug}" already exists`)
     }
 
+    // A pricing change is filed under its own event, not folded into `application.updated`: it is the
+    // one edit here that changes what somebody is charged, and a trail it can be read out of has to be
+    // queryable by event rather than by reading every field list ever written.
+    const touchedPricing = ['pricing_mode', 'price_amount', 'suggested_amount'].some((field) => field in body)
+
     await recordAudit(db, {
-      event: 'application.updated',
+      event: touchedPricing ? 'pricing.updated' : 'application.updated',
       ...getActorContext(c),
       ...getRequestContext(c),
       resourceType: 'applications',
       resourceId: current.id,
-      metadata: { slug: updated.slug, fields: Object.keys(body), status },
+      metadata: touchedPricing
+        ? {
+            slug: updated.slug,
+            fields: Object.keys(body),
+            status,
+            pricing_mode: updated.pricingMode,
+            price_amount: updated.priceAmount,
+            suggested_amount: updated.suggestedAmount,
+          }
+        : { slug: updated.slug, fields: Object.keys(body), status },
     })
 
     return c.json({ code: 200, data: toAdminApplication(updated) })

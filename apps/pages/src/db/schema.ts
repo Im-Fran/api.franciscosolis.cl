@@ -63,6 +63,15 @@ const applications = sqliteTable('applications', {
   overviewBody: text('overview_body'),
   /** The Contact tab, same shape. Links in the header cover the rest. */
   contactBody: text('contact_body'),
+  /**
+   * How the application is paid for: `free`, `donation` (pay what you like, skipping allowed) or
+   * `paid` (a download needs an approved purchase). See `src/lib/pricing.ts`.
+   */
+  pricingMode: text('pricing_mode').notNull().default('free'),
+  /** Price of a `paid` application, in whole CLP. Meaningless in the other two modes. */
+  priceAmount: integer('price_amount'),
+  /** Amount a `donation` application suggests, in whole CLP. A suggestion, never a floor. */
+  suggestedAmount: integer('suggested_amount'),
   /** Locale → overrides for the prose fields; see `src/lib/locales.ts`. */
   translations: text('translations').notNull().default('{}'),
   publishedAt: integer('published_at', { mode: 'timestamp' }),
@@ -139,6 +148,166 @@ const applicationWikiPages = sqliteTable('application_wiki_pages', {
   index('application_wiki_pages_application_position_idx').on(table.applicationId, table.status, table.position),
 ])
 
+/**
+ * One downloadable artifact attached to a release note on the Updates tab.
+ *
+ * The bytes live in R2 and nothing here ever hands out a bucket URL: a download is always served by
+ * `GET /downloads/:ticket`, which is the only place the payment state of the application can be
+ * consulted at all. `objectKey` is therefore an internal detail and is never serialized into a
+ * response — see `toPublicReleaseFile` in `src/services/release-files.ts`.
+ *
+ * `applicationId` is carried beside `updateId` even though the release already knows it. Every
+ * public route here resolves an application first and a release second, and having the column means
+ * the download path can check that a file belongs to the application in its URL with one read
+ * instead of a join.
+ */
+const applicationReleaseFiles = sqliteTable('application_release_files', {
+  id: text('id').primaryKey(),
+  applicationId: text('application_id')
+    .notNull()
+    .references(() => applications.id, { onDelete: 'cascade' }),
+  updateId: text('update_id')
+    .notNull()
+    .references(() => applicationUpdates.id, { onDelete: 'cascade' }),
+  /** Key of the object in the `RELEASES` bucket. Internal: never serialized into a response. */
+  objectKey: text('object_key').notNull(),
+  /** Name the browser saves the file under. Unique within the release. */
+  filename: text('filename').notNull(),
+  contentType: text('content_type').notNull().default('application/octet-stream'),
+  /** Size in bytes, measured when the bytes were stored rather than declared by the uploader. */
+  size: integer('size').notNull().default(0),
+  /** Lowercase hex SHA-256 of the object, so a download can be verified off-site. */
+  checksum: text('checksum'),
+  /** Which build this is, from the closed set in `src/lib/files.ts`. */
+  platform: text('platform').notNull().default('any'),
+  /** Short label for the button, e.g. "Installer" or "Paper 1.21". */
+  label: text('label'),
+  position: integer('position').notNull().default(0),
+  status: text('status').notNull().default('draft'),
+  /** Stamped when the bytes arrived. A row with no upload yet is metadata and answers 409. */
+  uploadedAt: integer('uploaded_at', { mode: 'timestamp' }),
+  /** Served downloads, counted for the editor. Not an audit trail — `download_events` is that. */
+  downloadCount: integer('download_count').notNull().default(0),
+  ...authorship,
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('application_release_files_update_filename_unique').on(table.updateId, table.filename),
+  index('application_release_files_update_position_idx').on(table.updateId, table.status, table.position),
+  index('application_release_files_application_idx').on(table.applicationId),
+])
+
+/**
+ * One payment taken for an application: a purchase of a paid one, or a donation to an optional-pay
+ * one. An approved row is the entitlement — there is no second table saying so.
+ *
+ * Deriving access from the payment rather than from an `entitlements` row is deliberate: a refund is
+ * a status change on the row that already exists, and an entitlement table would need the same
+ * change applied twice, in the right order, from a webhook that can arrive more than once.
+ *
+ * **These are the only rows here with no foreign key onto `applications`, and that is the point.** A
+ * payment is a financial record that has to outlive the page it was made for, so deleting an
+ * application must not cascade into it. `applicationSlug` is snapshotted for the same reason: it is
+ * what the row can still be read by once the application is gone.
+ *
+ * `userId` is the `sub` of the auth account that paid. It is never null: checkout requires a signed-in
+ * account precisely so that a purchase has somewhere to live, which is why buying an application
+ * creates an SSO account when the buyer has none.
+ */
+const purchases = sqliteTable('purchases', {
+  id: text('id').primaryKey(),
+  applicationId: text('application_id').notNull(),
+  /** Snapshot of the slug at the time of payment; the row survives the application. */
+  applicationSlug: text('application_slug').notNull(),
+  /** `purchase` for a paid application, `donation` for an optional-pay one. */
+  kind: text('kind').notNull().default('purchase'),
+  /** `sub` claim of the account that paid. */
+  userId: text('user_id').notNull(),
+  /** Verified address the account held at the time, for the receipt and for support. */
+  email: text('email').notNull(),
+  /** `pending` | `in_process` | `approved` | `rejected` | `cancelled` | `refunded`. */
+  status: text('status').notNull().default('pending'),
+  /** What was charged, in whole units of `currency`. CLP has no minor unit. */
+  amount: integer('amount').notNull(),
+  currency: text('currency').notNull().default('CLP'),
+  provider: text('provider').notNull().default('mercadopago'),
+  /** Checkout Pro preference this purchase was started from. */
+  preferenceId: text('preference_id'),
+  /** MercadoPago payment id, once one exists. */
+  paymentId: text('payment_id'),
+  /**
+   * Our own id for the payment, sent to MercadoPago as `external_reference` and echoed back on the
+   * payment. Uniquely indexed: it is how a webhook finds the row it is about.
+   */
+  externalReference: text('external_reference').notNull(),
+  approvedAt: integer('approved_at', { mode: 'timestamp' }),
+  refundedAt: integer('refunded_at', { mode: 'timestamp' }),
+  /** Free-form JSON. Must never carry a card detail, a provider token or an access token. */
+  metadata: text('metadata'),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('purchases_external_reference_unique').on(table.externalReference),
+  index('purchases_application_user_idx').on(table.applicationId, table.userId, table.status),
+  index('purchases_user_created_idx').on(table.userId, table.createdAt),
+  index('purchases_payment_idx').on(table.paymentId),
+  index('purchases_status_created_idx').on(table.status, table.createdAt),
+])
+
+/**
+ * Append-only log of every provider notification acted on, and the idempotency guard for them.
+ *
+ * MercadoPago retries a notification until it is answered with a 2xx, and it sends several for one
+ * payment as the payment moves through its states. `eventId` is composed as `<payment id>:<status>`
+ * rather than taken from the notification body, so a retry of the *same* transition collapses onto
+ * the unique index while a genuine `pending → approved` still gets through.
+ */
+const paymentEvents = sqliteTable('payment_events', {
+  id: text('id').primaryKey(),
+  provider: text('provider').notNull().default('mercadopago'),
+  /** `<payment id>:<status>` — see above. Unique per provider. */
+  eventId: text('event_id').notNull(),
+  /** Notification topic as the provider sent it, e.g. `payment`. */
+  topic: text('topic'),
+  paymentId: text('payment_id'),
+  purchaseId: text('purchase_id'),
+  status: text('status'),
+  /** The provider's own payload, trimmed to the fields acted on. Never the raw request headers. */
+  payload: text('payload'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  uniqueIndex('payment_events_provider_event_unique').on(table.provider, table.eventId),
+  index('payment_events_purchase_idx').on(table.purchaseId),
+])
+
+/**
+ * One served download, which is what "see your downloads" reads.
+ *
+ * No foreign keys, for the same reason `purchases` has none: a download is something that happened,
+ * and retiring a release note must not rewrite the history of the people who downloaded it. The
+ * filename and version are snapshotted so a row still says what was downloaded afterwards.
+ */
+const downloadEvents = sqliteTable('download_events', {
+  id: text('id').primaryKey(),
+  fileId: text('file_id').notNull(),
+  applicationId: text('application_id').notNull(),
+  applicationSlug: text('application_slug').notNull(),
+  updateId: text('update_id').notNull(),
+  /** Version label of the release the file belonged to, snapshotted. */
+  version: text('version').notNull(),
+  filename: text('filename').notNull(),
+  /** Account that downloaded, or null for an anonymous download of a free or optional-pay build. */
+  userId: text('user_id'),
+  /** Purchase the download was served against, when there was one. */
+  purchaseId: text('purchase_id'),
+  /** Whether this download was served immediately (paid) or after the cooldown. */
+  paid: integer('paid', { mode: 'boolean' }).notNull().default(false),
+  ip: text('ip'),
+  userAgent: text('user_agent'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  index('download_events_user_created_idx').on(table.userId, table.createdAt),
+  index('download_events_file_idx').on(table.fileId),
+])
+
 /** Append-only trail of every write an editor makes. Never updated, never deleted by the Worker. */
 const auditLogs = sqliteTable('audit_logs', {
   id: text('id').primaryKey(),
@@ -159,4 +328,13 @@ const auditLogs = sqliteTable('audit_logs', {
   index('audit_logs_actor_email_idx').on(table.actorEmail),
 ])
 
-export { applications, applicationUpdates, applicationWikiPages, auditLogs }
+export {
+  applicationReleaseFiles,
+  applications,
+  applicationUpdates,
+  applicationWikiPages,
+  auditLogs,
+  downloadEvents,
+  paymentEvents,
+  purchases,
+}

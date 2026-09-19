@@ -9,6 +9,8 @@ import { PAGINATION } from '@/lib/config'
 import { paginationSchema } from '@/lib/validation'
 import { requireEditor } from '@/middleware/auth'
 import applications from '@/routes/admin/applications'
+import files from '@/routes/admin/files'
+import purchases from '@/routes/admin/purchases'
 import updates from '@/routes/admin/updates'
 import wiki from '@/routes/admin/wiki'
 
@@ -114,5 +116,7 @@ app.get(
 app.route('/', applications)
 app.route('/', updates)
 app.route('/', wiki)
+app.route('/', files)
+app.route('/', purchases)
 
 export default app

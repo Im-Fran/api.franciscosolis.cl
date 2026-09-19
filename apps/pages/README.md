@@ -23,12 +23,20 @@ a banner, a handful of links and a subset of four tabs — Overview, Updates, Wi
 the order the application picked. Nothing else about the layout is configurable, which is the whole
 point: a page built here looks like every other page built here.
 
+An application can also **be paid for**. A page is `free`, `donation` (optional payment — the build
+is free to take, and the modal offering to pay for it says so) or `paid` (a download needs an approved
+purchase on the account). Payments go through **MercadoPago Checkout Pro**, every payment is tied to an
+account on the franciscosolis.cl SSO, and the builds themselves are served by this Worker against a
+per-request ticket rather than from a bucket URL — which is the only arrangement that can be asked
+whether the person downloading has paid.
+
 Reading published pages is **public** — that is what the website itself calls, and those are the
 only responses a shared cache is allowed to keep. Everything under `/admin` requires an access token
-issued by [`apps/auth`](../auth/README.md) for an `@franciscosolis.cl` account. This Worker has no
-front-end of its own: it is edited from a section of the CMS interface at
-`franciscosolis.cl/cms/pages`, which is why the audience it accepts is the CMS's client id and why
-there is no second application to register.
+issued by [`apps/auth`](../auth/README.md) for an `@franciscosolis.cl` account. The buyer-facing
+routes take a token from the **website's** client id instead, on a deliberately separate audience list.
+This Worker has no editorial front-end of its own: it is edited from a section of the CMS interface at
+`franciscosolis.cl/cms/pages`, which is why the audience it accepts there is the CMS's client id and
+why there is no second application to register.
 
 ---
 
@@ -59,6 +67,30 @@ there is no second application to register.
   `sponsor`, … with `other` as the escape hatch), because the website renders an icon from `kind`
   and free text is a list of icons nobody can finish. At most 12 links per row, stored as JSON and
   replaced wholesale.
+- **Three pricing modes and nothing else** — `src/lib/pricing.ts` is the whole model, exactly as the
+  tab registry is for layout: `free`, `donation` and `paid`. No tiers, no regional prices, no
+  subscriptions — each one turns a product page into a store. A non-payer of a paying application is
+  shown the payment modal **every time, without exception**, and somebody who has paid gets the direct
+  link; that rule is derived in one place so no route can make an exception of itself.
+- **The download is a Worker route, never a bucket URL** — a listing says what exists, `POST
+  …/download` consults the payment state for *that* caller, and `GET /downloads/:ticket` serves the
+  bytes. A presigned URL cannot be asked whether the holder paid, and a public bucket cannot be asked
+  anything. Range requests are honoured, so a 90 MB installer can be resumed.
+- **The five-second cooldown lives in the credential** — a non-payer's ticket is minted five seconds in
+  the future and answers `425 Too Early` until then, so the wait is not a `setTimeout` anybody can step
+  over in the dev tools. A payer's ticket works immediately.
+- **The payment notification is never believed on its own** — the webhook verifies MercadoPago's
+  `x-signature` over the manifest it actually signs, then reads the payment back from the provider's API
+  with our own credential. It is idempotent per payment-and-status, and it answers `200` for a payment
+  it does not recognise so the provider stops retrying. With no webhook secret configured it refuses
+  everything: the one endpoint that can grant a licence fails closed.
+- **An approved payment *is* the entitlement** — there is no second table saying so, which is what makes
+  a refund a status change on the row that already exists rather than two writes that have to agree. A
+  payment is matched to a person by account id *or* verified address, so what somebody bought survives
+  a change of sign-in provider.
+- **Payments and downloads outlive the page** — they are the only rows here with no foreign key onto
+  `applications`, deliberately: deleting a product page must not erase the financial record of what was
+  sold, so the slug and the version are snapshotted onto the row instead.
 - **Drafts are invisible, not forbidden** — public routes only ever return `published` rows and 404
   everything else, including the updates and wiki of a draft application. A 403 would confirm the
   slug of an unannounced product. `published_at` is stamped once, the first time something goes
@@ -87,6 +119,8 @@ there is no second application to register.
 | Framework | [Hono](https://hono.dev) + [hono-openapi](https://www.npmjs.com/package/hono-openapi) |
 | Validation | [valibot](https://valibot.dev) |
 | Database | Cloudflare D1 (`franciscosolis_pages`) + [Drizzle ORM](https://orm.drizzle.team) |
+| Storage | Cloudflare R2 (`franciscosolis-app-releases`), no public access of its own |
+| Payments | [MercadoPago](https://www.mercadopago.cl/developers) Checkout Pro, in CLP |
 | Auth | EdDSA JWTs from `apps/auth`, verified offline against its JWKS |
 | Tests | [Vitest](https://vitest.dev) in `workerd` via `@cloudflare/vitest-pool-workers` |
 | Language | TypeScript (strict) |
@@ -110,14 +144,20 @@ pnpm run db:migrate:list     # what is still pending on the remote one
 
 `pnpm run db:generate` writes a new migration from `src/db/schema.ts` after a schema change.
 
-### 2. Point the Worker at a local auth service
+### 2. Fill in the secrets
 
 ```bash
 cp .dev.vars.example .dev.vars
 ```
 
-There are no secrets to fill in — this Worker holds none. The file exists only to override
-`AUTH_ISSUER` so a local Pages Worker trusts the tokens a local auth Worker stamps.
+Unlike the CMS Worker, this one **does** hold secrets, and three of them:
+`MERCADOPAGO_ACCESS_TOKEN` (use a *test* credential — a preference created with one comes back with a
+`sandbox_init_point`, which is what this Worker then hands the browser, so nothing charges a real
+card), `MERCADOPAGO_WEBHOOK_SECRET` and `DOWNLOAD_SIGNING_KEY`. The file also overrides `AUTH_ISSUER`,
+so a local Pages Worker trusts the tokens a local auth Worker stamps, and `PAGES_PUBLIC_URL` /
+`SITE_BASE_URL` so a minted download link points at the local gateway rather than at production.
+
+In production they are set with `wrangler secret put` and never live in `wrangler.jsonc`.
 
 ### 3. Run it
 
@@ -152,6 +192,23 @@ Unauthenticated, only ever `published` rows, and each takes an optional `?locale
 | `GET` | `/applications/:slug/updates/:version` | One release note |
 | `GET` | `/applications/:slug/wiki` | The sidebar, as a tree, without bodies |
 | `GET` | `/applications/:slug/wiki/:page` | One wiki page with its Markdown |
+| `GET` | `/applications/:slug/pricing` | What the application costs — the same answer for everybody |
+| `GET` | `/applications/:slug/updates/:version/files` | The builds attached to a release |
+
+### Store (optional or required Bearer token from the **website**)
+
+An access token minted for the website's client application, on the `PAGES_ACCOUNT_AUDIENCES` list —
+never the editorial one. No email-domain gate: the whole point is that anybody can buy.
+
+| Method | Route | Token | Description |
+|--------|-------|-------|-------------|
+| `GET` | `/applications/:slug/access` | optional | Whether *this* caller may download, and what to show first |
+| `POST` | `/applications/:slug/files/:fileId/download` | optional | Mints a download link, with the cooldown baked in |
+| `GET` | `/downloads/:ticket` | — | The bytes. `425` until the cooldown elapses, `410` once expired |
+| `POST` | `/applications/:slug/checkout` | required | Opens a MercadoPago payment and answers where to send the browser |
+| `GET` | `/me/purchases`, `/me/purchases/:id` | required | The account's purchase history |
+| `GET` | `/me/downloads` | required | What the account has downloaded |
+| `POST` | `/payments/mercadopago/webhook` | signature | MercadoPago's notifications |
 
 ### Editorial (Bearer token required)
 
@@ -169,7 +226,15 @@ verified `@franciscosolis.cl` address.
 | `GET` `POST` | `/admin/applications/:applicationId/wiki` | List (`?tree=true`) / add a page |
 | `POST` | `/admin/applications/:applicationId/wiki/reorder` | Reorder the sidebar |
 | `GET` `PATCH` `DELETE` | `/admin/applications/:applicationId/wiki/:id` | One wiki page |
+| `GET` `POST` | `/admin/applications/:applicationId/updates/:updateId/files` | List / register a build |
+| `PUT` | `/admin/applications/:applicationId/updates/:updateId/files/:id/content` | Upload the bytes |
+| `PATCH` `DELETE` | `/admin/applications/:applicationId/updates/:updateId/files/:id` | One build |
+| `GET` | `/admin/purchases` | Every payment taken, with totals over the page |
+| `GET` | `/admin/applications/:applicationId/downloads` | Served downloads of one application |
 | `GET` | `/admin/audit` | The trail of every write |
+
+Pricing itself is not a route of its own: `pricing_mode`, `price_amount` and `suggested_amount` are
+fields on `POST`/`PATCH /admin/applications`, filed on the audit trail under `pricing.updated`.
 
 The full, always-current description is the OpenAPI document at
 `https://api.franciscosolis.cl/openapi.json`.
@@ -190,6 +255,16 @@ are tables because there are many. That asymmetry is exactly what the `source` f
 definition tells a front-end. Bodies are capped at 200 000 characters for a page and 50 000 for a
 release note — a changelog entry longer than that is a wiki page.
 
+Downloads hang off the **Updates** tab rather than off the application: `application_release_files`
+holds one row per build, keyed to the release that published it, which is what makes "the archive of
+past versions" a consequence of the changelog instead of a second list to keep in step with it.
+
+The money lives in three more tables. `purchases` is one row per payment, and an `approved` one *is*
+the entitlement — there is no `entitlements` table. `payment_events` is the append-only log of every
+provider notification acted on, and its unique `<payment>:<status>` key is what makes the webhook
+idempotent. `download_events` is what "see your downloads" reads. None of the three carries a foreign
+key onto `applications`: a payment and a download have to outlive the page they were made for.
+
 Alongside them, `audit_logs` records every write, and the whole schema lives in `src/db/schema.ts`
 with its migrations generated by drizzle-kit into `migrations/`.
 
@@ -205,10 +280,22 @@ All configuration lives in `wrangler.jsonc` under `vars`:
 | `AUTH_ISSUER` | Expected `iss` claim; must match the auth Worker's issuer exactly |
 | `PAGES_ALLOWED_AUDIENCES` | Client application ids whose tokens may write here — the CMS's |
 | `PAGES_ALLOWED_EMAIL_DOMAINS` | Email domains allowed to edit, matched on the full domain label |
+| `PAGES_ACCOUNT_AUDIENCES` | Client ids whose tokens identify a *buyer* — the website's. A separate list on purpose |
+| `PAGES_PUBLIC_URL` | This Worker's public base URL, for the download links and the notification URL |
+| `SITE_BASE_URL` | Where a buyer is returned to after checkout — a page on the website, never the API |
 
-Bindings: `DB` (D1 `franciscosolis_pages`) and `AUTH` (service binding to the auth Worker, used only
-to read its published JWKS). There are no secrets: token verification needs public keys, not a
-signing key, and this Worker is never an OAuth client of anything.
+Secrets, set with `wrangler secret put` and listed in `.dev.vars.example` for local work:
+
+| Secret | Purpose |
+|--------|---------|
+| `MERCADOPAGO_ACCESS_TOKEN` | Creates preferences and reads payments back. Without it checkout answers 503 |
+| `MERCADOPAGO_WEBHOOK_SECRET` | Verifies notifications. Without it every notification is refused |
+| `DOWNLOAD_SIGNING_KEY` | HMAC key the download tickets are signed with |
+
+Bindings: `DB` (D1 `franciscosolis_pages`), `RELEASES` (R2 `franciscosolis-app-releases`, no public
+access of its own) and `AUTH` (service binding to the auth Worker, used only to read its published
+JWKS). Token verification still needs public keys rather than a signing key — this Worker is not an
+OAuth client of anything.
 
 ---
 

@@ -25,7 +25,10 @@ together six Cloudflare Workers, all living directly in this repo:
 - `apps/pages` — internal Worker with **Standalone App Pages**: one product page per application
   built here, all to the same house standard (a banner, then Overview / Updates / Wiki / Contact
   tabs), reachable through `apps/api` at `/pages/*`. Same public-read, gated-write split as the CMS,
-  and edited from the CMS front-end rather than from an application of its own.
+  and edited from the CMS front-end rather than from an application of its own. It is also the one
+  Worker here that **takes money**: an application can be paid for or donated to through MercadoPago
+  Checkout Pro, and its downloadable builds live in R2 and are served by the Worker against a signed
+  per-request ticket rather than from a bucket URL.
 - `apps/support` — internal Worker with the **support ticket system** and the help centre behind it,
   reachable through `apps/api` at `/support/*`. A ticket can be opened from the website or by writing
   to `soporte@franciscosolis.cl`, and answered in either place; the help centre is searched both
@@ -52,7 +55,9 @@ workspace/catalog, root scripts).
   those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/pages` and
   `apps/support` additionally use drizzle-orm/drizzle-kit; `apps/auth`, `apps/cms` and `apps/support`
   also pull react + react-email through `@franciscosolis/emails`, all catalogued too. `apps/support`
-  is the only one with `postal-mime`, and the only one using Workers AI and Vectorize.
+  is the only one with `postal-mime`, and the only one using Workers AI and Vectorize. `apps/pages`
+  talks to MercadoPago over plain `fetch` rather than through an SDK — three functions in
+  `src/lib/mercadopago.ts` against a dependency that assumes Node.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
   on `dev`/`deploy`.
 - Vitest running inside `workerd` via `@cloudflare/vitest-pool-workers`, also catalogued.
@@ -203,9 +208,22 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   about its shape is configurable. That is the whole point of the Worker — the moment a page can
   describe its own layout, the set of pages stops being a house standard. `apps/pages` is also the
   one Worker here whose schema uses foreign keys: a release note or a wiki page only means anything
-  as part of one application. It has **no client application of its own** — its editor is a section
-  of the CMS front-end, so `PAGES_ALLOWED_AUDIENCES` names the CMS's client id and there is nothing
-  extra to register in the auth database.
+  as part of one application — with the payment and download tables as the deliberate exception, since
+  a financial record has to outlive the page it was made for. It has **no client application of its
+  own** — its editor is a section of the CMS front-end, so `PAGES_ALLOWED_AUDIENCES` names the CMS's
+  client id and there is nothing extra to register in the auth database. It does carry a second
+  audience list (`PAGES_ACCOUNT_AUDIENCES`, the website's client id), the way `apps/support` does, for
+  somebody buying rather than editing.
+- **Money is `apps/pages`' business and nothing else's** (`apps/pages/src/lib/pricing.ts`). Three
+  pricing modes, `free` / `donation` / `paid`, and no tiers, regions or subscriptions — the same
+  house-standard reasoning as the tab registry. Four things about it are worth not re-deriving, and
+  `apps/pages/CLAUDE.md` has the rest: a download is a **Worker route** because a presigned R2 URL
+  cannot be asked whether the holder paid; the five-second cooldown for a non-payer is `nbf` on a
+  signed ticket rather than a timer on the page; the MercadoPago webhook verifies a signature and then
+  **reads the payment back from the provider**, because the notification body is not evidence; and an
+  approved payment *is* the entitlement, so a refund is one status change rather than two writes that
+  have to agree. Buying requires signing in first — that is what ties a payment to an SSO account, and
+  it is also why no service binding back into `auth` was needed to create one.
 - **The CMS content model is a registry, not a table per type**: every collection lives in
   one `content_entries` table discriminated by `collection`, with collection-specific fields
   validated by `apps/cms/src/lib/collections.ts`. Adding a collection is a registry entry,
@@ -289,7 +307,11 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
 - This repo uses `dev` as its default/main branch — never target `main`/`master`.
 - `apps/landing/.dev.vars` holds the `GH_TOKEN` secret for local dev, and
   `apps/auth/.dev.vars` holds `JWT_PRIVATE_KEY` and the Google OAuth client. Neither must
-  ever be committed (both already gitignored). `apps/cms` and `apps/pages` have no secrets at all —
-  their `.dev.vars` only repoint `AUTH_JWKS_URL`/`AUTH_ISSUER` at a local auth Worker, and
-  `apps/support` has none either — the link that lets somebody read their own ticket without an
-  account is a per-ticket random secret stored as a hash on the row, not a key held by the Worker.
+  ever be committed (both already gitignored). `apps/cms` has no secrets at all — its `.dev.vars` only
+  repoints `AUTH_JWKS_URL`/`AUTH_ISSUER` at a local auth Worker — and `apps/support` has none either:
+  the link that lets somebody read their own ticket without an account is a per-ticket random secret
+  stored as a hash on the row, not a key held by the Worker. `apps/pages` used to be in that group and
+  no longer is: it holds `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` and
+  `DOWNLOAD_SIGNING_KEY`. Use a MercadoPago *test* credential locally — a preference created with one
+  answers a `sandbox_init_point`, which is what the Worker hands the browser, so nothing charges a real
+  card.
