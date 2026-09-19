@@ -19,6 +19,7 @@ const clearDatabase = async () => {
     env.DB.prepare('DELETE FROM email_templates'),
     env.DB.prepare('DELETE FROM email_messages'),
     env.DB.prepare('DELETE FROM audit_logs'),
+    env.DB.prepare('DELETE FROM ai_requests'),
   ])
 }
 

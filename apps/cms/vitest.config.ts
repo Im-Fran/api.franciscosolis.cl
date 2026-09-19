@@ -13,15 +13,15 @@ const migrations = await readD1Migrations(fileURLToPath(new URL('./migrations', 
 export default defineConfig({
   plugins: [
     cloudflareTest({
-      wrangler: { configPath: './wrangler.jsonc' },
+      // The `test` environment, not the top-level config. It is identical apart from leaving out
+      // the `ai` binding, which this pool answers by opening a remote proxy session against the
+      // real Cloudflare account — see the long comment on `env.test` in wrangler.jsonc. Its vars
+      // also point `AUTH_JWKS_URL`/`AUTH_ISSUER` at an unroutable test host, so a request that
+      // escapes a stub fails instead of reaching the real auth Worker.
+      wrangler: { configPath: './wrangler.jsonc', environment: 'test' },
       miniflare: {
         bindings: {
           TEST_MIGRATIONS: migrations,
-          // Deliberately not the production URL. Every test stubs the AUTH binding, so a request
-          // that escapes a stub fails against an unroutable host instead of reaching the real
-          // auth Worker.
-          AUTH_JWKS_URL: 'https://auth.test/.well-known/jwks.json',
-          AUTH_ISSUER: 'https://auth.test',
         },
         // The real binding points at the deployed `auth` Worker, which is not part of this
         // project. `stubJwks` replaces `env.AUTH` per test file; this stands in so the runtime can

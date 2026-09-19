@@ -66,7 +66,36 @@ const assistCallsByAgent = async (db: Database, email: string, now: Date): Promi
   return row?.total ?? 0
 }
 
+/**
+ * Translation drafts one agent has asked for in the last hour.
+ *
+ * Counted apart from `assistCallsByAgent` on purpose: drafting a reply and translating the help
+ * centre are two different spends by the same person, and exhausting one should not close the other.
+ * A call that failed still counts — a front-end stuck in a loop is billing neurons whether or not
+ * the answers came back, and that is the thing being limited.
+ */
+const translationsByAgent = async (db: Database, email: string, now: Date): Promise<number> => {
+  const [row] = await db
+    .select({ total: count() })
+    .from(aiRequests)
+    .where(
+      and(
+        eq(aiRequests.kind, 'translate'),
+        eq(aiRequests.actorEmail, email.toLowerCase()),
+        gte(aiRequests.createdAt, hourAgo(now)),
+      ),
+    )
+  return row?.total ?? 0
+}
+
 /** Seconds until the top of the next hour-window, for a `Retry-After` header. */
 const retryAfterSeconds = (now: Date): number => 3600 - Math.floor((now.getTime() / 1000) % 3600)
 
-export { assistCallsByAgent, inboundFromSender, retryAfterSeconds, ticketsFromEmail, ticketsFromIp }
+export {
+  assistCallsByAgent,
+  inboundFromSender,
+  retryAfterSeconds,
+  ticketsFromEmail,
+  ticketsFromIp,
+  translationsByAgent,
+}

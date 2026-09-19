@@ -1,3 +1,5 @@
+import { DEFAULT_TIMEOUT_MS, MAX_SOURCE_CHARS } from '@franciscosolis/translate'
+
 /** Where a ticket can be in its life. `spam` is terminal and invisible to the requester. */
 const TICKET_STATUS = ['new', 'open', 'pending', 'on_hold', 'solved', 'closed', 'spam'] as const
 type TicketStatus = (typeof TICKET_STATUS)[number]
@@ -91,6 +93,43 @@ const BODY_LIMITS = {
   /** One help article. */
   article: 200_000,
   subject: 200,
+} as const
+
+/**
+ * The API's own cap on each translatable prose field, in characters.
+ *
+ * One map rather than a number written at each use, because it is read in two places that must
+ * agree: the valibot fragments in `lib/validation.ts` that refuse an over-long override on save,
+ * and the translation route that refuses a model answer over the cap. A draft the API would reject
+ * is not a draft, it is a dead end the editor discovers at the save button.
+ *
+ * Where two kinds of row share a field name under different caps, the *smaller* wins — a label's
+ * 60-character name rather than a category's 120 — because the field name is all the translation
+ * route is told, and the conservative number is always a valid answer for either. It never bites:
+ * a translation is bounded far below both by `TRANSLATION.maxSourceChars`.
+ */
+const TRANSLATABLE_FIELD_LIMITS = {
+  title: 200,
+  summary: 600,
+  body: BODY_LIMITS.article,
+  name: 60,
+  description: 300,
+} as const
+
+/**
+ * Bounds on `POST /admin/translate`.
+ *
+ * Shares the hourly shape of `ASSIST` below and is counted separately, because the two are
+ * different spends by the same person: an agent drafting a reply and an editor translating the help
+ * centre should not exhaust each other's allowance.
+ */
+const TRANSLATION = {
+  /** Draft translations one agent may ask for per hour, successful or not. */
+  hourlyLimitPerAgent: 120,
+  /** Milliseconds before the model call is abandoned. Bounds the response, not the spend. */
+  timeoutMs: DEFAULT_TIMEOUT_MS,
+  /** Longest source text a single call carries. A body over this is translated in pieces. */
+  maxSourceChars: MAX_SOURCE_CHARS,
 } as const
 
 /** The deferred-reply rule, in one place. */
@@ -201,6 +240,8 @@ export {
   PARTICIPANT_TAG,
   PUBLIC_CACHE_SECONDS,
   REQUESTER_VISIBLE_STATUS,
+  TRANSLATABLE_FIELD_LIMITS,
+  TRANSLATION,
   TICKET_CREATION,
   TICKET_EVENTS,
   TICKET_PRIORITY,

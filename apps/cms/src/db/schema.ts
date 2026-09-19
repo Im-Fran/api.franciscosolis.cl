@@ -168,4 +168,33 @@ const auditLogs = sqliteTable('audit_logs', {
   index('audit_logs_actor_email_idx').on(table.actorEmail),
 ])
 
-export { auditLogs, contentEntries, emailMessages, emailTemplates, legalPages }
+/**
+ * Every call this Worker makes to Workers AI, and the meter beside it.
+ *
+ * Not bookkeeping for its own sake: Workers AI is billed per neuron and there is no per-Worker
+ * spend cap, so without a log the first sign of a runaway loop in the CMS front-end is the invoice.
+ * The same table is the rate limiter's index — `translationsByEditor` counts rows here rather than
+ * keeping a counter of its own.
+ *
+ * The source text is deliberately *not* stored. It is already in `content_entries`, and a second
+ * copy in a table nobody prunes is a second place a draft has to be deleted from.
+ */
+const aiRequests = sqliteTable('ai_requests', {
+  id: text('id').primaryKey(),
+  /** `translate` is the only kind today. Kept open so a second use does not need a migration. */
+  kind: text('kind').notNull(),
+  model: text('model').notNull(),
+  actorEmail: text('actor_email'),
+  inputChars: integer('input_chars').notNull().default(0),
+  outputChars: integer('output_chars').notNull().default(0),
+  durationMs: integer('duration_ms').notNull().default(0),
+  ok: integer('ok', { mode: 'boolean' }).notNull().default(true),
+  error: text('error'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  index('ai_requests_created_idx').on(table.createdAt),
+  index('ai_requests_actor_created_idx').on(table.actorEmail, table.createdAt),
+  index('ai_requests_kind_created_idx').on(table.kind, table.createdAt),
+])
+
+export { aiRequests, auditLogs, contentEntries, emailMessages, emailTemplates, legalPages }

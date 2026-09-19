@@ -2,7 +2,7 @@
   "name": "cms",
   "type": "module",
   "license": "GPL-3.0-only",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8790 --inspector-port 9232",
     "build": "wrangler deploy --dry-run --outdir dist",
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@franciscosolis/emails": "workspace:*",
+    "@franciscosolis/translate": "workspace:*",
     "@hono/standard-validator": "catalog:",
     "@valibot/to-json-schema": "catalog:",
     "axios": "catalog:",

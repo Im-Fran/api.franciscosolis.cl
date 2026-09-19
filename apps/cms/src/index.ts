@@ -4,6 +4,7 @@ import { describeRoute, openAPIRouteHandler, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import type { AppEnv } from '@/env'
 import { COLLECTION_NAMES } from '@/lib/collections'
+import { TRANSLATION } from '@/lib/config'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
 
 /* Routes */
@@ -50,6 +51,12 @@ const rootResponseSchema = v.object({
     collections: v.array(v.string()),
     locales: v.array(v.string()),
     default_locale: v.string(),
+    translation: v.object({
+      /** Whether machine-translation drafts are offered. False would mean the front-end hides the button. */
+      ai: v.boolean(),
+      /** Longest source text `POST /admin/translate` accepts, in characters. */
+      max_source_chars: v.number(),
+    }),
   }),
 })
 
@@ -75,6 +82,13 @@ app.get(
         // list of its own that drifts the day a third language is added here.
         locales: [...LOCALES],
         default_locale: DEFAULT_LOCALE,
+        // Advertised for the same reason as the locale list: the editor's translation modal only
+        // offers to draft a field with Workers AI when the service it is talking to says it can,
+        // and only up to the length that service will actually accept.
+        translation: {
+          ai: true,
+          max_source_chars: TRANSLATION.maxSourceChars,
+        },
       },
     }),
 )

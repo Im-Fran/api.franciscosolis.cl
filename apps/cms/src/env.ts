@@ -25,6 +25,17 @@ type EmailSender = {
   send(message: EmailMessage): Promise<{ messageId: string }>
 }
 
+/**
+ * The Workers AI binding, narrowed to the one method this Worker calls.
+ *
+ * Written out here rather than taken from `@cloudflare/workers-types`, whose types for this binding
+ * have historically lagged the runtime. Every call goes through `src/services/ai.ts`, so this is
+ * the complete surface.
+ */
+type AiBinding = {
+  run(model: string, input: Record<string, unknown>): Promise<unknown>
+}
+
 type Env = {
   /** D1 database `franciscosolis_cms`. */
   DB: D1Database
@@ -32,6 +43,8 @@ type Env = {
   EMAIL: EmailSender
   /** Service binding to the auth Worker. Used for one thing only: reading its published JWKS. */
   AUTH: Fetcher
+  /** Workers AI. Used for one thing only: drafting a translation of a prose field. */
+  AI: AiBinding
 
   /** Path the JWKS is read from over `AUTH`. Access tokens are verified offline against it. */
   AUTH_JWKS_URL: string
@@ -46,6 +59,9 @@ type Env = {
   MAIL_FROM_NAME: string
   /** Comma-separated addresses an editor may send as. Subset of `allowed_sender_addresses`. */
   MAIL_ALLOWED_SENDERS: string
+
+  /** Workers AI text model behind the translation drafts. A var so a retired model is a deploy. */
+  AI_TEXT_MODEL: string
 }
 
 /** Values `requireEditor` puts on the Hono context for downstream handlers. */
@@ -59,4 +75,4 @@ type AppEnv = {
   Variables: Variables
 }
 
-export type { AppEnv, EmailAddress, EmailMessage, EmailSender, Env, Variables }
+export type { AiBinding, AppEnv, EmailAddress, EmailMessage, EmailSender, Env, Variables }
