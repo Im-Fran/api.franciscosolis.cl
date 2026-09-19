@@ -31,10 +31,7 @@
     {
       "binding": "DB",
       "database_name": "franciscosolis_marketplace",
-      // PLACEHOLDER. `franciscosolis_marketplace` does not exist yet: create it with
-      // `wrangler d1 create franciscosolis_marketplace` and paste the id it prints here,
-      // and the `_dev` one under `env.dev` below. Nothing deploys until both are real.
-      "database_id": "00000000-0000-4000-8000-000000000001",
+      "database_id": "d729ade2-61c9-4e44-8534-80461db9d18e",
       "migrations_dir": "migrations"
     }
   ],
@@ -155,7 +152,7 @@
         {
           "binding": "DB",
           "database_name": "franciscosolis_marketplace_dev",
-          "database_id": "00000000-0000-4000-8000-000000000002",
+          "database_id": "cdf775d8-d647-4d72-9c85-6de65ff932f1",
           "migrations_dir": "migrations"
         }
       ],
@@ -225,7 +222,7 @@
         {
           "binding": "DB",
           "database_name": "franciscosolis_marketplace",
-          "database_id": "00000000-0000-4000-8000-000000000001",
+          "database_id": "d729ade2-61c9-4e44-8534-80461db9d18e",
           "migrations_dir": "migrations"
         }
       ],
