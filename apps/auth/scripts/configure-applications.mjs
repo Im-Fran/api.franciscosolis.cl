@@ -19,7 +19,16 @@ import { randomUUID, webcrypto } from 'node:crypto'
 import { createInterface } from 'node:readline/promises'
 import { parseArgs } from 'node:util'
 
-const DATABASE = 'franciscosolis_auth'
+/**
+ * Which stack to act on. `--dev` targets the development Worker's own database, which is a separate
+ * D1 instance with its own client applications: the development stack signs in on
+ * dev.franciscosolis.cl, so its redirect URIs are different values, not the same ones with a flag.
+ */
+const development = process.argv.includes('--dev')
+const DATABASE = development ? 'franciscosolis_auth_dev' : 'franciscosolis_auth'
+
+/** Wrangler needs the environment too, or it resolves the binding out of the top-level config. */
+const ENVIRONMENT_ARGS = development ? ['--env', 'dev'] : []
 
 /** Same rule as `createApplicationSchema` in src/routes/admin/applications.ts. */
 const CLIENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/
@@ -40,6 +49,7 @@ Commands:
 
 Options:
   --remote                    Act on the real franciscosolis_auth database (default: local)
+  --dev                       Act on the development stack (franciscosolis_auth_dev) instead
   --client-id <id>            Client id, lowercase alphanumeric and dashes
   --name <name>               Display name
   --description <text>        Description ("" clears it)
@@ -68,6 +78,7 @@ Options:
 Examples:
   pnpm run applications -- list --remote
   pnpm run applications -- create franciscosolis-web --name "Landing" --redirect-uri https://franciscosolis.cl/auth/callback
+  pnpm run applications -- create franciscosolis-web --name "Landing (dev)" --redirect-uri https://dev.franciscosolis.cl/auth/callback --dev --remote
   pnpm run applications -- update franciscosolis-cms --add-redirect-uri http://localhost:5174/auth/callback
   pnpm run applications -- rotate-secret my-backend --grace 86400 --remote
   pnpm run applications -- rotate-secret my-backend --grace 0 --remote     # a leak: cut the old one off now
@@ -77,6 +88,7 @@ Examples:
 
 const OPTIONS = {
   remote: { type: 'boolean' },
+  dev: { type: 'boolean' },
   json: { type: 'boolean' },
   'dry-run': { type: 'boolean' },
   yes: { type: 'boolean', short: 'y' },
@@ -176,7 +188,7 @@ const auditStatement = (event, { applicationId = null, metadata = {} } = {}) =>
 const query = (sql) => {
   const result = spawnSync(
     'wrangler',
-    ['d1', 'execute', DATABASE, remote ? '--remote' : '--local', '--json', '--yes', '--command', sql],
+    ['d1', 'execute', DATABASE, ...ENVIRONMENT_ARGS, remote ? '--remote' : '--local', '--json', '--yes', '--command', sql],
     { encoding: 'utf8' },
   )
 

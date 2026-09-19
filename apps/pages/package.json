@@ -2,11 +2,13 @@
   "name": "pages",
   "type": "module",
   "license": "GPL-3.0-only",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8792 --inspector-port 9233",
     "build": "wrangler deploy --dry-run --outdir dist",
+    "build:dev": "wrangler deploy --dry-run --outdir dist --env dev",
     "deploy": "wrangler deploy --minify",
+    "deploy:dev": "wrangler deploy --minify --env dev",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "typecheck": "tsc --noEmit -p test/tsconfig.json",
     "test": "vitest run",
@@ -14,8 +16,11 @@
     "test:coverage": "vitest run --coverage",
     "db:generate": "drizzle-kit generate",
     "db:migrate:list": "wrangler d1 migrations list franciscosolis_pages --remote",
+    "db:migrate:list:dev": "wrangler d1 migrations list franciscosolis_pages_dev --env dev --remote",
     "db:migrate:local": "wrangler d1 migrations apply franciscosolis_pages --local",
-    "db:migrate:remote": "wrangler d1 migrations apply franciscosolis_pages --remote"
+    "db:migrate:local:dev": "wrangler d1 migrations apply franciscosolis_pages_dev --env dev --local",
+    "db:migrate:remote": "wrangler d1 migrations apply franciscosolis_pages --remote",
+    "db:migrate:remote:dev": "wrangler d1 migrations apply franciscosolis_pages_dev --env dev --remote"
   },
   "dependencies": {
     "@hono/standard-validator": "catalog:",
