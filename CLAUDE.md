@@ -220,9 +220,11 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   `apps/pages/CLAUDE.md` has the rest: a download is a **Worker route** because a presigned R2 URL
   cannot be asked whether the holder paid; the five-second cooldown for a non-payer is `nbf` on a
   signed ticket rather than a timer on the page; the MercadoPago webhook verifies a signature and then
-  **reads the payment back from the provider**, because the notification body is not evidence; and an
+  **reads the resource back from the provider**, because the notification body is not evidence; and an
   approved payment *is* the entitlement, so a refund is one status change rather than two writes that
-  have to agree. Buying requires signing in first — that is what ties a payment to an SSO account, and
+  have to agree. It reads *both* generations of the provider's notifications — the classic `payment`
+  topic and the orders API's `order` topic, plus `topic_chargebacks_wh` for disputes — keyed on the
+  payment id so the same money arriving down two channels is applied once. Buying requires signing in first — that is what ties a payment to an SSO account, and
   it is also why no service binding back into `auth` was needed to create one.
 - **The CMS content model is a registry, not a table per type**: every collection lives in
   one `content_entries` table discriminated by `collection`, with collection-specific fields

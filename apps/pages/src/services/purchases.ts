@@ -1,4 +1,4 @@
-import { and, desc, eq, or, type SQL } from 'drizzle-orm'
+import { and, desc, eq, inArray, or, type SQL } from 'drizzle-orm'
 import type { Database } from '@/db/client'
 import { purchases } from '@/db/schema'
 import { ENTITLING_STATUS, type PurchaseStatus } from '@/lib/config'
@@ -28,6 +28,7 @@ const toPublicPurchase = (purchase: Purchase) => ({
   reference: purchase.externalReference,
   approved_at: purchase.approvedAt?.toISOString() ?? null,
   refunded_at: purchase.refundedAt?.toISOString() ?? null,
+  charged_back_at: purchase.chargedBackAt?.toISOString() ?? null,
   created_at: purchase.createdAt.toISOString(),
   updated_at: purchase.updatedAt.toISOString(),
 })
@@ -77,6 +78,8 @@ const createPendingPurchase = async (db: Database, input: CreatePurchaseInput): 
     externalReference: crypto.randomUUID(),
     approvedAt: null,
     refundedAt: null,
+    chargedBackAt: null,
+    chargebackId: null,
     metadata: input.metadata ? JSON.stringify(input.metadata) : null,
     createdAt: now,
     updatedAt: now,
@@ -112,15 +115,43 @@ const findPurchaseByPaymentId = async (db: Database, paymentId: string): Promise
 }
 
 /**
+ * The same lookup for the several payment ids an order or a chargeback can name.
+ *
+ * An order settles with one payment here — there is a single item and no split — but the API models a
+ * list, and a chargeback names every payment being disputed. Taking the first row that matches keeps
+ * a partially-paid order from being silently ignored, which is the failure that would leave somebody
+ * who paid without their download.
+ */
+const findPurchaseByAnyPaymentId = async (db: Database, paymentIds: readonly string[]): Promise<Purchase | null> => {
+  if (paymentIds.length === 0) {
+    return null
+  }
+  const [purchase] = await db
+    .select()
+    .from(purchases)
+    .where(inArray(purchases.paymentId, [...paymentIds]))
+    .limit(1)
+  return purchase ?? null
+}
+
+/**
  * Writes the provider's verdict onto the row.
  *
- * `approvedAt` is stamped once and kept — a later refund adds `refundedAt` beside it rather than
- * erasing the fact that the payment was once good, which is what a receipt and a dispute both need.
+ * Every timestamp here is stamped once and kept. `approvedAt` survives a later refund or chargeback
+ * rather than being erased, because "this was paid, and then it was taken back" is what a receipt, a
+ * dispute and an accountant all need — a row that only remembers its current state cannot answer when
+ * the money arrived. The same rule gives `refundedAt` and `chargedBackAt` a column each: they are
+ * different events with different consequences, and one of them has a deadline attached.
  */
 const applyPaymentStatus = async (
   db: Database,
   purchase: Purchase,
-  input: { status: PurchaseStatus; paymentId?: string | null; amount?: number | null },
+  input: {
+    status: PurchaseStatus
+    paymentId?: string | null
+    amount?: number | null
+    chargebackId?: string | null
+  },
 ): Promise<Purchase> => {
   const now = new Date()
   const updated: Purchase = {
@@ -128,8 +159,10 @@ const applyPaymentStatus = async (
     status: input.status,
     paymentId: input.paymentId ?? purchase.paymentId,
     amount: input.amount ?? purchase.amount,
+    chargebackId: input.chargebackId ?? purchase.chargebackId,
     approvedAt: input.status === ENTITLING_STATUS ? (purchase.approvedAt ?? now) : purchase.approvedAt,
     refundedAt: input.status === 'refunded' ? (purchase.refundedAt ?? now) : purchase.refundedAt,
+    chargedBackAt: input.status === 'charged_back' ? (purchase.chargedBackAt ?? now) : purchase.chargedBackAt,
     updatedAt: now,
   }
 
@@ -139,8 +172,10 @@ const applyPaymentStatus = async (
       status: updated.status,
       paymentId: updated.paymentId,
       amount: updated.amount,
+      chargebackId: updated.chargebackId,
       approvedAt: updated.approvedAt,
       refundedAt: updated.refundedAt,
+      chargedBackAt: updated.chargedBackAt,
       updatedAt: updated.updatedAt,
     })
     .where(eq(purchases.id, purchase.id))
@@ -225,6 +260,7 @@ export {
   attachPreference,
   createPendingPurchase,
   findActivePurchase,
+  findPurchaseByAnyPaymentId,
   findPurchaseById,
   findPurchaseByPaymentId,
   findPurchaseByReference,
