@@ -1,8 +1,15 @@
-import { and, desc, eq, inArray, or, type SQL } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, lte, or, type SQL } from 'drizzle-orm'
 import type { Database } from '@/db/client'
 import { purchases } from '@/db/schema'
 import { ENTITLING_STATUS, type PurchaseStatus } from '@/lib/config'
 import { CURRENCY } from '@/lib/pricing'
+import {
+  describeWithdrawal,
+  isLinkedToAccount,
+  type PaymentEnvironment,
+  type RefundReason,
+  type SaleSource,
+} from '@/lib/sales'
 
 type Purchase = typeof purchases.$inferSelect
 
@@ -24,6 +31,10 @@ const toPublicPurchase = (purchase: Purchase) => ({
   amount: purchase.amount,
   currency: purchase.currency,
   provider: purchase.provider,
+  /** How the money arrived. A buyer's own receipt should say "cash" when it was cash. */
+  source: purchase.source,
+  /** What went back, when something did. Null on a sale that was never refunded. */
+  refunded_amount: purchase.refundedAmount,
   payment_id: purchase.paymentId,
   reference: purchase.externalReference,
   approved_at: purchase.approvedAt?.toISOString() ?? null,
@@ -33,12 +44,28 @@ const toPublicPurchase = (purchase: Purchase) => ({
   updated_at: purchase.updatedAt.toISOString(),
 })
 
-/** Same row for an editor, with the buyer on it. The admin list is a revenue and support screen. */
-const toAdminPurchase = (purchase: Purchase) => ({
+/**
+ * Same row for an editor, with the buyer on it. The admin list is a revenue and support screen.
+ *
+ * Three things are here and not on the buyer's copy, for one reason each: `environment` is ours and
+ * would mean nothing to them, `note` is what an editor wrote about the sale rather than to them, and
+ * `withdrawal` is the statutory window — it is the answer to "may I still refund this", and an
+ * editor who has to work it out from a date will work it out wrongly.
+ */
+const toAdminPurchase = (purchase: Purchase, now: Date = new Date()) => ({
   ...toPublicPurchase(purchase),
   user_id: purchase.userId,
+  /** Whether the sale is tied to an SSO account, or so far only to an address. */
+  linked_to_account: isLinkedToAccount(purchase.userId),
   email: purchase.email,
+  environment: purchase.environment,
   preference_id: purchase.preferenceId,
+  refund_reason: purchase.refundReason,
+  refunded_by: purchase.refundedBy,
+  refund_id: purchase.refundId,
+  note: purchase.note,
+  created_by: purchase.createdBy,
+  withdrawal: describeWithdrawal(purchase.approvedAt, now),
   metadata: purchase.metadata ? (JSON.parse(purchase.metadata) as Record<string, unknown>) : null,
 })
 
@@ -49,6 +76,14 @@ type CreatePurchaseInput = {
   userId: string
   email: string
   amount: number
+  /**
+   * Which MercadoPago account is about to be charged.
+   *
+   * Passed in rather than read off `env` here, so the one module that knows the configuration
+   * (`lib/mercadopago.ts`) is the only one that decides — and so a test payment can never be
+   * recorded as live by a service that guessed.
+   */
+  environment: PaymentEnvironment
   metadata?: Record<string, unknown>
 }
 
@@ -73,13 +108,21 @@ const createPendingPurchase = async (db: Database, input: CreatePurchaseInput): 
     amount: input.amount,
     currency: CURRENCY,
     provider: 'mercadopago',
+    source: 'mercadopago' as SaleSource,
+    environment: input.environment,
     preferenceId: null,
     paymentId: null,
     externalReference: crypto.randomUUID(),
     approvedAt: null,
     refundedAt: null,
+    refundedAmount: null,
+    refundReason: null,
+    refundedBy: null,
+    refundId: null,
     chargedBackAt: null,
     chargebackId: null,
+    note: null,
+    createdBy: null,
     metadata: input.metadata ? JSON.stringify(input.metadata) : null,
     createdAt: now,
     updatedAt: now,
@@ -151,9 +194,16 @@ const applyPaymentStatus = async (
     paymentId?: string | null
     amount?: number | null
     chargebackId?: string | null
+    /** What went back. Defaults to the whole sale on a refund, because that is the usual one. */
+    refundedAmount?: number | null
+    refundReason?: RefundReason | null
+    /** Editor who issued it. Null when the refund was made in the provider's console. */
+    refundedBy?: string | null
+    refundId?: string | null
   },
 ): Promise<Purchase> => {
   const now = new Date()
+  const refunding = input.status === 'refunded'
   const updated: Purchase = {
     ...purchase,
     status: input.status,
@@ -161,7 +211,15 @@ const applyPaymentStatus = async (
     amount: input.amount ?? purchase.amount,
     chargebackId: input.chargebackId ?? purchase.chargebackId,
     approvedAt: input.status === ENTITLING_STATUS ? (purchase.approvedAt ?? now) : purchase.approvedAt,
-    refundedAt: input.status === 'refunded' ? (purchase.refundedAt ?? now) : purchase.refundedAt,
+    refundedAt: refunding ? (purchase.refundedAt ?? now) : purchase.refundedAt,
+    // A refund that names no amount refunded everything, which is what the provider's console does
+    // and what a notification carries no figure for. Stamped once, like every other timestamp here.
+    refundedAmount: refunding
+      ? (purchase.refundedAmount ?? input.refundedAmount ?? purchase.amount)
+      : purchase.refundedAmount,
+    refundReason: refunding ? (purchase.refundReason ?? input.refundReason ?? null) : purchase.refundReason,
+    refundedBy: refunding ? (purchase.refundedBy ?? input.refundedBy ?? null) : purchase.refundedBy,
+    refundId: refunding ? (purchase.refundId ?? input.refundId ?? null) : purchase.refundId,
     chargedBackAt: input.status === 'charged_back' ? (purchase.chargedBackAt ?? now) : purchase.chargedBackAt,
     updatedAt: now,
   }
@@ -175,6 +233,10 @@ const applyPaymentStatus = async (
       chargebackId: updated.chargebackId,
       approvedAt: updated.approvedAt,
       refundedAt: updated.refundedAt,
+      refundedAmount: updated.refundedAmount,
+      refundReason: updated.refundReason,
+      refundedBy: updated.refundedBy,
+      refundId: updated.refundId,
       chargedBackAt: updated.chargedBackAt,
       updatedAt: updated.updatedAt,
     })
@@ -229,12 +291,21 @@ type PurchaseFilters = {
   applicationId?: string
   status?: PurchaseStatus
   email?: string
+  /** How the money arrived: what separates a cash sale from a card one in a listing. */
+  source?: SaleSource
+  /** Which MercadoPago account took it. The filter a revenue screen sets to hide test payments. */
+  environment?: PaymentEnvironment
+  kind?: 'purchase' | 'donation'
+  /** Inclusive lower bound on `created_at`. */
+  from?: Date
+  /** Inclusive upper bound on `created_at`. */
+  to?: Date
   limit: number
   offset: number
 }
 
-/** The editorial listing: every payment, newest first, narrowed by application, status or buyer. */
-const listPurchases = async (db: Database, filters: PurchaseFilters): Promise<Purchase[]> => {
+/** Every clause a sales listing and its totals have to agree on, built once for both. */
+const purchaseClauses = (filters: Omit<PurchaseFilters, 'limit' | 'offset'>): SQL[] => {
   const clauses: SQL[] = []
   if (filters.applicationId) {
     clauses.push(eq(purchases.applicationId, filters.applicationId))
@@ -245,6 +316,33 @@ const listPurchases = async (db: Database, filters: PurchaseFilters): Promise<Pu
   if (filters.email) {
     clauses.push(eq(purchases.email, filters.email.toLowerCase()))
   }
+  if (filters.source) {
+    clauses.push(eq(purchases.source, filters.source))
+  }
+  if (filters.environment) {
+    clauses.push(eq(purchases.environment, filters.environment))
+  }
+  if (filters.kind) {
+    clauses.push(eq(purchases.kind, filters.kind))
+  }
+  if (filters.from) {
+    clauses.push(gte(purchases.createdAt, filters.from))
+  }
+  if (filters.to) {
+    clauses.push(lte(purchases.createdAt, filters.to))
+  }
+  return clauses
+}
+
+/**
+ * The editorial listing: every payment, newest first, narrowed by the filters above.
+ *
+ * The clause builder is shared with `summarizeSales` on purpose. A summary computed over a different
+ * `WHERE` than the table under it is a screen whose total does not match its rows, and that is the
+ * one bug in a revenue view nobody forgives.
+ */
+const listPurchases = async (db: Database, filters: PurchaseFilters): Promise<Purchase[]> => {
+  const clauses = purchaseClauses(filters)
 
   return db
     .select()
@@ -257,6 +355,7 @@ const listPurchases = async (db: Database, filters: PurchaseFilters): Promise<Pu
 
 export {
   applyPaymentStatus,
+  purchaseClauses,
   attachPreference,
   createPendingPurchase,
   findActivePurchase,

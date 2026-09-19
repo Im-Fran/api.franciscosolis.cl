@@ -1,6 +1,31 @@
 import type { Account } from '@/middleware/account'
 import type { Editor } from '@/middleware/auth'
 
+/** One recipient/sender of an email sent through Cloudflare Email Sending. */
+type EmailAddress = {
+  email: string
+  name?: string
+}
+
+type EmailMessage = {
+  to: string | EmailAddress | (string | EmailAddress)[]
+  from: string | EmailAddress
+  subject: string
+  html?: string
+  text?: string
+  replyTo?: string | EmailAddress
+  headers?: Record<string, string>
+}
+
+/**
+ * Cloudflare Email Sending binding (`send_email` in wrangler.jsonc). Declared locally for the same
+ * reason `apps/cms` declares it: `@cloudflare/workers-types`' `SendEmail` still describes the older
+ * raw-MIME Email Routing binding rather than the structured `send()` of Email Sending.
+ */
+type EmailSender = {
+  send(message: EmailMessage): Promise<{ messageId: string }>
+}
+
 type Env = {
   /** D1 database `franciscosolis_pages`. */
   DB: D1Database
@@ -8,6 +33,15 @@ type Env = {
   AUTH: Fetcher
   /** R2 bucket `franciscosolis-app-releases`: the downloadable builds. No public access of its own. */
   RELEASES: R2Bucket
+  /**
+   * Cloudflare Email Sending binding, used for exactly one thing: the voucher.
+   *
+   * A sale that nobody can produce a receipt for is a support conversation with no evidence in it,
+   * and for a cash or transfer sale the receipt is the *only* record the buyer ever gets. It is a
+   * send-only binding — this Worker has no inbound mail and must not grow any; correspondence is
+   * `apps/support`'s job and a ticket is where a reply belongs.
+   */
+  EMAIL: EmailSender
 
   /** Path the JWKS is read from over `AUTH`. Access tokens are verified offline against it. */
   AUTH_JWKS_URL: string
@@ -32,6 +66,11 @@ type Env = {
   /** Base URL of the website the buyer is returned to after checkout. */
   SITE_BASE_URL: string
 
+  /** Address vouchers and refund notices are sent from. Must be one Cloudflare will accept. */
+  MAIL_FROM_EMAIL: string
+  /** Display name beside it, and the name the email footer signs off with. */
+  MAIL_FROM_NAME: string
+
   /**
    * MercadoPago private access token. The credential that creates preferences and reads payments;
    * without it checkout answers 503 rather than pretending to work.
@@ -39,6 +78,15 @@ type Env = {
   MERCADOPAGO_ACCESS_TOKEN: string
   /** Webhook signing secret from the MercadoPago dashboard. Notifications are refused without it. */
   MERCADOPAGO_WEBHOOK_SECRET: string
+  /**
+   * Which MercadoPago account this Worker is configured against: `live` or `sandbox`.
+   *
+   * `sandbox` on the development stack, `live` in production. It decides which checkout URL a
+   * created preference is answered with, and it is stamped onto every purchase — so a payment taken
+   * against the test account can never be mistaken for revenue, and a refund knows which account to
+   * ask. Unset reads as `sandbox`, which is the side that cannot take real money.
+   */
+  MERCADOPAGO_ENVIRONMENT: string
   /** HMAC key the download tickets in `src/lib/downloads.ts` are signed with. */
   DOWNLOAD_SIGNING_KEY: string
 }
@@ -62,4 +110,4 @@ type AppEnv = {
   Variables: Variables
 }
 
-export type { AppEnv, Env, Variables }
+export type { AppEnv, EmailAddress, EmailMessage, EmailSender, Env, Variables }

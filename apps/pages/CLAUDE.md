@@ -31,6 +31,12 @@ needs an approved purchase), through MercadoPago Checkout Pro, with every paymen
 the franciscosolis.cl SSO. The builds are attached to the **Updates** tab and served by this Worker
 against a per-request ticket, never from a bucket URL.
 
+Around those payments it also runs a **back office**, per application: the sales of one application,
+sales *recorded by hand* for money taken in cash or by transfer or a copy given away, the **vouchers**
+(receipts) issued for them, and refunds — including the statutory *derecho a retracto*. None of that is
+a fifth tab: the four above are what a visitor sees, and the takings are an editorial section
+(`franciscosolis.cl/cms/pages/<id>/sales`) that the tab registry knows nothing about.
+
 Reads of published pages are public (that is what the website calls); everything under `/admin`
 requires an access token from `apps/auth`. Its editor is **a section of the CMS interface**
 (`franciscosolis.cl/cms/pages`), not an application of its own, which is why the accepted audience
@@ -42,8 +48,13 @@ a second audience list.
 - Cloudflare Workers, Hono 4, hono-openapi + valibot, Wrangler 4, TypeScript strict.
 - **Drizzle ORM** over D1 (`drizzle-orm/d1`), backed by the `franciscosolis_pages` database.
 - **R2** (`RELEASES` → `franciscosolis-app-releases`) for the downloadable builds, and **MercadoPago
-  Checkout Pro** over plain `fetch` for payments — no SDK, which is three functions in
+  Checkout Pro** over plain `fetch` for payments — no SDK, which is a handful of functions in
   `src/lib/mercadopago.ts` rather than a dependency that assumes Node.
+- **Cloudflare Email Sending** (`EMAIL`) and `@franciscosolis/emails` for one thing only: the voucher,
+  and the notice that one was refunded. This Worker has no inbound mail and must not grow any —
+  correspondence is `apps/support`'s job, and a reply belongs on a ticket. Like the CMS it aliases
+  `prettier/standalone` and `prettier/plugins/html` out of its bundle, in `wrangler.jsonc` *and* in
+  `vitest.config.ts`.
 - Dependency versions come from the parent workspace's pnpm `catalog` — use `catalog:`, never a
   hardcoded version.
 - `pnpm` install/deps are managed from the **monorepo root**.
@@ -68,6 +79,20 @@ signing download links both do. They are set with `wrangler secret put`; `.dev.v
 from `.dev.vars.example`) holds the local values, and never a live MercadoPago credential. Everything
 else lives in `wrangler.jsonc` under `vars`.
 
+**`MERCADOPAGO_ENVIRONMENT` is the one var that must be right, and it is a var rather than a guess.**
+It is `live` at the top level and `sandbox` under `env.dev`, and it decides two things: which of the two
+URLs a created preference is answered with, and what is stamped onto every purchase. A *test*
+credential answers a preference with **both** `init_point` and `sandbox_init_point`, and they are
+different checkouts — only the second is the one the provider's test cards work on. So "it has a test
+token, therefore it is a test payment" was never true on its own, and inferring the environment from the
+shape of the credential does not work either: a test *user*'s application credential is spelled exactly
+like a production one. Local `wrangler dev` inherits the top-level `live`, which is why
+`.dev.vars.example` overrides it — without that line a local test preference sends the browser to the
+live URL and the test cards are refused there.
+
+`MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` are the voucher's sender. Only one address is listed in
+`allowed_sender_addresses`, because unlike the CMS nothing here lets a request choose a sender.
+
 ## Source layout
 
 - `src/index.ts` — Hono app: charset/cache middleware, `onError`, `GET /`, route mounting,
@@ -77,18 +102,24 @@ else lives in `wrangler.jsonc` under `vars`.
   published languages and the translation-override rules), `jwks.ts` (offline token verification),
   `config.ts` (statuses, limits, TTLs), `validation.ts` (shared valibot fragments), `errors.ts`
   (unique-violation → 409), `slug.ts`, plus the payment half: `pricing.ts` (the three modes and the
-  charge rules), `mercadopago.ts` (Checkout Pro and the webhook signature), `downloads.ts` (the signed
-  download tickets and the cooldown), `files.ts` (the build vocabulary and the object keys).
+  charge rules), `mercadopago.ts` (Checkout Pro, the webhook signature, the refund call and the
+  environment), `downloads.ts` (the signed download tickets and the cooldown), `files.ts` (the build
+  vocabulary and the object keys), and `sales.ts` — the *administrative* half: where money came from,
+  the environment it came in on, the refund reasons, the statutory withdrawal window and the voucher
+  numbering. `pricing.ts` decides what somebody is charged; `sales.ts` is about a sale once it exists.
 - `src/middleware/auth.ts` — `requireEditor`, the editorial gate. `src/middleware/account.ts` —
   `requireAccount`/`optionalAccount`, the buyer's.
 - `src/services/` — `applications.ts`, `updates.ts`, `wiki.ts` (including the sidebar tree and the
   hierarchy rule), `audit.ts`, `release-files.ts`, `purchases.ts`, `downloads.ts`, and `access.ts` —
-  the one place that decides whether somebody may download.
+  the one place that decides whether somebody may download. The back office adds `sales.ts` (manual
+  sales, refunds, the totals), `vouchers.ts` (issuing, re-issuing, sending, voiding) and `mail.ts` (the
+  one send path).
 - `src/routes/applications.ts` — the public reads; `store.ts` (pricing, access, checkout, `/me/*`),
   `downloads.ts` (the file list, the ticket, the bytes) and `payments.ts` (the webhook) are the paid
-  half; `src/routes/admin/` is the editorial API.
-- `migrations/` — `0000_init.sql`, `0001_payments_and_downloads.sql` and `0002_chargebacks.sql`,
-  generated by drizzle-kit.
+  half; `src/routes/admin/` is the editorial API, where `purchases.ts` is the read-only listing across
+  every application and `sales.ts` is the per-application back office.
+- `migrations/` — `0000_init.sql`, `0001_payments_and_downloads.sql`, `0002_chargebacks.sql` and
+  `0003_manual_sales_and_vouchers.sql`, generated by drizzle-kit.
 
 ## Architecture notes (non-obvious)
 
@@ -253,9 +284,93 @@ else lives in `wrangler.jsonc` under `vars`.
 - **`optionalAccount` lets a bad token through as anonymous** rather than refusing it. A free or
   optional-pay build is downloadable by anybody, and a sign-in wall in front of software that does not
   need one is worse than an unrecognised token — which grants strictly less, never more.
-- **`GET /admin/purchases` is read-only, and there is no endpoint that marks a payment approved.** One
-  would be an endpoint that grants a licence without a payment, which is the thing the signature check
-  exists to prevent. A refund is issued in MercadoPago's console and arrives as a notification.
+- **`GET /admin/purchases` is still read-only, and it is now the *cross-application* listing.** It
+  answers "everything that ever came in", whatever product it came in for, and a total over it is the
+  only thing it is for. Administering the sales of one application lives under that application
+  (`routes/admin/sales.ts`), exactly as the updates and the wiki do — which is what stops a sale of one
+  product being read, refunded or receipted through another's URL.
+- **There *is* now an endpoint that writes an approved payment, and the reason the old rule said there
+  must not be still holds.** That rule was about the webhook: it is public, so it believes nothing it is
+  told and reads every status back from the provider. `POST /admin/applications/:id/sales` is a
+  different endpoint with different trust — behind `requireEditor`, so a verified token minted for the
+  CMS audience carrying an allowed email domain — and three things make each row it writes visibly what
+  it is: `created_by` names the editor, `provider` is `manual` rather than `mercadopago`, and `source`
+  says on its face which channel the money came through. It is also its own audit event carrying the
+  amount. Money genuinely does change hands outside MercadoPago (cash at a stand, a transfer, a copy
+  given away), and the alternative to recording it is not "no unverified approvals" — it is a
+  spreadsheet beside the database, which nothing can refund from and which grants no download.
+  What stays refused: setting a status directly, editing an amount, and recording a sale whose `source`
+  claims MercadoPago took it.
+- **A refund can now be issued from here, and the order of the two writes is the whole point**
+  (`refundSale`). For a MercadoPago sale the provider is asked *first* and the row is written second: a
+  row marked refunded for money that never moved is a buyer who has lost their download and is still
+  out of pocket. For a manual sale there is nothing to ask. The notification that follows applies the
+  same transition again and lands on the timestamps already stamped, because `applyPaymentStatus` keeps
+  the first of each. The idempotency key is the purchase *and the amount*, so a double-click is one
+  refund while a deliberate second partial refund still goes through.
+- **`MERCADOPAGO_ENVIRONMENT` is stamped on the purchase, not read off the configuration when the row
+  is displayed** — because the configuration is the thing that changes. It keeps a test payment out of a
+  revenue total, and it is what lets a refund refuse before it asks: the provider answers 404 for an id
+  from the other account, which is indistinguishable from a payment that never existed. `checkoutUrlFor`
+  is the other half; see *Environment* above for why the credential cannot be sniffed instead.
+- **The withdrawal window is a constant, not a setting** (`WITHDRAWAL_DAYS` in `src/lib/sales.ts`). Ley
+  19.496 art. 3 bis b) gives a consumer ten days to withdraw from a distance sale, and a digital licence
+  bought on a web page is exactly that. It is not ours to shorten, and an editor who could would
+  eventually. Every admin view of a sale carries `withdrawal` — deadline, days left, whether it is still
+  open — with `days_left` rounded **up**, so the last partial day reads as one day rather than zero: a
+  buyer whose right expires in four hours has not lost it, and an editor told "0 days left" would refuse
+  a refund they are obliged to give. `withdrawal` is also its own refund reason, kept apart from the
+  others so "how many of these were obligatory" stays answerable.
+- **A voucher is a document, not a view of the sale** (`src/services/vouchers.ts`). Everything it prints
+  — the amount, the address, the application's name — is copied onto the row when it is issued, because
+  a receipt emailed in March has to still say in December what it said then, for a sale whose price has
+  since changed and whose application page may since have been deleted. It follows that a voucher is
+  **never edited and never deleted**: every copy already in an inbox would become a forgery of the row.
+  Correcting one is a re-issue, which voids the previous and takes the next number — which is why there
+  are two statuses and no third, and why `sale_vouchers` has no `PATCH`.
+- **At most one voucher is live per sale, and issuing voids the previous one first, in that order.** Two
+  valid receipts for one payment is how the same sale gets claimed twice.
+- **Voucher numbers are counted out of the table, per year, and retried on collision.** A counter row is
+  a second thing that can disagree with the vouchers themselves, and there is no volume here that makes
+  `count(*)` expensive. The unique index is what actually guarantees the number: two editors issuing in
+  the same instant both read the same count, one loses the insert, and the loser counts again. The count
+  matches on the number's own prefix (`FS-2026-`) rather than on `issued_at`, so correcting an issue
+  date cannot move a voucher into another year's sequence.
+- **A send is counted only after it resolves.** A voucher claiming three sends when two of them failed
+  is worse than one that says nothing — this number is read when somebody insists they never received
+  it. A failed send is returned to the editor, who is looking at the screen, and is not recorded.
+- **The voucher issued on an approved payment swallows its own failures** (`issueVoucherForApproval`).
+  The webhook has to answer 200 or MercadoPago retries forever, and a receipt that did not render is not
+  a reason to re-apply a payment that was already applied. The sale is left with no live voucher, which
+  is a state the Sales screen shows and one click fixes.
+- **A manual sale may carry no account, and the column is still `NOT NULL`.** `UNLINKED_USER_ID` (the
+  empty string) is the sentinel, and nothing compares against it directly — `isLinkedToAccount` is the
+  one place that knows. A nullable column would have meant rebuilding `purchases` in SQLite, and a
+  `DROP TABLE`/rename on that table races the production deploy (see the root `CLAUDE.md`): for the
+  length of it every paid download would 404 rather than degrade. Every migration on this table stays
+  additive because of that. The row is found by its address instead, which is what `findActivePurchase`
+  already matches on, and the account is attached later through `PATCH …/sales/:saleId`.
+- **Only three things about a settled sale are editable**: the address, the account and the note. The
+  amount, the status, the source and the dates are what the sale *is* — correcting one of them is a
+  refund and a new sale, not an edit, and a field for it would be a field that rewrites history with no
+  trace of the previous value.
+- **`occurredAt` on a manual sale sets `approved_at` *and* `created_at`.** A sale entered a week late
+  whose statutory ten days ran from the day it was typed would give the buyer three days too many, and
+  one entered early would take days off them; a date-bounded total would be wrong in the same way.
+- **The summary is grouped in the database, over the same clauses as the listing** (`summarizeSales`,
+  sharing `purchaseClauses`). A total computed over a different `WHERE` than the table under it is a
+  screen whose figure does not match its rows. It reports three figures rather than one because "how
+  much did this make" has three honest answers: `gross` is what ever settled, `returned` is what went
+  back out, `net` is the difference — and quoting the first as revenue counts a refund as income. A
+  chargeback returns the whole sale regardless of the disputed amount, because the fee is not modelled
+  and the conservative reading is the correct one. Every bucket of the closed sets is present at zero
+  rather than absent, so a front-end renders a stable set of rows.
+- **This Worker sends mail and has no inbox.** `services/mail.ts` is deliberately far smaller than the
+  CMS's equivalent, and the difference is the reason: the CMS sends *editorial* mail, where a person
+  picks a sender and fills a template, so it validates an allowlist and logs every message. Nothing here
+  is composed by a person — the body comes from `@franciscosolis/emails`, the recipient is the address on
+  the sale, and the sender is the one configured address. `sale_vouchers.sent_count`/`last_sent_at`
+  already answer "did it go out, and when" for the only document there is.
 - **A pricing change is its own audit event** (`pricing.updated`), not folded into
   `application.updated`: it is the one edit here that changes what somebody is charged, and a trail it
   can be read out of has to be queryable by event.
@@ -264,4 +379,10 @@ else lives in `wrangler.jsonc` under `vars`.
   shows a Wiki tab in English and not in Spanish is a bug, not a translation. A price is not prose
   either: it is one amount in CLP, and `CURRENCY` is a constant rather than a column on the row.
 - **Amounts are integers of whole pesos.** CLP has no minor unit, so `unit_price: 1990` is 1990 pesos
-  here and would be 19.90 anywhere with cents — which is why nothing in this Worker holds a float.
+  here and would be 19.90 anywhere with cents — which is why nothing in this Worker holds a float. A
+  manual sale is the one place zero is a valid amount: that is what a gift is, and the floor in
+  `AMOUNT_LIMITS` exists because a provider's fee would eat a smaller payment, which does not apply when
+  no provider was involved.
+- **A refund has a column of its own rather than an edit to `amount`** (`refunded_amount`). A partial
+  refund is a real case — a donor refunded down to what they meant to give — and overwriting what was
+  charged would misstate the sale in every total that reads it afterwards.

@@ -25,6 +25,7 @@ import {
   findPurchaseByReference,
   type Purchase,
 } from '@/services/purchases'
+import { issueVoucherForApproval } from '@/services/vouchers'
 
 /**
  * The provider's way back in.
@@ -51,6 +52,14 @@ import {
  *
  * A notification for something we have never heard of also answers 200. It is not an error on our
  * side, and a 4xx would have the provider retrying a notification that will never become relevant.
+ *
+ * **The approval is also where the receipt comes from.** A payment that settles issues and emails a
+ * voucher, which is the only moment at which anybody knows both that the money arrived and what
+ * language the buyer was reading in. That send can fail — a mail binding is one more thing that can
+ * be down — and it must not turn a notification into a retry: `issueVoucherForApproval` swallows its
+ * own failures and leaves the sale with no live voucher, which is a state the editor can see on the
+ * Sales screen and fix with one click. Re-applying a payment that was already applied would be far
+ * worse than a receipt that has to be re-sent.
  */
 const app = new Hono<AppEnv>()
 
@@ -330,12 +339,27 @@ app.post(
     }
 
     if (fresh) {
-      await applyPaymentStatus(db, resolved.purchase, {
+      const updated = await applyPaymentStatus(db, resolved.purchase, {
         status: resolved.status,
         paymentId: resolved.paymentId,
         amount: resolved.amount,
         chargebackId: resolved.chargebackId,
       })
+
+      if (updated.status === 'approved') {
+        // The application's name and the buyer's language were snapshotted onto the purchase at
+        // checkout, which is what lets the receipt be written here — the browser that knew either of
+        // them is long gone, and this Worker holds no session for the buyer.
+        const metadata = updated.metadata
+          ? (JSON.parse(updated.metadata) as { application_name?: unknown; locale?: unknown })
+          : {}
+        await issueVoucherForApproval(db, c.env, {
+          purchase: updated,
+          applicationName:
+            typeof metadata.application_name === 'string' ? metadata.application_name : updated.applicationSlug,
+          locale: typeof metadata.locale === 'string' ? metadata.locale : null,
+        })
+      }
     }
 
     return c.json({ code: 200, data: { received: true, handled: fresh } })

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { mapOrderStatus, mapPaymentStatus, orderPaymentIds, toAmount, verifyWebhookSignature } from '@/lib/mercadopago'
+import {
+  checkoutUrlFor,
+  mapOrderStatus,
+  mapPaymentStatus,
+  orderPaymentIds,
+  resolveEnvironment,
+  toAmount,
+  verifyWebhookSignature,
+} from '@/lib/mercadopago'
+import type { Env } from '@/env'
 
 const SECRET = 'test-webhook-secret'
 
@@ -151,5 +160,39 @@ describe('orderPaymentIds', () => {
   it('answers empty for an order nobody has paid yet', () => {
     expect(orderPaymentIds({ id: 'ORD01', status: 'created' })).toEqual([])
     expect(orderPaymentIds({ id: 'ORD01', status: 'created', transactions: { payments: null } })).toEqual([])
+  })
+})
+
+describe('checkoutUrlFor', () => {
+  /**
+   * The case that was silently wrong before `MERCADOPAGO_ENVIRONMENT` existed: a *test* credential
+   * answers a preference with both URLs, and they are two different checkouts. Preferring
+   * `init_point` for everybody meant the development stack ran the live flow against the test
+   * account, where the provider's test cards are refused — a failure that looks like a broken
+   * integration rather than like a misconfiguration.
+   */
+  it('sends the sandbox to the sandbox checkout even when a live URL is also present', () => {
+    const preference = { id: 'p1', init_point: 'https://mp/live', sandbox_init_point: 'https://mp/sandbox' }
+    expect(checkoutUrlFor(preference, 'sandbox')).toBe('https://mp/sandbox')
+  })
+
+  it('never sends a live buyer to the sandbox, even if one is offered', () => {
+    // A sandbox checkout takes no money while telling the buyer it did, so there is no fallback in
+    // this direction — the caller answers 502 instead.
+    const preference = { id: 'p1', init_point: '', sandbox_init_point: 'https://mp/sandbox' } as never
+    expect(checkoutUrlFor(preference, 'live')).toBeNull()
+  })
+
+  it('uses the live URL in live, and falls back to it in sandbox when the provider sends only one', () => {
+    const preference = { id: 'p1', init_point: 'https://mp/live' }
+    expect(checkoutUrlFor(preference, 'live')).toBe('https://mp/live')
+    expect(checkoutUrlFor(preference, 'sandbox')).toBe('https://mp/live')
+  })
+})
+
+describe('resolveEnvironment', () => {
+  it('reads the configured environment and falls back to sandbox', () => {
+    expect(resolveEnvironment({ MERCADOPAGO_ENVIRONMENT: 'live' } as Env)).toBe('live')
+    expect(resolveEnvironment({ MERCADOPAGO_ENVIRONMENT: '' } as Env)).toBe('sandbox')
   })
 })

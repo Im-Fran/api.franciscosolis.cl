@@ -9,6 +9,7 @@ import {
   downloadEvents,
   paymentEvents,
   purchases,
+  saleVouchers,
 } from '@/db/schema'
 import { objectKeyFor } from '@/lib/files'
 
@@ -39,6 +40,7 @@ const clearDatabase = async () => {
     env.DB.prepare('DELETE FROM purchases'),
     env.DB.prepare('DELETE FROM payment_events'),
     env.DB.prepare('DELETE FROM download_events'),
+    env.DB.prepare('DELETE FROM sale_vouchers'),
   ])
 }
 
@@ -174,17 +176,60 @@ const seedPurchase = async (seed: PurchaseSeed) => {
     amount: 4990,
     currency: 'CLP',
     provider: 'mercadopago',
+    source: 'mercadopago',
+    // Every seeded sale is a live one unless a test says otherwise: `sandbox` is what the suite's
+    // own configuration is, so a refund test that forgot to seed this would pass for the wrong
+    // reason — the environment guard would let it through by accident.
+    environment: 'live',
     preferenceId: 'pref-1',
     paymentId: null,
     externalReference: crypto.randomUUID(),
     approvedAt: now,
     refundedAt: null,
+    refundedAmount: null,
+    refundReason: null,
+    refundedBy: null,
+    refundId: null,
+    note: null,
+    createdBy: null,
     metadata: null,
     createdAt: now,
     updatedAt: now,
     ...seed,
   }
   await db().insert(purchases).values(row)
+  return row
+}
+
+type VoucherSeed = Partial<typeof saleVouchers.$inferInsert> & { purchaseId: string; applicationId: string }
+
+const seedVoucher = async (seed: VoucherSeed) => {
+  const now = new Date()
+  const row = {
+    id: crypto.randomUUID(),
+    number: seed.number ?? `FS-2026-${String(Math.floor(Math.random() * 999999)).padStart(6, '0')}`,
+    applicationSlug: 'seeded-app',
+    applicationName: 'Seeded application',
+    email: 'buyer@example.com',
+    kind: 'purchase',
+    amount: 4990,
+    currency: 'CLP',
+    source: 'mercadopago',
+    status: 'issued',
+    locale: 'en',
+    issuedBy: null,
+    issuedAt: now,
+    voidedAt: null,
+    voidedBy: null,
+    voidReason: null,
+    sentCount: 0,
+    lastSentAt: null,
+    lastSentTo: null,
+    createdAt: now,
+    updatedAt: now,
+    ...seed,
+  }
+  await db().insert(saleVouchers).values(row)
   return row
 }
 
@@ -227,9 +272,11 @@ export {
   paymentEvents,
   purchases,
   readAuditLog,
+  saleVouchers,
   seedApplication,
   seedPurchase,
   seedReleaseFile,
   seedUpdate,
+  seedVoucher,
   seedWikiPage,
 }

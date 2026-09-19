@@ -21,6 +21,21 @@ type AuditEvent =
   | 'file.updated'
   | 'file.deleted'
   | 'pricing.updated'
+  /**
+   * The sales half of the trail.
+   *
+   * `sale.created` is the one event here that records an entitlement granted without a provider
+   * behind it, so it is deliberately its own event rather than folded into anything: "which sales
+   * did somebody type in, and for how much" has to be answerable by event, the way `pricing.updated`
+   * is. `sale.refunded` is the same argument from the other end — it is the one event that takes
+   * money back out.
+   */
+  | 'sale.created'
+  | 'sale.updated'
+  | 'sale.refunded'
+  | 'voucher.issued'
+  | 'voucher.sent'
+  | 'voucher.voided'
 
 type AuditInput = {
   event: AuditEvent
