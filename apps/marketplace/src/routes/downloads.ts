@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
-import { describeRoute, resolver } from 'hono-openapi'
+import { describeRoute, resolver, validator } from 'hono-openapi'
 import * as v from 'valibot'
+import { channelInput, type ReleaseChannel } from '@/lib/channels'
 import { getDb } from '@/db/client'
 import type { Database } from '@/db/client'
 import type { AppEnv } from '@/env'
@@ -9,7 +10,7 @@ import { PUBLIC_CACHE_SECONDS } from '@/lib/config'
 import { DownloadTicketError, mintDownloadTicket, verifyDownloadTicket } from '@/lib/downloads'
 import { contentDisposition } from '@/lib/files'
 import { optionalAccount } from '@/middleware/account'
-import { resolveAccess } from '@/services/access'
+import { GATE_MESSAGES, isChannelGated, resolveAccess } from '@/services/access'
 import type { Product } from '@/services/products'
 import { findProductById, findProductBySlug } from '@/services/products'
 import { getRequestContext } from '@/services/audit'
@@ -53,31 +54,37 @@ const listResponseSchema = v.object({
   data: v.object({
     files: v.array(fileSchema),
     requires_payment: v.boolean(),
+    /** Whether this *channel* is behind the purchase, which a stable build never is. */
+    channel_requires_purchase: v.boolean(),
   }),
 })
 
 app.get(
-  '/products/:slug/releases/:version/files',
+  '/products/:slug/releases/:channel/:version/files',
   describeRoute({
     description:
-      'The downloadable builds attached to a published release, with `requires_payment` saying whether a payment is needed to take one. No URLs: a download link is minted per request by `POST /products/:slug/files/:id/download`, because it carries who asked and whether they paid.',
+      'The downloadable builds attached to a published release, with `requires_payment` saying whether a payment is needed to take one and `channel_requires_purchase` saying whether *this* channel is behind one. The listing itself is public on every channel — a visitor can always read what is in tonight\'s build, and what a pre-release may cost them is the download. No URLs: a download link is minted per request by `POST /products/:slug/files/:id/download`, because it carries who asked and whether they paid.',
     tags: ['Downloads'],
     responses: {
       200: { description: 'The files of the release', content: { 'application/json': { schema: resolver(listResponseSchema) } } },
-      404: { description: 'No published product, or no published release with that version' },
+      404: { description: 'No published product, or no published release on that channel with that version' },
     },
   }),
+  validator('param', v.object({ slug: v.string(), channel: channelInput, version: v.string() })),
   async (c) => {
+    const { channel, version } = c.req.valid('param')
     const db = getDb(c.env)
     const product = await requirePublishedProduct(db, c.req.param('slug'))
 
-    const release = await findReleaseByVersion(db, product.id, c.req.param('version'))
+    const release = await findReleaseByVersion(db, product.id, channel, version)
     if (!release || release.status !== 'published') {
       throw new HTTPException(404, { message: 'Release not found' })
     }
 
     const files = await listReleaseFiles(db, { releaseId: release.id, status: 'published' })
-    const { pricing } = await resolveAccess(db, product, undefined)
+    // Resolved for nobody in particular, which is what makes this cacheable: `gate` here is the
+    // answer for a signed-out visitor, and it is the strictest one there is.
+    const access = await resolveAccess(db, product, undefined, { release })
 
     // Cacheable: it is the same list for everybody. What differs per person is the ticket, and that
     // is a POST nothing caches.
@@ -86,7 +93,8 @@ app.get(
       code: 200,
       data: {
         files: files.filter((file) => file.uploadedAt !== null).map(toPublicReleaseFile),
-        requires_payment: pricing.requires_payment,
+        requires_payment: access.pricing.requires_payment,
+        channel_requires_purchase: isChannelGated(access.pricing, release.channel as ReleaseChannel),
       },
     })
   },
@@ -110,12 +118,12 @@ app.post(
   optionalAccount,
   describeRoute({
     description:
-      'Mints a download link for one file. Send a Bearer access token from the website to be recognised as a buyer: a payer gets a link that works immediately, and everybody else gets one that works in five seconds. A paid product answers 402 without an approved payment — that is the gate, and it is here rather than in the front-end.',
+      'Mints a download link for one file. Send a Bearer access token from the website to be recognised as a buyer: a payer gets a link that works immediately, and everybody else gets one that works in five seconds. A paid product answers 402 without an approved payment, as does a pre-release build of a product that gates its pre-releases — the body\'s `gate` says which. That is the gate, and it is here rather than in the front-end.',
     tags: ['Downloads'],
     security: [{ bearerAuth: [] }],
     responses: {
       201: { description: 'The download link', content: { 'application/json': { schema: resolver(ticketResponseSchema) } } },
-      402: { description: 'The product has to be paid for first' },
+      402: { description: 'The product, or this channel of it, has to be paid for first' },
       404: { description: 'No published product, or no published file under that id' },
     },
   }),
@@ -137,9 +145,13 @@ app.post(
       throw new HTTPException(404, { message: 'File not found' })
     }
 
-    const access = await resolveAccess(db, product, c.get('account'))
-    if (!access.can_download) {
-      throw new HTTPException(402, { message: 'This product has to be paid for before it can be downloaded' })
+    const access = await resolveAccess(db, product, c.get('account'), { release })
+    if (!access.can_download && access.gate !== 'none') {
+      // Returned rather than thrown, unlike every other refusal here, and for one reason: the body
+      // carries `gate` as well as the sentence. "Buy this" and "support this to get the nightlies"
+      // are different modals, and a front-end should not have to match on prose. `onError` builds
+      // its body from the message alone, so a thrown HTTPException cannot carry the extra field.
+      return c.json({ code: 402, error: GATE_MESSAGES[access.gate], gate: access.gate }, 402)
     }
 
     const { ticket, availableAt, expiresAt } = await mintDownloadTicket(c.env, {
@@ -147,6 +159,9 @@ app.post(
       a: product.id,
       u: c.get('account')?.id ?? null,
       p: access.purchase?.id ?? null,
+      // Snapshotted onto the ticket so `GET /downloads/:ticket` can log which line the build came
+      // from without a second read. Not a trust boundary — the gate was decided here, at mint time.
+      c: release.channel,
       paid: access.has_paid,
     })
 
@@ -271,6 +286,7 @@ app.get(
           productSlug: product?.slug ?? '',
           releaseId: file.releaseId,
           version: release?.version ?? '',
+          channel: claims.c ?? release?.channel ?? 'release',
           filename: file.filename,
           userId: claims.u,
           purchaseId: claims.p,

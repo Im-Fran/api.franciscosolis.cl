@@ -38,13 +38,13 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('GET /products/:slug/releases/:version/files', () => {
+describe('GET /products/:slug/releases/:channel/:version/files', () => {
   beforeEach(clearDatabase)
 
   it('lists the builds of a published release and says whether paying comes first', async () => {
     await paidRelease()
 
-    const response = await call('/products/openbattery/releases/2.6.4/files')
+    const response = await call('/products/openbattery/releases/release/2.6.4/files')
     const { data } = (await response.json()) as { data: { files: Record<string, unknown>[]; requires_payment: boolean } }
 
     expect(response.status).toBe(200)
@@ -56,7 +56,7 @@ describe('GET /products/:slug/releases/:version/files', () => {
   it('never exposes the object key or a bucket URL', async () => {
     await paidRelease()
 
-    const text = await (await call('/products/openbattery/releases/2.6.4/files')).text()
+    const text = await (await call('/products/openbattery/releases/release/2.6.4/files')).text()
 
     // The only way to the bytes is a minted ticket. A key in this body would be a second way.
     expect(text).not.toContain('releases/')
@@ -68,7 +68,7 @@ describe('GET /products/:slug/releases/:version/files', () => {
     const release = await seedRelease({ productId: product.id, version: '1.0' })
     await seedReleaseFile({ productId: product.id, releaseId: release.id, uploadedAt: null })
 
-    const { data } = (await (await call('/products/openbattery/releases/1.0/files')).json()) as {
+    const { data } = (await (await call('/products/openbattery/releases/release/1.0/files')).json()) as {
       data: { files: unknown[] }
     }
     expect(data.files).toEqual([])
@@ -79,7 +79,7 @@ describe('GET /products/:slug/releases/:version/files', () => {
     const release = await seedRelease({ productId: product.id, version: '3.0', status: 'draft' })
     await seedReleaseFile({ productId: product.id, releaseId: release.id })
 
-    expect((await call('/products/openbattery/releases/3.0/files')).status).toBe(404)
+    expect((await call('/products/openbattery/releases/release/3.0/files')).status).toBe(404)
   })
 })
 

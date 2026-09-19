@@ -3,6 +3,9 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, openAPIRouteHandler, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import type { AppEnv } from '@/env'
+import { CATEGORIES, CATEGORY_KEYS } from '@/lib/categories'
+import { CHANNELS, DEFAULT_FEED_CHANNEL, RELEASE_CHANNELS } from '@/lib/channels'
+import { COMPATIBILITY_KIND_INFO, COMPATIBILITY_KINDS } from '@/lib/compatibility'
 import { TRANSLATION } from '@/lib/config'
 import { LINK_KINDS } from '@/lib/links'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
@@ -54,6 +57,10 @@ const rootResponseSchema = v.object({
     message: v.string(),
     tabs: v.array(v.object({ key: v.string(), name: v.string(), description: v.string(), source: v.string() })),
     link_kinds: v.array(v.string()),
+    channels: v.array(v.object({ key: v.string(), name: v.string(), description: v.string(), stability: v.number() })),
+    default_channel: v.string(),
+    categories: v.array(v.object({ key: v.string(), name: v.string(), description: v.string() })),
+    compatibility_kinds: v.array(v.object({ key: v.string(), name: v.string(), description: v.string() })),
     locales: v.array(v.string()),
     default_locale: v.string(),
     pricing_modes: v.array(v.string()),
@@ -90,6 +97,13 @@ app.get(
         // from the service rather than from a list of its own that drifts the day a tab is added.
         tabs: TAB_KEYS.map((key) => ({ key, ...TABS[key] })),
         link_kinds: [...LINK_KINDS],
+        // Advertised for the same reason the tabs are: the editor's channel picker, its category
+        // dropdown and its compatibility form all build themselves from the service rather than
+        // from a copy of each list that drifts the day an entry is added.
+        channels: RELEASE_CHANNELS.map((key) => ({ key, ...CHANNELS[key] })),
+        default_channel: DEFAULT_FEED_CHANNEL,
+        categories: CATEGORY_KEYS.map((key) => ({ key, ...CATEGORIES[key] })),
+        compatibility_kinds: COMPATIBILITY_KINDS.map((key) => ({ key, ...COMPATIBILITY_KIND_INFO[key] })),
         locales: [...LOCALES],
         default_locale: DEFAULT_LOCALE,
         // Advertised for the same reason the tabs are: the pricing picker in the editor and the

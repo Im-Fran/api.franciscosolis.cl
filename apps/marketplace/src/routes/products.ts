@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { describeRoute, resolver, validator } from 'hono-openapi'
 import * as v from 'valibot'
+import { channelFilterInput, channelInput, resolveChannelFilter } from '@/lib/channels'
 import { getDb } from '@/db/client'
 import type { Database } from '@/db/client'
 import type { AppEnv } from '@/env'
@@ -118,7 +119,7 @@ app.get(
   '/products/:slug/releases',
   describeRoute({
     description:
-      'The product\'s Releases tab: published release notes, newest release first. Ordered by the date the version shipped rather than by when the entry was written, so back-dating a forgotten release puts it where it belongs instead of at the top.',
+      'The product\'s Releases tab: published release notes, newest release first. Ordered by the date the version shipped rather than by when the entry was written, so back-dating a forgotten release puts it where it belongs instead of at the top. `?channel` picks the line to read — it defaults to `release`, and `all` lifts the filter. Every channel is readable by anybody; what a pre-release may cost is a download, never the page.',
     tags: ['Products'],
     responses: {
       200: { description: 'Published release notes', content: { 'application/json': { schema: resolver(releaseListResponseSchema) } } },
@@ -129,6 +130,17 @@ app.get(
     'query',
     v.object({
       locale: localeQuery,
+      /**
+       * Which line to read. Absent means the stable one, which is the opt-in the whole channel
+       * model turns on: the default view of a product is what it ships, and somebody who wants
+       * tonight's build asks for it by name. `all` lifts the filter.
+       *
+       * Unknown values are refused rather than falling back, unlike a tab key. A tab key is
+       * content and degrades to one tab fewer; a channel is a filter, and a typo that silently
+       * became `release` would be invisible while a typo that silently became `all` would put
+       * nightlies in front of somebody who never asked for one.
+       */
+      channel: channelFilterInput,
       limit: v.optional(
         v.pipe(v.string(), v.regex(/^\d{1,3}$/), v.transform(Number), v.maxValue(PAGINATION.maxLimit)),
       ),
@@ -136,11 +148,17 @@ app.get(
     }),
   ),
   async (c) => {
-    const { locale = DEFAULT_LOCALE, limit = PAGINATION.defaultLimit, offset = 0 } = c.req.valid('query')
+    const { locale = DEFAULT_LOCALE, channel, limit = PAGINATION.defaultLimit, offset = 0 } = c.req.valid('query')
     const db = getDb(c.env)
     const product = await requirePublishedProduct(db, c.req.param('slug'))
 
-    const rows = await listReleases(db, { productId: product.id, status: 'published', limit, offset })
+    const rows = await listReleases(db, {
+      productId: product.id,
+      status: 'published',
+      channels: resolveChannelFilter(channel),
+      limit,
+      offset,
+    })
 
     c.header('Cache-Control', `public, max-age=${PUBLIC_CACHE_SECONDS}`)
     return c.json({ code: 200, data: rows.map((row) => toPublicRelease(row, locale)) })
@@ -148,22 +166,25 @@ app.get(
 )
 
 app.get(
-  '/products/:slug/releases/:version',
+  '/products/:slug/releases/:channel/:version',
   describeRoute({
-    description: 'One published release note, addressed by its version label inside the product.',
+    description:
+      'One published release, addressed by its channel and its version label inside the product. The channel is part of the address because it is part of the key: `1.4.0` can exist as an `rc` and, later, as a `release`.',
     tags: ['Products'],
     responses: {
       200: { description: 'The release note', content: { 'application/json': { schema: resolver(v.object({ code: v.literal(200), data: releaseSchema })) } } },
-      404: { description: 'No published product, or no published release with that version' },
+      404: { description: 'No published product, or no published release on that channel with that version' },
     },
   }),
+  validator('param', v.object({ slug: v.string(), channel: channelInput, version: v.string() })),
   validator('query', v.object({ locale: localeQuery })),
   async (c) => {
     const { locale = DEFAULT_LOCALE } = c.req.valid('query')
+    const { channel, version } = c.req.valid('param')
     const db = getDb(c.env)
     const product = await requirePublishedProduct(db, c.req.param('slug'))
 
-    const release = await findReleaseByVersion(db, product.id, c.req.param('version'))
+    const release = await findReleaseByVersion(db, product.id, channel, version)
     if (!release || release.status !== 'published') {
       throw new HTTPException(404, { message: 'Release not found' })
     }

@@ -13,6 +13,7 @@ import { paginationSchema } from '@/lib/validation'
 import { optionalAccount, requireAccount } from '@/middleware/account'
 import type { Product } from '@/services/products'
 import { findProductBySlug } from '@/services/products'
+import { channelInput } from '@/lib/channels'
 import { resolveAccess, toPublicAccess } from '@/services/access'
 import { listDownloadsForAccount, toPublicDownload } from '@/services/downloads'
 import { listVouchersForAccount, toPublicVoucher } from '@/services/vouchers'
@@ -93,7 +94,7 @@ app.get(
   optionalAccount,
   describeRoute({
     description:
-      'Whether the caller may download this product, and what has to be shown first. Send a Bearer access token from the website to get the answer for that account; without one the answer is the anonymous one. `must_offer_payment` is true for every non-payer of a paying product, every time — a payer gets `cooldown_seconds: 0` and the direct link instead. Never cached.',
+      'Whether the caller may download this product, and what has to be shown first. Send a Bearer access token from the website to get the answer for that account; without one the answer is the anonymous one. `must_offer_payment` is true for every non-payer of a paying product, every time — a payer gets `cooldown_seconds: 0` and the direct link instead. Pass `?channel` to ask about one line rather than about the product: a product that gates its pre-releases answers `gate: "pre_release"` there and `gate: "none"` on `release`. Never cached — it is per person by definition, which is also why the cacheable release routes carry no access block of their own.',
     tags: ['Store'],
     security: [{ bearerAuth: [] }],
     responses: {
@@ -104,10 +105,14 @@ app.get(
       404: { description: 'No published product with that slug' },
     },
   }),
+  validator('query', v.object({ channel: v.optional(channelInput) })),
   async (c) => {
+    const { channel } = c.req.valid('query')
     const db = getDb(c.env)
     const product = await requirePublishedProduct(db, c.req.param('slug'))
-    const access = await resolveAccess(db, product, c.get('account'))
+    const access = await resolveAccess(db, product, c.get('account'), {
+      release: channel ? { channel } : null,
+    })
 
     return c.json({ code: 200, data: toPublicAccess(access) })
   },

@@ -183,14 +183,14 @@ describe('GET /products/:slug/releases', () => {
   })
 })
 
-describe('GET /products/:slug/releases/:version', () => {
+describe('GET /products/:slug/releases/:channel/:version', () => {
   beforeEach(clearDatabase)
 
   it('addresses a release by its version label', async () => {
     const app = await seedProduct({ slug: 'openbattery' })
     await seedRelease({ productId: app.id, version: '2.6.4', title: 'Full 1.21.11 support' })
 
-    const data = await body<{ title: string }>('/products/openbattery/releases/2.6.4')
+    const data = await body<{ title: string }>('/products/openbattery/releases/release/2.6.4')
 
     expect(data.title).toBe('Full 1.21.11 support')
   })
@@ -199,7 +199,7 @@ describe('GET /products/:slug/releases/:version', () => {
     const app = await seedProduct({ slug: 'openbattery' })
     await seedRelease({ productId: app.id, version: '3.0.0', status: 'draft' })
 
-    expect((await get('/products/openbattery/releases/3.0.0')).status).toBe(404)
+    expect((await get('/products/openbattery/releases/release/3.0.0')).status).toBe(404)
   })
 
   /** Scoped by product: a version belonging to another page must not resolve through this one. */
@@ -209,7 +209,7 @@ describe('GET /products/:slug/releases/:version', () => {
     await seedRelease({ productId: theirs.id, version: '9.9.9' })
     await seedRelease({ productId: mine.id, version: '1.0.0' })
 
-    expect((await get('/products/mine/releases/9.9.9')).status).toBe(404)
+    expect((await get('/products/mine/releases/release/9.9.9')).status).toBe(404)
   })
 })
 

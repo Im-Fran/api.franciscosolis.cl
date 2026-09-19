@@ -84,8 +84,15 @@ type Pricing = {
   /**
    * Whether a pre-release build (`nightly`, `beta`, `rc`) needs an approved purchase.
    *
-   * Only ever true in `paid` mode — see `describePricing` for why the column is nulled rather than
-   * read. It gates the *download* and nothing else: every channel stays publicly readable.
+   * **`donation` is the mode this exists for.** A pay-what-you-like product is free to take, so
+   * without this there is nothing a supporter gets that a non-supporter does not — and "support
+   * this and you get the builds first" is the one incentive that does not cost a non-payer the
+   * product. In `paid` mode it is true whenever the column is, and inert in practice: a non-payer
+   * of a paid product cannot download anything, pre-release or not. In `free` mode it is always
+   * false, because there is nobody who could have paid.
+   *
+   * It gates the *download* and nothing else: every channel stays publicly readable, because
+   * hiding a nightly removes the very incentive the gate exists to create.
    */
   pre_release_requires_purchase: boolean
 }
@@ -118,10 +125,11 @@ const describePricing = (product: PricedProduct): Pricing => {
     allows_skip: mode !== 'paid',
     requires_payment: mode === 'paid',
     accepts_payment: mode !== 'free',
-    // Nulled outside `paid` for exactly the reason `price` is: an editor who switches a paid
-    // product to `free` for a launch week keeps the flag in the column, and a website reading that
-    // column raw would go on gating tonight's nightly on a product nobody can pay for any more.
-    pre_release_requires_purchase: mode === 'paid' ? product.preReleaseRequiresPurchase === true : false,
+    // Nulled in `free` mode for exactly the reason `price` is nulled outside `paid`: an editor who
+    // switches a donation product to `free` for a launch week keeps the flag in the column, and a
+    // website reading that column raw would go on gating tonight's nightly on a product nobody can
+    // pay for any more. In the two paying modes it is reported as stored.
+    pre_release_requires_purchase: mode === 'free' ? false : product.preReleaseRequiresPurchase === true,
   }
 }
 

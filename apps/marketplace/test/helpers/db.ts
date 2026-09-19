@@ -1,13 +1,17 @@
 import { env } from 'cloudflare:test'
 import { getDb } from '@/db/client'
 import {
-  productReleaseFiles,
-  products,
-  productReleases,
-  productWikiPages,
   auditLogs,
   downloadEvents,
   paymentEvents,
+  productDailyStats,
+  productReleaseCompatibility,
+  productReleaseFiles,
+  productReleases,
+  productReviewReports,
+  productReviews,
+  products,
+  productWikiPages,
   purchases,
   saleVouchers,
 } from '@/db/schema'
@@ -24,22 +28,26 @@ import { objectKeyFor } from '@/lib/files'
 const db = () => getDb(env)
 
 /**
- * Children first: `product_releases` and `product_wiki_pages` hold foreign keys onto
- * `products`, and D1 enforces them, so deleting the parent table first fails the batch.
+ * Children first, and D1 enforces the foreign keys, so the order is not cosmetic: deleting a parent
+ * before its children fails the whole batch. Reports hang off reviews, reviews and compatibility
+ * and files hang off releases, and everything content-shaped hangs off `products`.
  */
 const clearDatabase = async () => {
   await env.DB.batch([
-    // Before `product_releases`, which it holds a foreign key onto.
+    env.DB.prepare('DELETE FROM product_review_reports'),
+    env.DB.prepare('DELETE FROM product_reviews'),
+    env.DB.prepare('DELETE FROM product_release_compatibility'),
     env.DB.prepare('DELETE FROM product_release_files'),
     env.DB.prepare('DELETE FROM product_releases'),
     env.DB.prepare('DELETE FROM product_wiki_pages'),
     env.DB.prepare('DELETE FROM products'),
     env.DB.prepare('DELETE FROM audit_logs'),
-    // No foreign keys on these three, deliberately: a payment and a download outlive the page they
-    // were made for. They still have to be cleared between tests.
+    // No foreign keys on the rest, deliberately: a payment, a download and a day's traffic all
+    // outlive the page they were about. They still have to be cleared between tests.
     env.DB.prepare('DELETE FROM purchases'),
     env.DB.prepare('DELETE FROM payment_events'),
     env.DB.prepare('DELETE FROM download_events'),
+    env.DB.prepare('DELETE FROM product_daily_stats'),
     env.DB.prepare('DELETE FROM sale_vouchers'),
     env.DB.prepare('DELETE FROM ai_requests'),
   ])
@@ -65,6 +73,10 @@ const seedProduct = async (seed: ProductSeed = {}) => {
     links: '[]',
     overviewBody: '# Seeded product',
     contactBody: null,
+    category: null,
+    preReleaseRequiresPurchase: false,
+    viewCount: 0,
+    downloadCount: 0,
     translations: '{}',
     publishedAt: now,
     createdBy: 'seed@franciscosolis.cl',
@@ -84,6 +96,10 @@ const seedRelease = async (seed: ReleaseSeed) => {
   const row = {
     id: crypto.randomUUID(),
     version: seed.version ?? `1.0.${Math.floor(Math.random() * 1000)}`,
+    channel: 'release',
+    resetsRating: false,
+    viewCount: 0,
+    downloadCount: 0,
     title: 'Seeded release',
     body: 'Seeded changelog',
     status: 'published',

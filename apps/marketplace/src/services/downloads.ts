@@ -10,6 +10,8 @@ type RecordDownloadInput = {
   productSlug: string
   releaseId: string
   version: string
+  /** Channel the build came from, snapshotted: a download of a beta still says so once it is gone. */
+  channel: string
   filename: string
   userId: string | null
   purchaseId: string | null
@@ -35,6 +37,7 @@ const recordDownload = async (db: Database, input: RecordDownloadInput) => {
       productSlug: input.productSlug,
       releaseId: input.releaseId,
       version: input.version,
+      channel: input.channel,
       filename: input.filename,
       userId: input.userId,
       purchaseId: input.purchaseId,

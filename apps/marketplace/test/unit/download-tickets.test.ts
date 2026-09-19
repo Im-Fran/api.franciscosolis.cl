@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { COOLDOWN_SECONDS, DownloadTicketError, mintDownloadTicket, verifyDownloadTicket } from '@/lib/downloads'
 
 const ticketFor = (overrides: Partial<Parameters<typeof mintDownloadTicket>[1]> = {}) =>
-  mintDownloadTicket(env, { f: 'file-1', a: 'app-1', u: null, p: null, paid: false, ...overrides })
+  mintDownloadTicket(env, { f: 'file-1', a: 'app-1', u: null, p: null, c: 'release', paid: false, ...overrides })
 
 afterEach(() => {
   vi.useRealTimers()

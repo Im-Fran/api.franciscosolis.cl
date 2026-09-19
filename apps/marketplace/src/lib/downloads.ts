@@ -38,6 +38,12 @@ type DownloadTicket = {
   u: string | null
   /** Purchase it was granted against, when there was one. */
   p: string | null
+  /**
+   * Channel the build came from, so the serving route can log which line it was without a second
+   * read. Not a trust boundary: the gate was decided when the ticket was minted, and a ticket
+   * naming a channel it was not minted for would have to be forged past the signature first.
+   */
+  c: string
   /** Whether this download is a paid one — what decides the cooldown and what is logged. */
   paid: boolean
   /** Unix seconds before which the bytes are not served. The cooldown. */
@@ -115,6 +121,7 @@ const mintDownloadTicket = async (
     a: input.a,
     u: input.u,
     p: input.p,
+    c: input.c,
     paid: input.paid,
     nbf: now + cooldown,
     // Measured from the moment the ticket becomes usable, so a cooldown never eats into the window.
