@@ -181,9 +181,37 @@ const auditStatement = (event, { applicationId = null, metadata = {} } = {}) =>
   `INSERT INTO audit_logs (id, event, application_id, metadata) VALUES (${quote(randomUUID())}, ${quote(event)}, ${quote(applicationId)}, ${quote(JSON.stringify({ source: 'cli', ...metadata }))});`
 
 /**
+ * Reads the failure Wrangler reports in `--json` mode, which it writes to *stdout*:
+ *
+ *     { "error": { "text": "no such table: applications: SQLITE_ERROR" } }
+ *
+ * Returns null when stdout holds nothing shaped like that, so the caller can fall back to printing
+ * it verbatim rather than deciding the run failed silently.
+ */
+const readWranglerError = (stdout) => {
+  const start = (stdout ?? '').indexOf('{')
+  if (start === -1) {
+    return null
+  }
+  try {
+    const { error } = JSON.parse(stdout.slice(start))
+    const text = error?.text ?? error?.message
+    return typeof text === 'string' && text.length > 0 ? text : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Runs SQL through `wrangler d1 execute` and returns the rows of every statement, flattened.
- * `--json` keeps Wrangler's banner out of the output; failures print Wrangler's own stderr, which
- * is more useful than anything this script could reword.
+ * `--json` keeps Wrangler's banner out of the output; a failure prints Wrangler's own words, which
+ * are more useful than anything this script could reword.
+ *
+ * Where those words are is the part worth knowing: in `--json` mode Wrangler puts the error on
+ * **stdout** and leaves stderr holding at most a proxy warning. This used to print stderr alone,
+ * which turned every SQL error, missing table and expired credential into a bare `exit 1` with
+ * nothing on screen — the failure mode that is hardest to debug and the easiest to mistake for the
+ * script's own bug.
  */
 const query = (sql) => {
   const result = spawnSync(
@@ -197,6 +225,9 @@ const query = (sql) => {
   }
   if (result.status !== 0) {
     process.stderr.write(result.stderr ?? '')
+    const reported = readWranglerError(result.stdout)
+    // Verbatim when it is not the documented shape: an unrecognised failure is still worth reading.
+    process.stderr.write(reported ? `Wrangler failed: ${reported}\n` : (result.stdout ?? ''))
     process.exit(result.status ?? 1)
   }
 
