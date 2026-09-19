@@ -173,7 +173,7 @@ const safeParse = (value: string): unknown => {
  * Drafts one prose field of a help article, a category or a label in one other language.
  *
  * The prompt is not here. It lives in `@franciscosolis/translate`, shared with `apps/cms` and
- * `apps/pages`, because the three Workers differ in the database the call is metered in and the
+ * `apps/marketplace`, because the three Workers differ in the database the call is metered in and the
  * gate in front of it, not in a single word of what the model is asked. What this adds is the
  * meter: `runModel` writes the `ai_requests` row that `translationsByAgent` rate-limits on.
  */

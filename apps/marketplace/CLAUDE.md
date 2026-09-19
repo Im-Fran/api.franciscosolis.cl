@@ -227,6 +227,12 @@ is a 401 for everybody, which is the correct failure and an invisible one.
   makes a free build free — so only a download taken while signed in counts; matching by address
   instead is not identity. For a `free` product that leaves the bar low, and that is accepted: the
   structural mitigation is one review per person, the operational one is reports and hiding.
+- **The anchor is the latest *stable* release**, falling back to the newest pre-release only for a
+  product that has never shipped one. "The newest thing they could have downloaded" was the first
+  shape this took and it is worse: a product publishing a build every night would anchor every
+  review to last night's, so the rating window would move daily and a `resets_rating` release would
+  be measured against something nobody installed. The sidebar names the latest stable version for
+  the same reason, and a review and the version beside it should agree.
 - **`anchored_at` is a snapshot, not a join.** It holds the anchor release's `published_at`, set on
   create and re-set on edit. It makes the rating window a scalar comparison with no join at all, and
   it survives the anchor release being deleted — which `release_id` does not.

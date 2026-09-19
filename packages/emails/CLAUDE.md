@@ -12,7 +12,7 @@ language) into files, commits, or code in this repo.
 `@franciscosolis/emails` holds every email body the monorepo sends, written as
 [react-email](https://react.email) components. `apps/auth` uses it for magic links, invitations and
 account access notices, `apps/cms` for editorial messages, `apps/support` for ticket correspondence,
-and `apps/pages` for the two documents that come with a sale: the voucher and the notice that one was
+and `apps/marketplace` for the two documents that come with a sale: the voucher and the notice that one was
 refunded. It is the first entry under `packages/` and the only non-Worker workspace package.
 
 A consumer imports a `render*Email` function, gets `{ subject, html, text }` and hands
@@ -101,7 +101,7 @@ package. That is deliberate on all four counts — see below.
   payer's bank having already taken it — they know, and writing to tell them reads as a challenge. The
   right-of-withdrawal line on the receipt is shown only for a purchase: a donation is not a sale under
   the Chilean consumer statute and a gift has nothing to give back. It states the statutory ten days
-  rather than a date, because this package does no date arithmetic — `apps/pages` owns the deadline.
+  rather than a date, because this package does no date arithmetic — `apps/marketplace` owns the deadline.
 - **`ContentEmail` inserts its body with `dangerouslySetInnerHTML`, deliberately.** It exists
   to wrap markup an authenticated CMS editor wrote; that editor already controls the whole
   document, and re-serialising their HTML would silently rewrite it. Do not point any

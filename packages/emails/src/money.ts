@@ -4,7 +4,7 @@ import type { EmailLocale } from './locale'
  * An amount as a receipt has to print it.
  *
  * Every amount this monorepo charges is an integer of the currency's major unit — CLP has no minor
- * unit, so 1990 is 1990 pesos and never 19.90 (see `apps/pages/src/lib/pricing.ts`). That is why
+ * unit, so 1990 is 1990 pesos and never 19.90 (see `apps/marketplace/src/lib/pricing.ts`). That is why
  * `maximumFractionDigits` is pinned to zero rather than left to the locale: `Intl` would otherwise
  * print `$1.990,00` for a currency that cannot express cents, and a receipt showing decimals on a
  * peso amount is the kind of thing somebody asks about.

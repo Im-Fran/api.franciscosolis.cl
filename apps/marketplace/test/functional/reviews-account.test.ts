@@ -182,3 +182,52 @@ describe('PUT /products/:slug/reviews', () => {
     expect(data.reviews).toEqual([])
   })
 })
+
+describe('the anchor', () => {
+  beforeEach(clearDatabase)
+
+  const eligibleOn = async (product: { id: string }) => {
+    await seedDownloadEvent({ productId: product.id, userId: 'buyer-1' })
+  }
+
+  /**
+   * The stable line, not "the newest thing they could have downloaded". A product publishing a
+   * build every night would otherwise anchor every review to last night's, so the rating window
+   * would move daily and a resetting release would be measured against something nobody installed.
+   */
+  it('is the latest stable release, never a newer nightly', async () => {
+    const product = await seedProduct({ slug: 'openbattery' })
+    await seedRelease({
+      productId: product.id,
+      version: '2.6.4',
+      channel: 'release',
+      releasedAt: new Date('2026-01-10T00:00:00Z'),
+    })
+    await seedRelease({
+      productId: product.id,
+      version: '3.0.0-nightly',
+      channel: 'nightly',
+      releasedAt: new Date('2026-02-10T00:00:00Z'),
+    })
+    await eligibleOn(product)
+
+    const { data } = (await (
+      await asAccount('/products/openbattery/reviews', write({ rating: 5 }))
+    ).json()) as { data: { release: { version: string; channel: string } } }
+
+    expect(data.release).toMatchObject({ version: '2.6.4', channel: 'release' })
+  })
+
+  /** Something shipping nothing but betas is still reviewable by the people running those betas. */
+  it('falls back to the newest pre-release when nothing stable was ever published', async () => {
+    const product = await seedProduct({ slug: 'openbattery' })
+    await seedRelease({ productId: product.id, version: '0.9.0-beta', channel: 'beta' })
+    await eligibleOn(product)
+
+    const { data } = (await (
+      await asAccount('/products/openbattery/reviews', write({ rating: 4 }))
+    ).json()) as { data: { release: { channel: string } } }
+
+    expect(data.release.channel).toBe('beta')
+  })
+})

@@ -22,15 +22,19 @@ together six Cloudflare Workers, all living directly in this repo:
 - `apps/cms` — internal Worker with the CMS behind the landing page (content collections,
   legal pages, outgoing email), reachable through `apps/api` at `/cms/*`. Public reads of
   published content, editorial writes gated to `@franciscosolis.cl` accounts.
-- `apps/pages` — internal Worker with **Standalone App Pages**: one product page per application
-  built here, all to the same house standard (a banner, then Overview / Updates / Wiki / Contact
-  tabs), reachable through `apps/api` at `/pages/*`. Same public-read, gated-write split as the CMS,
-  and edited from the CMS front-end rather than from an application of its own. It is also the one
-  Worker here that **takes money**: an application can be paid for or donated to through MercadoPago
-  Checkout Pro, and its downloadable builds live in R2 and are served by the Worker against a signed
-  per-request ticket rather than from a bucket URL. It also runs the back office around those payments
-  — per-application sales, sales recorded by hand for cash or a transfer, vouchers (receipts) and
-  refunds — and sends the one kind of mail it has: the receipt.
+- `apps/marketplace` — internal Worker with the **storefront**: one product page per thing built
+  here, all to the same house standard (a banner, then Overview / Releases / Wiki / Reviews /
+  Contact tabs, plus a sidebar), reachable through `apps/api` at `/marketplace/*`. It replaced
+  `apps/pages`, which was the same Worker under a smaller name. Public reads, editorial writes gated
+  to `@franciscosolis.cl` accounts carrying `marketplace:editor` — it is the second Worker here with
+  a client application of its own. It is the one Worker that **takes money**: a product can be paid
+  for or donated to through MercadoPago Checkout Pro, and its builds live in R2 and are served
+  against a signed per-request ticket rather than from a bucket URL, on four release channels
+  (`nightly` / `beta` / `rc` / `release`) whose pre-release half a donation product may reserve for
+  supporters. It runs the back office around those payments — per-product sales, sales recorded by
+  hand for cash or a transfer, vouchers (receipts) and refunds — sends the one kind of mail it has,
+  the receipt, and carries the **reviews** the people who obtained a product wrote about it, with
+  the rating window a release can restart.
 - `apps/support` — internal Worker with the **support ticket system** and the help centre behind it,
   reachable through `apps/api` at `/support/*`. A ticket can be opened from the website or by writing
   to `soporte@franciscosolis.cl`, and answered in either place; the help centre is searched both
@@ -40,15 +44,15 @@ together six Cloudflare Workers, all living directly in this repo:
 Alongside them, `packages/` holds the shared code the Workers import:
 
 - `packages/emails` (`@franciscosolis/emails`) — every email body in the monorepo, written as
-  react-email components. Imported by `apps/auth`, `apps/cms`, `apps/pages` and `apps/support`; no
+  react-email components. Imported by `apps/auth`, `apps/cms`, `apps/marketplace` and `apps/support`; no
   Worker builds mail markup itself.
 - `packages/translate` (`@franciscosolis/translate`) — the one prompt behind every machine
-  translation here, and the parsing of the model's answer. Imported by `apps/cms`, `apps/pages` and
+  translation here, and the parsing of the model's answer. Imported by `apps/cms`, `apps/marketplace` and
   `apps/support`; no Worker writes a translation prompt itself.
 
 Each app and package keeps its own `CLAUDE.md` and `README.md`. When working on the actual
 implementation of a Worker, read/edit inside `apps/api`, `apps/landing`, `apps/auth`, `apps/cms`,
-`apps/pages` or `apps/support` — the root repo only owns workspace-wide wiring (pnpm
+`apps/marketplace` or `apps/support` — the root repo only owns workspace-wide wiring (pnpm
 workspace/catalog, root scripts).
 
 ## Stack
@@ -57,11 +61,11 @@ workspace/catalog, root scripts).
   glob'd from `apps/*` and `packages/*` (`pnpm-workspace.yaml`).
 - Every Worker uses Hono + hono-openapi + valibot + Wrangler, all pinned via a
   shared pnpm `catalog` in `pnpm-workspace.yaml` — do not add per-app version pins for
-  those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/pages` and
+  those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/marketplace` and
   `apps/support` additionally use drizzle-orm/drizzle-kit, and those same four pull react +
-  react-email through `@franciscosolis/emails`, all catalogued too. `apps/cms`, `apps/pages` and
+  react-email through `@franciscosolis/emails`, all catalogued too. `apps/cms`, `apps/marketplace` and
   `apps/support` use **Workers AI** through `@franciscosolis/translate`; `apps/support` is the only
-  one with `postal-mime`, and the only one using Vectorize. `apps/pages` talks to MercadoPago over
+  one with `postal-mime`, and the only one using Vectorize. `apps/marketplace` talks to MercadoPago over
   plain `fetch` rather than through an SDK — a handful of functions in `src/lib/mercadopago.ts`
   against a dependency that assumes Node.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
@@ -72,7 +76,7 @@ workspace/catalog, root scripts).
 
 - `pnpm install` — installs for the whole workspace.
 - `pnpm run dev` — runs `dev` in every workspace app in parallel (`api` on :8787,
-  `landing` on :8788, `auth` on :8789, `cms` on :8790, `pages` on :8792, `support` on :8793).
+  `landing` on :8788, `auth` on :8789, `cms` on :8790, `support` on :8793, `marketplace` on :8794).
 - `pnpm run test` / `pnpm run test:coverage` — runs every app's suite.
 - `pnpm run typecheck` — `tsc --noEmit` over `src/` and `test/` in every app.
 - `pnpm run build` — `wrangler deploy --dry-run` in every app. Not an artifact; it is the
@@ -83,10 +87,17 @@ workspace/catalog, root scripts).
   one of them is `--env dev` underneath.
 - `node scripts/check-environments.mjs` — asserts each app's `env.dev` still mirrors its
   production config. CI runs it as the `environments` job.
+- `node scripts/migrate-pages-to-marketplace.mjs` — the **one-shot** move of the rows of
+  `franciscosolis_pages` into `franciscosolis_marketplace`, kept afterwards as the record of what was
+  done. `--dry-run` is the default, `--dev` targets the development pair, `--apply` executes. It
+  refuses to run against a schema its mapping does not describe, and it compares row counts, amounts,
+  purchase statuses and voucher numbers on both sides afterwards — a financial migration that cannot
+  prove it moved everything has not moved everything. R2 is not touched: `apps/marketplace` binds the
+  same buckets `apps/pages` bound, so every `object_key` is still valid and no bytes move.
 - `pnpm run cf-typegen` — regenerates Cloudflare binding types (`CloudflareBindings`) in
   every app after a `wrangler.jsonc` change.
 - `pnpm run db:migrate:list` / `db:migrate:remote` / `db:migrate:local` — D1 migrations across
-  every app that owns a database (`auth`, `cms`, `pages`, `support`). Production runs happen in CI
+  every app that owns a database (`auth`, `cms`, `marketplace`, `support`). Production runs happen in CI
   (see *Deploys and migrations*); these are for local work and for repairing a database that has
   drifted.
 
@@ -116,13 +127,13 @@ Non-obvious things about this harness, learned the hard way — do not re-derive
 - The `@/*` alias must be restated as a Vite `resolve.alias`; Wrangler reads it from
   tsconfig when bundling, but Vite does not.
 - Coverage must use the **istanbul** provider — `workerd` exposes no V8 coverage hooks.
-- `apps/auth`, `apps/cms`, `apps/pages` and `apps/support` apply their real `migrations/` directory
+- `apps/auth`, `apps/cms`, `apps/marketplace` and `apps/support` apply their real `migrations/` directory
   to each test file's isolated D1 instance (`readD1Migrations` in the config, `applyD1Migrations` in
   `test/setup.ts`), so a migration that no longer applies cleanly fails the test run.
 - `apps/api` boots the internal Workers as auxiliary Miniflare Workers
-  (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`PAGES`/`SUPPORT` are real service bindings
+  (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`MARKETPLACE`/`SUPPORT` are real service bindings
   in tests.
-- **`apps/cms`, `apps/pages` and `apps/support` run against a named `test` environment in their own
+- **`apps/cms`, `apps/marketplace` and `apps/support` run against a named `test` environment in their own
   `wrangler.jsonc`**, and that is not stylistic. The pool answers an `ai` or `vectorize` binding by
   opening a *remote proxy session* against the real Cloudflare account, which needs a
   `CLOUDFLARE_API_TOKEN` CI does not have and bills real neurons for a unit test. Each named
@@ -146,7 +157,7 @@ should require. When adding an app, add it to the `matrix.app` list.
 ## Environments
 
 Two full stacks, sharing nothing but the code: production (`api`, `landing`, `auth`, `cms`,
-`pages`, `support`) and development (the same six with a `-dev` suffix, fronted by
+`marketplace`, `support`) and development (the same six with a `-dev` suffix, fronted by
 `api-dev.franciscosolis.cl` and paired with `dev.franciscosolis.cl` in the front-end repository).
 Each stateful Worker has its own `_dev` database, each bucket its own `-dev` copy, and `apps/auth`
 its own signing key — so a dev token is structurally unusable in production and a test payment
@@ -172,21 +183,21 @@ Four things about this are worth not re-deriving:
   production module without any error to say so — which is the single failure this environment
   exists to make impossible. The same bindings also **dictate the deploy order**, because one is
   resolved at deploy time against a Worker that must already exist: `auth` first, then the modules
-  that bind it (`cms`, `pages`, `support`), then `api`. Out of order, a first deploy fails with
+  that bind it (`cms`, `marketplace`, `support`), then `api`. Out of order, a first deploy fails with
   "Service binding 'AUTH' references Worker 'auth-dev' which was not found".
 - **Secrets are per environment.** `wrangler secret put --env dev` is a different store, and that
-  is deliberate rather than a chore: `apps/pages` takes a MercadoPago *test* credential on dev, and
+  is deliberate rather than a chore: `apps/marketplace` takes a MercadoPago *test* credential on dev, and
   `apps/auth` a signing key of its own. The credential is only half of that split, though:
   `MERCADOPAGO_ENVIRONMENT` is a plain var (`live` / `sandbox`) and it is what actually sends a dev
   buyer to the sandbox checkout, because a test credential answers a preference with *both* URLs and
   they are two different checkouts. It is also stamped on every purchase, so a test payment can never
-  be read as revenue or refunded against the live account. See `apps/pages/CLAUDE.md`.
+  be read as revenue or refunded against the live account. See `apps/marketplace/CLAUDE.md`.
 
 `.github/workflows/deploy-dev.yml` deploys the stack on a push to `dev`, in four stages that follow
 the binding graph above: migrations, `auth-dev`, the four remaining modules in parallel, then
 `api-dev`. Unlike production (below), the migrations there are strictly ordered before the deploy.
 Its token needs `Workers R2 Storage:Edit` on top of `D1:Edit` and `Workers Scripts:Edit` — `auth`
-and `pages` each bind a bucket, and a deploy that cannot read one fails with an authentication
+and `marketplace` each bind a bucket, and a deploy that cannot read one fails with an authentication
 error rather than anything that mentions R2 permissions.
 
 Three pieces of setup live outside this repository and are listed in the README: the per-environment
@@ -210,7 +221,7 @@ should duplicate it. The development stack is the half that *can* live in git, a
 with no way to pass `--env dev`.
 
 What that integration does not do is touch D1, so `.github/workflows/migrate.yml` owns that:
-it applies pending migrations for the stateful Workers (`auth`, `cms`, `pages`, `support`) on a push to `dev`
+it applies pending migrations for the stateful Workers (`auth`, `cms`, `marketplace`, `support`) on a push to `dev`
 that touches `apps/*/migrations/**`, one job per database, plus a bare `workflow_dispatch` for a
 manual run. It needs the `CLOUDFLARE_API_TOKEN` (D1:Edit) and `CLOUDFLARE_ACCOUNT_ID` repository
 secrets. Adding another stateful app means adding it to that matrix. The dispatch deliberately takes no
@@ -236,7 +247,7 @@ Three things about it are worth not re-deriving:
   configuration this repo cannot hold or review. The workflow is the version that lives in git.
 
 `pnpm run db:migrate:remote` / `db:migrate:list` / `db:migrate:local` at the root fan out to every
-app that declares them, which is exactly `auth`, `cms`, `pages` and `support` — `pnpm run -r` skips
+app that declares them, which is exactly `auth`, `cms`, `marketplace` and `support` — `pnpm run -r` skips
 the rest, and runs them sequentially rather than in parallel, which is what migrations want.
 
 ## Versioning
@@ -264,15 +275,25 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
 ## Architecture notes (non-obvious)
 
 - **Service binding, not HTTP**: `apps/api` talks to the internal Workers through Cloudflare
-  service bindings (`LANDING`, `AUTH`, `CMS`, `PAGES` and `SUPPORT` in `apps/api/wrangler.jsonc`),
+  service bindings (`LANDING`, `AUTH`, `CMS`, `MARKETPLACE` and `SUPPORT` in `apps/api/wrangler.jsonc`),
   not public HTTP calls. These only resolve when each Worker is deployed under the exact name configured
   (the Worker's `name` must match the `service` field of the binding).
+- **`/pages/*` is a deprecated alias of `/marketplace/*`, and it exists for one reason**
+  (`SERVICE_MODULES` in `apps/api/src/services.ts`). MercadoPago bakes `notification_url` into a
+  Checkout Pro preference **when the preference is created**, not when it is paid, so a preference
+  created five minutes before the rename notifies `/pages/*` after it. Without the alias that
+  notification is a 404: the buyer pays, the webhook never lands, and the only trace is a `pending`
+  row. The gateway strips the prefix, so it reaches the marketplace Worker's webhook exactly as a
+  fresh one would; `/downloads/:ticket` is the other path that survives usefully. The entry carries a
+  `deprecated` string saying why, is left out of the `modules` list and out of the merged OpenAPI
+  document, and is removed once no preference created before the cutover can still be paid. **Do not
+  tidy it away before then.**
 - **Merged OpenAPI**: `apps/api`'s `/openapi.json` is not just its own spec — it fetches
   each internal module's `/openapi.json` over its service binding and merges paths/
   components under a prefix (e.g. `/landing/*`). An unreachable module is silently
   skipped rather than breaking the whole document. See `apps/api/src/openapi.ts`.
 - **Four stateful Workers**: `apps/auth` owns the `franciscosolis_auth` D1 database, `apps/cms`
-  owns `franciscosolis_cms`, `apps/pages` owns `franciscosolis_pages` and `apps/support` owns
+  owns `franciscosolis_cms`, `apps/marketplace` owns `franciscosolis_marketplace` and `apps/support` owns
   `franciscosolis_support`; all four use Drizzle and Wrangler-applied migrations.
   `auth` issues EdDSA-signed JWTs that any other Worker can verify offline against
   `https://api.franciscosolis.cl/auth/.well-known/jwks.json` — never add a service binding
@@ -280,21 +301,45 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   off-the-shelf relying party (Cloudflare Access included) can be pointed at
   `/auth/.well-known/openid-configuration` and needs nothing written for it. `apps/cms` is the reference for how to consume
   them (`src/lib/jwks.ts`).
-- **A standalone app page is a registry of tabs, not a per-page layout** (`apps/pages/src/lib/tabs.ts`):
-  an application picks a subset of Overview / Updates / Wiki / Contact, in an order, and nothing else
-  about its shape is configurable. That is the whole point of the Worker — the moment a page can
-  describe its own layout, the set of pages stops being a house standard. `apps/pages` is also the
-  one Worker here whose schema uses foreign keys: a release note or a wiki page only means anything
-  as part of one application — with the payment and download tables as the deliberate exception, since
-  a financial record has to outlive the page it was made for. It has **no client application of its
-  own** — its editor is a section of the CMS front-end, so `PAGES_ALLOWED_AUDIENCES` names the CMS's
-  client id and there is nothing extra to register in the auth database. It does carry a second
-  audience list (`PAGES_ACCOUNT_AUDIENCES`, the website's client id), the way `apps/support` does, for
-  somebody buying rather than editing.
-- **Money is `apps/pages`' business and nothing else's** (`apps/pages/src/lib/pricing.ts`). Three
+- **A product page is a registry of tabs, not a per-page layout** (`apps/marketplace/src/lib/tabs.ts`):
+  a product picks a subset of Overview / Releases / Wiki / Reviews / Contact, in an order, and
+  nothing else about its shape is configurable. That is the whole point of the Worker — the moment a
+  page can describe its own layout, the set of pages stops being a house standard. `reviews` is what
+  that rule looks like when it is used: a fifth entry plus the routes that serve it, and nothing else
+  about the registry changed for it. The Overview **sidebar** is deliberately *not* a tab: it is
+  chrome beside the banner, like the links row, and it has a route of its own so it never needs one.
+  `apps/marketplace` is also the one Worker here whose schema uses foreign keys: a release, a wiki
+  page, a compatibility entry or a review only means anything as part of one product — with the
+  payment, download and traffic tables as the deliberate exception, since a financial record, a
+  download and a day's traffic all have to outlive the page they were about. It carries **two
+  audience lists** (`MARKETPLACE_ALLOWED_AUDIENCES` for the console, `MARKETPLACE_ACCOUNT_AUDIENCES`
+  for the website), the way `apps/support` does, for somebody buying or reviewing rather than editing.
+- **A release says how finished it is as well as whether it is visible**
+  (`apps/marketplace/src/lib/channels.ts`): `nightly` / `beta` / `rc` / `release`, independent of
+  `draft`/`published`/`archived`. The channel is part of the version key, so `1.4.0` can exist as an
+  `rc` and later as a `release` — which is why the public address is
+  `/products/:slug/releases/:channel/:version`. The default feed is the stable line only, and an
+  unknown channel is *refused* rather than falling back, deliberately unlike a tab key: a tab key is
+  content and degrades to one tab fewer, a channel is a filter, and a typo that silently became
+  "everything" would put nightlies in front of somebody who never asked for one. A **donation**
+  product may reserve its pre-release lines for people who paid — the one incentive that does not
+  cost a non-payer the product — and the gate is on the *download* only; the note, the links, the
+  compatibility and the file listing stay public on every channel, because hiding a nightly removes
+  the incentive the gate exists to create.
+- **A rating can be restarted and nothing is ever deleted**
+  (`apps/marketplace/src/services/ratings.ts`). Publishing a release marked `resets_rating` opens a
+  new window, App Store style; every earlier review stays stored, stays readable and says which side
+  of the line it is on. Three things there are worth not re-deriving: the cutoff and the aggregate
+  are **one statement**, because two round trips means two snapshots and an editor publishing between
+  them yields an average over a cutoff that no longer applies; the cutoff expression is written
+  **once** and imported by all three read paths; and **nothing is denormalised onto `products`**,
+  because a reset changes every average without touching a single review, which is an invalidation
+  nobody would remember to write. `AVG()` over an empty set answers NULL and that survives all the
+  way out — a product serializing `0` would render as one star on every listing card.
+- **Money is `apps/marketplace`' business and nothing else's** (`apps/marketplace/src/lib/pricing.ts`). Three
   pricing modes, `free` / `donation` / `paid`, and no tiers, regions or subscriptions — the same
   house-standard reasoning as the tab registry. Four things about it are worth not re-deriving, and
-  `apps/pages/CLAUDE.md` has the rest: a download is a **Worker route** because a presigned R2 URL
+  `apps/marketplace/CLAUDE.md` has the rest: a download is a **Worker route** because a presigned R2 URL
   cannot be asked whether the holder paid; the five-second cooldown for a non-payer is `nbf` on a
   signed ticket rather than a timer on the page; the MercadoPago webhook verifies a signature and then
   **reads the resource back from the provider**, because the notification body is not evidence; and an
@@ -303,13 +348,13 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   topic and the orders API's `order` topic, plus `topic_chargebacks_wh` for disputes — keyed on the
   payment id so the same money arriving down two channels is applied once. Buying requires signing in first — that is what ties a payment to an SSO account, and
   it is also why no service binding back into `auth` was needed to create one.
-- **The back office around that money is `apps/pages`' too, and it is the one place a payment is
-  written without a provider behind it** (`apps/pages/src/routes/admin/sales.ts`). The rule that no
+- **The back office around that money is `apps/marketplace`' too, and it is the one place a payment is
+  written without a provider behind it** (`apps/marketplace/src/routes/admin/sales.ts`). The rule that no
   endpoint may declare a payment approved was always about the *webhook*, which is public and therefore
   believes nothing it is told; a sale recorded by hand sits behind the editorial gate, names the editor
   in `created_by`, carries a `source` that says no provider was involved, and is its own audit event —
   because money does change hands in cash, and the alternative is a spreadsheet nothing can refund
-  from. Three more things there are worth not re-deriving, and `apps/pages/CLAUDE.md` has the rest: a
+  from. Three more things there are worth not re-deriving, and `apps/marketplace/CLAUDE.md` has the rest: a
   **voucher** is a document rather than a view of a sale, so it is never edited and correcting one
   voids it and issues the next; a refund asks MercadoPago *first* and writes the row second; and the
   ten-day *derecho a retracto* (ley 19.496) is a constant in `src/lib/sales.ts` rather than a setting,
@@ -392,12 +437,14 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   strength of it: doing so silently removes the inbound half of the product while every test still
   passes. The Email Routing rules themselves are dashboard configuration this repo cannot hold, in
   exactly the way Workers Builds is.
-- **`apps/support` is also the first Worker here that enforces a permission.** `apps/cms` and
-  `apps/pages` deliberately stop at the email-domain gate and never read `permissions` off a token.
+- **`apps/support` is the first Worker here that enforces a permission, and `apps/marketplace` the
+  second.** `apps/cms` deliberately stops at the email-domain gate and never reads `permissions` off
+  a token; the other two cannot.
   A support system cannot: tickets are *assignable to people*, and that is meaningless without a
   defined set of people. `apps/auth` resolves roles per client application, so `support:agent` plus a
   client application of its own is the mechanism that produces one — which is why `apps/support` does
-  **not** reuse the CMS's audience the way `apps/pages` does. It also carries two audience lists, one
+  **not** reuse the CMS's audience, and why `apps/marketplace` got a client application of its own
+  rather than inheriting the one `apps/pages` borrowed. It also carries two audience lists, one
   for the console and a wider one for somebody reading their own ticket; merging them would leave the
   domain and permission checks as the only thing keeping a website token out of `/admin`.
 - **Ticket content is the only unauthenticated free text this monorepo stores**, and the schema has
@@ -411,8 +458,7 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   ever be committed (both already gitignored). `apps/cms` has no secrets at all — its `.dev.vars` only
   repoints `AUTH_JWKS_URL`/`AUTH_ISSUER` at a local auth Worker — and `apps/support` has none either:
   the link that lets somebody read their own ticket without an account is a per-ticket random secret
-  stored as a hash on the row, not a key held by the Worker. `apps/pages` used to be in that group and
-  no longer is: it holds `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` and
-  `DOWNLOAD_SIGNING_KEY`. Use a MercadoPago *test* credential locally — a preference created with one
+  stored as a hash on the row, not a key held by the Worker. `apps/marketplace` is the exception: it
+  holds `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` and `DOWNLOAD_SIGNING_KEY`. Use a MercadoPago *test* credential locally — a preference created with one
   answers a `sandbox_init_point`, which is what the Worker hands the browser, so nothing charges a real
   card.

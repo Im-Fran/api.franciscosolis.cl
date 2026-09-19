@@ -13,7 +13,7 @@ describe('GET /', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       status: 200,
-      data: { message: '¡Hello, API!', modules: ['landing', 'auth', 'cms', 'pages', 'support'] },
+      data: { message: '¡Hello, API!', modules: ['landing', 'auth', 'cms', 'marketplace', 'support'] },
     })
   })
 

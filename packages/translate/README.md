@@ -13,8 +13,8 @@
 ## 📖 Overview
 
 Three Workers in this monorepo store translations — [`apps/cms`](../../apps/cms/README.md) for the
-landing page's content and its legal documents, [`apps/pages`](../../apps/pages/README.md) for the
-standalone application pages, and [`apps/support`](../../apps/support/README.md) for the help centre
+landing page's content and its legal documents, [`apps/marketplace`](../../apps/marketplace/README.md) for the
+the marketplace's product pages, release notes and help content, and [`apps/support`](../../apps/support/README.md) for the help centre
 — and all three offer their editors the same thing: a first draft of one field in one other
 language, produced by Workers AI, returned for review and saved through the ordinary `PATCH` that
 saves every other override.

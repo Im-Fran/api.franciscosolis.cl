@@ -35,8 +35,8 @@
       "service": "cms"
     },
     {
-      "binding": "PAGES",
-      "service": "pages"
+      "binding": "MARKETPLACE",
+      "service": "marketplace"
     },
     {
       "binding": "SUPPORT",
@@ -87,8 +87,8 @@
           "service": "cms-dev"
         },
         {
-          "binding": "PAGES",
-          "service": "pages-dev"
+          "binding": "MARKETPLACE",
+          "service": "marketplace-dev"
         },
         {
           "binding": "SUPPORT",

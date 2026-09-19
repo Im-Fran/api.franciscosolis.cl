@@ -57,9 +57,14 @@ const registerServiceProxies = (app: GatewayApp) => {
  * Where to fetch each module's own OpenAPI document and under which prefix it gets mounted in the
  * combined one. The hostname is a placeholder: a service binding routes by binding, not by DNS.
  */
-const remoteSpecComponents = (env: Env): RemoteComponent[] => SERVICE_MODULES.map((module) => ({
-  prefix: prefixOf(module),
-  fetchSpec: () => env[module.binding].fetch(new Request(`https://${module.name}.internal/openapi.json`)),
-}))
+const remoteSpecComponents = (env: Env): RemoteComponent[] =>
+  SERVICE_MODULES
+    // A deprecated alias forwards to a module already in this list, so merging it would mount the
+    // same paths a second time under a prefix nobody should be writing new clients against.
+    .filter((module) => !('deprecated' in module))
+    .map((module) => ({
+      prefix: prefixOf(module),
+      fetchSpec: () => env[module.binding].fetch(new Request(`https://${module.name}.internal/openapi.json`)),
+    }))
 
 export { registerServiceProxies, remoteSpecComponents }

@@ -11,7 +11,7 @@ language) into files, commits, or code in this repo.
 
 `@franciscosolis/translate` holds the one prompt this monorepo uses to machine-translate a
 field of prose, and the parsing that turns a model's answer back into a string. `apps/cms`,
-`apps/pages` and `apps/support` all import it; none of them writes a prompt of its own. It is
+`apps/marketplace` and `apps/support` all import it; none of them writes a prompt of its own. It is
 the second entry under `packages/` and the second non-Worker workspace package.
 
 A consumer supplies a `runner` — a function that hands an input to a model and returns its

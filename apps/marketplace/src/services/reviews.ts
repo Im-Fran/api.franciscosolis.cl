@@ -7,7 +7,6 @@ import { parseReviewStatus, type EligibilitySource, type IneligibilityReason } f
 import type { Account } from '@/middleware/account'
 import type { Product } from '@/services/products'
 import { findActivePurchase } from '@/services/purchases'
-import { describePricing } from '@/lib/pricing'
 import { findLatestStableRelease, listReleases, type ProductRelease } from '@/services/releases'
 
 type Review = typeof productReviews.$inferSelect
@@ -36,22 +35,24 @@ type Eligibility = {
 }
 
 /**
- * The release a reviewer "had": the newest published one they could actually have downloaded.
+ * The release a reviewer "had": the newest published one on the **stable line**.
  *
- * Usually the latest stable release. Somebody entitled to the pre-release lines — because they paid
- * for a product that reserves them — is anchored to the newest published release on any channel
- * instead, because that is the build they are talking about.
+ * The stable line and not "the newest thing they could have downloaded", which was the first shape
+ * this took and is worse. A product that publishes a build every night would have anchored every
+ * review to last night's, so the rating window would move daily and a `resets_rating` release would
+ * be measured against something nobody installed. The sidebar names the latest stable version for
+ * the same reason, and a review and the version beside it should agree.
  *
- * A product with nothing published has no anchor, and so cannot be reviewed: an unanchored review
- * has nothing for a reset to be measured against.
+ * The fallback is for a product that has only ever published pre-releases: something shipping
+ * nothing but betas is still reviewable by the people running those betas, and refusing there would
+ * be a rule about the channel rather than about the review. A product with nothing published at all
+ * has no anchor and cannot be reviewed — an unanchored review has nothing for a reset to be
+ * measured against.
  */
-const resolveAnchorRelease = async (
-  db: Database,
-  product: Product,
-  options: { entitledToPreReleases: boolean },
-): Promise<ProductRelease | null> => {
-  if (!options.entitledToPreReleases) {
-    return findLatestStableRelease(db, product.id)
+const resolveAnchorRelease = async (db: Database, product: Product): Promise<ProductRelease | null> => {
+  const stable = await findLatestStableRelease(db, product.id)
+  if (stable) {
+    return stable
   }
 
   const [newest] = await listReleases(db, {
@@ -61,7 +62,7 @@ const resolveAnchorRelease = async (
     limit: 1,
     offset: 0,
   })
-  return newest ?? (await findLatestStableRelease(db, product.id))
+  return newest ?? null
 }
 
 const describeAnchor = (release: ProductRelease | null): Eligibility['anchor'] =>
@@ -108,10 +109,7 @@ const resolveEligibility = async (
     return { can_review: false, reason: 'not_obtained', via: null, anchor: null }
   }
 
-  const pricing = describePricing(product)
-  // Entitled to the pre-release lines when they are not gated at all, or when this person paid.
-  const entitledToPreReleases = !pricing.pre_release_requires_purchase || purchase !== null
-  const anchor = await resolveAnchorRelease(db, product, { entitledToPreReleases })
+  const anchor = await resolveAnchorRelease(db, product)
 
   if (!anchor) {
     return { can_review: false, reason: 'no_release', via, anchor: null }
