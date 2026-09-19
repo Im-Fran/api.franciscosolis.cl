@@ -11,6 +11,7 @@ import { requireEditor } from '@/middleware/auth'
 import applications from '@/routes/admin/applications'
 import files from '@/routes/admin/files'
 import purchases from '@/routes/admin/purchases'
+import sales from '@/routes/admin/sales'
 import translate from '@/routes/admin/translate'
 import updates from '@/routes/admin/updates'
 import wiki from '@/routes/admin/wiki'
@@ -119,6 +120,7 @@ app.route('/', updates)
 app.route('/', wiki)
 app.route('/', files)
 app.route('/', purchases)
+app.route('/', sales)
 app.route('/', translate)
 
 export default app

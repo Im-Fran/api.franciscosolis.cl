@@ -35,6 +35,17 @@ export default defineConfig({
           DOWNLOAD_SIGNING_KEY: 'test-download-signing-key',
           PAGES_PUBLIC_URL: 'https://api.test/pages',
           SITE_BASE_URL: 'https://site.test',
+          // The real address rather than a `.test` one: Miniflare enforces the
+          // `allowed_sender_addresses` list from wrangler.jsonc, and a sender outside it throws
+          // inside the binding — which the voucher path catches, leaving a suite that passes while
+          // printing an uncaught exception per approved payment. A test that cares what was sent
+          // replaces `env.EMAIL` with a spy instead.
+          MAIL_FROM_EMAIL: 'no-reply@mail.franciscosolis.cl',
+          MAIL_FROM_NAME: 'FranciscoSolis (test)',
+          // `sandbox` under test for the same reason the credential is a placeholder: nothing in the
+          // suite may look like the live account. A test that cares which checkout URL is handed
+          // back overrides it per file.
+          MERCADOPAGO_ENVIRONMENT: 'sandbox',
         },
         // The real binding points at the deployed `auth` Worker, which is not part of this project.
         // `stubJwks` replaces `env.AUTH` per test file; this stands in so the runtime can start at
@@ -50,6 +61,12 @@ export default defineConfig({
       // Wrangler reads the `@/*` mapping straight from tsconfig when it bundles; Vite does not, so
       // it has to be restated here or every `@/…` import fails to resolve under test.
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // Mirrors the `alias` block in wrangler.jsonc, which keeps Prettier out of the deployed
+      // bundle. Restating it here is what makes the suite exercise the Worker as it actually ships:
+      // a react-email upgrade that starts needing the formatter at render time fails a test rather
+      // than a production send.
+      'prettier/standalone': fileURLToPath(new URL('../../packages/emails/src/prettier-stub.ts', import.meta.url)),
+      'prettier/plugins/html': fileURLToPath(new URL('../../packages/emails/src/prettier-stub.ts', import.meta.url)),
     },
   },
   test: {

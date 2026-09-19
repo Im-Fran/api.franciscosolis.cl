@@ -14,6 +14,19 @@
   "placement": {
     "mode": "smart"
   },
+  // `@react-email/render` imports Prettier at the top of its module to implement an option this
+  // Worker never uses (`pretty: true`), which drags ~1.5 MB of formatter into the bundle and into
+  // every cold start. The stub throws if anything actually calls it, so the day that assumption
+  // stops holding is a loud failure rather than silently unformatted output.
+  //
+  // Unlike the bindings below, this is deliberately *not* restated under `env.dev`: `alias` is one
+  // of the keys a named environment inherits, and Wrangler rejects it inside one. `apps/cms` has the
+  // same block for the same reason, and `scripts/check-environments.mjs` fails a copy of it in an
+  // environment.
+  "alias": {
+    "prettier/standalone": "../../packages/emails/src/prettier-stub.ts",
+    "prettier/plugins/html": "../../packages/emails/src/prettier-stub.ts"
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -29,6 +42,20 @@
       // application can be consulted. A public bucket cannot be asked whether somebody paid.
       "binding": "RELEASES",
       "bucket_name": "franciscosolis-app-releases"
+    }
+  ],
+  "send_email": [
+    {
+      // The voucher, and the notice that one was refunded. Nothing else: this Worker sends receipts
+      // and does not correspond — a reply belongs on a support ticket, not in a payments service.
+      //
+      // Cloudflare rejects a send from any address not listed here, so this is the outer bound of
+      // what this Worker can ever send as. There is only one, because unlike the CMS nothing here
+      // lets a request choose a sender.
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "no-reply@mail.franciscosolis.cl"
+      ]
     }
   ],
   // Workers AI, and the only thing this Worker asks it for: a first-draft translation of one prose
@@ -76,6 +103,16 @@
     // Website the buyer is returned to after checkout. `back_urls` point at pages here, never at the
     // API: a person coming back from MercadoPago should land on the application page.
     "SITE_BASE_URL": "https://franciscosolis.cl",
+    // Address every voucher and refund notice goes out as, and the name the email footer signs off
+    // with. `no-reply`, deliberately: a receipt is not a conversation, and an answer to one belongs
+    // on a support ticket where somebody will see it.
+    "MAIL_FROM_EMAIL": "no-reply@mail.franciscosolis.cl",
+    "MAIL_FROM_NAME": "FranciscoSolis",
+    // Which MercadoPago account this Worker takes money against, and therefore which of the two
+    // checkout URLs a created preference is answered with. `live` here and `sandbox` under env.dev;
+    // it is also stamped onto every purchase, so a test payment can never be counted as revenue and
+    // a refund is never attempted against the account that never saw the payment.
+    "MERCADOPAGO_ENVIRONMENT": "live",
     // Workers AI model behind the translation drafts. A var rather than a constant so a model that
     // Cloudflare retires — on their schedule, not ours — is a deploy rather than a code change.
     "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
@@ -95,15 +132,18 @@
   // The development stack: `pages-dev`, behind api-dev.franciscosolis.cl/pages.
   //
   // This is the Worker where an isolated environment earns its keep, because this is the one that
-  // takes money. Three things are deliberate:
+  // takes money. Four things are deliberate:
   //
   // - The bucket is `franciscosolis-app-releases-dev`. A download route reads the payment state of
   //   an application before it hands back a byte, and a dev database paired with the production
   //   bucket would be a payment table that knows nothing about the builds it is gating.
   // - `MERCADOPAGO_ACCESS_TOKEN` and `MERCADOPAGO_WEBHOOK_SECRET` are secrets, so they are set per
-  //   environment. Give dev a *test* credential: a preference created with one answers a
-  //   `sandbox_init_point`, which is what the Worker hands the browser, so nothing charges a real
-  //   card. A production credential here would take real money for a test.
+  //   environment. Give dev a *test* credential; a production one here would take real money for a
+  //   test.
+  // - `MERCADOPAGO_ENVIRONMENT` is `sandbox`, and it is what actually sends the browser to the
+  //   sandbox checkout. A test credential answers a preference with *both* URLs and they are two
+  //   different checkouts, so "it has a test token, therefore it is a test payment" was never true
+  //   on its own — the variable is the half that decides, and it is stamped on every purchase.
   // - `DOWNLOAD_SIGNING_KEY` is likewise per environment, which is what keeps a ticket minted on
   //   dev from opening a download in production.
   "env": {
@@ -120,6 +160,14 @@
         {
           "binding": "RELEASES",
           "bucket_name": "franciscosolis-app-releases-dev"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "no-reply@mail.franciscosolis.cl"
+          ]
         }
       ],
       "ai": {
@@ -142,6 +190,16 @@
         // from checkout lands on the second.
         "PAGES_PUBLIC_URL": "https://api-dev.franciscosolis.cl/pages",
         "SITE_BASE_URL": "https://dev.franciscosolis.cl",
+        // The same sender: Email Sending verifies a domain rather than a stack, and a `no-reply`
+        // address has no inbox on either side to keep apart.
+        "MAIL_FROM_EMAIL": "no-reply@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "FranciscoSolis (dev)",
+        // The whole reason this Worker has a development stack at all. With `sandbox` here the
+        // browser is sent to the preference's `sandbox_init_point`, which is the checkout the
+        // provider's test cards work on — and every purchase taken here is stamped `sandbox`, so it
+        // is structurally impossible for one to be read as revenue or refunded against the live
+        // account. Pair it with a *test* credential in `wrangler secret put --env dev`.
+        "MERCADOPAGO_ENVIRONMENT": "sandbox",
         "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       }
     },
@@ -180,6 +238,19 @@
           "service": "auth"
         }
       ],
+      // Restated here because a named environment inherits nothing. Unlike the `ai` binding above
+      // this one is safe under test: Miniflare implements it locally, writing the message out
+      // rather than delivering it, and the suite replaces `env.EMAIL` with a spy where it asserts
+      // on what was sent. Leaving it out would make `env.EMAIL` undefined, which the voucher path
+      // swallows — a suite that passes while never sending a receipt.
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "no-reply@mail.franciscosolis.cl"
+          ]
+        }
+      ],
       "vars": {
         "AUTH_JWKS_URL": "https://auth.test/.well-known/jwks.json",
         "AUTH_ISSUER": "https://auth.test",
@@ -188,6 +259,9 @@
         "PAGES_ACCOUNT_AUDIENCES": "franciscosolis-web",
         "PAGES_PUBLIC_URL": "https://api.test/pages",
         "SITE_BASE_URL": "https://site.test",
+        "MAIL_FROM_EMAIL": "no-reply@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "FranciscoSolis (test)",
+        "MERCADOPAGO_ENVIRONMENT": "sandbox",
         "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       }
     }

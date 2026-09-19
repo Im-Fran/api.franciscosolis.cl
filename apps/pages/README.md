@@ -30,6 +30,12 @@ account on the franciscosolis.cl SSO, and the builds themselves are served by th
 per-request ticket rather than from a bucket URL — which is the only arrangement that can be asked
 whether the person downloading has paid.
 
+Around those payments it also runs a small **back office**, one per application: every sale, sales
+*recorded by hand* for money that arrived in cash or by transfer (or a copy given away), the
+**vouchers** — receipts — issued for them, and refunds, including the statutory *derecho a retracto*.
+None of that is a fifth tab. The four tabs are what a visitor sees; the takings are an editorial
+section at `franciscosolis.cl/cms/pages/<id>/sales` that the tab registry knows nothing about.
+
 Reading published pages is **public** — that is what the website itself calls, and those are the
 only responses a shared cache is allowed to keep. Everything under `/admin` requires an access token
 issued by [`apps/auth`](../auth/README.md) for an `@franciscosolis.cl` account. The buyer-facing
@@ -98,6 +104,33 @@ why there is no second application to register.
   a refund a status change on the row that already exists rather than two writes that have to agree. A
   payment is matched to a person by account id *or* verified address, so what somebody bought survives
   a change of sign-in provider.
+- **Live money and test money cannot be confused** — `MERCADOPAGO_ENVIRONMENT` is `live` in production
+  and `sandbox` on the development stack, and it decides both which of the two URLs a created preference
+  is answered with and what is stamped on every purchase. A *test* credential answers **both**
+  `init_point` and `sandbox_init_point`, and they are different checkouts — only the second is where the
+  provider's test cards work — so the environment is a variable rather than something sniffed off the
+  credential. Because it is stamped on the row, a test payment stays out of every revenue total and a
+  refund refuses before it asks the provider about an id from the other account.
+- **Sales taken outside MercadoPago are first-class** — cash at a stand, a bank transfer, a copy given
+  to somebody. They are recorded as approved payments that entitle exactly as a card payment does, with
+  the editor's address in `created_by`, `provider: manual` and a `source` that says which channel the
+  money came through. The webhook still believes nothing it is told; this is a different endpoint behind
+  the editorial gate, and it is its own audit event carrying the amount. The alternative was never "no
+  unverified approvals" — it was a spreadsheet beside the database that nothing can refund from.
+- **A voucher is a document, not a view of a sale** — the amount, the address and the application's name
+  are copied onto it when it is issued, so a receipt emailed in March still says in December what it
+  said then. It follows that it is never edited and never deleted: correcting one voids it and issues
+  the next, numbered `FS-2026-000042` from a per-year sequence. Re-sending is a separate act with its
+  own count, because "I never got it" is a different problem from "this is wrong".
+- **Refunds ask the provider first and write the row second** — a row marked refunded for money that
+  never moved is a buyer who has lost their download and is still out of pocket. Partial refunds have a
+  column of their own rather than editing what was charged, the buyer is emailed unless asked otherwise,
+  and the notification that follows is idempotent against what was already stamped.
+- **The ten-day withdrawal window is a constant** — ley 19.496 art. 3 bis b) gives a consumer ten days
+  to withdraw from a distance sale, and a digital licence bought on a web page is one. Every admin view
+  of a sale carries the deadline and the days left, rounded **up** so a right that expires in four hours
+  does not read as expired. `withdrawal` is its own refund reason, so "how many of these were
+  obligatory" stays answerable.
 - **Payments and downloads outlive the page** — they are the only rows here with no foreign key onto
   `applications`, deliberately: deleting a product page must not erase the financial record of what was
   sold, so the slug and the version are snapshotted onto the row instead.
@@ -161,11 +194,15 @@ cp .dev.vars.example .dev.vars
 ```
 
 Unlike the CMS Worker, this one **does** hold secrets, and three of them:
-`MERCADOPAGO_ACCESS_TOKEN` (use a *test* credential — a preference created with one comes back with a
-`sandbox_init_point`, which is what this Worker then hands the browser, so nothing charges a real
-card), `MERCADOPAGO_WEBHOOK_SECRET` and `DOWNLOAD_SIGNING_KEY`. The file also overrides `AUTH_ISSUER`,
-so a local Pages Worker trusts the tokens a local auth Worker stamps, and `PAGES_PUBLIC_URL` /
-`SITE_BASE_URL` so a minted download link points at the local gateway rather than at production.
+`MERCADOPAGO_ACCESS_TOKEN` (use a *test* credential), `MERCADOPAGO_WEBHOOK_SECRET` and
+`DOWNLOAD_SIGNING_KEY`. The file also overrides `AUTH_ISSUER`, so a local Pages Worker trusts the
+tokens a local auth Worker stamps, and `PAGES_PUBLIC_URL` / `SITE_BASE_URL` so a minted download link
+points at the local gateway rather than at production.
+
+One override in there is not optional: **`MERCADOPAGO_ENVIRONMENT=sandbox`**. `wrangler.jsonc` says
+`live` at the top level, which is what a local `wrangler dev` inherits, and a test preference's *live*
+URL is not where the provider's test cards work — so without that line a local checkout looks broken
+rather than misconfigured.
 
 In production they are set with `wrangler secret put` and never live in `wrangler.jsonc`.
 
@@ -218,6 +255,7 @@ never the editorial one. No email-domain gate: the whole point is that anybody c
 | `POST` | `/applications/:slug/checkout` | required | Opens a MercadoPago payment and answers where to send the browser |
 | `GET` | `/me/purchases`, `/me/purchases/:id` | required | The account's purchase history |
 | `GET` | `/me/downloads` | required | What the account has downloaded |
+| `GET` | `/me/vouchers` | required | The receipts issued to the account's verified address |
 | `POST` | `/payments/mercadopago/webhook` | signature | MercadoPago's notifications |
 
 ### Editorial (Bearer token required)
@@ -239,10 +277,28 @@ verified `@franciscosolis.cl` address.
 | `GET` `POST` | `/admin/applications/:applicationId/updates/:updateId/files` | List / register a build |
 | `PUT` | `/admin/applications/:applicationId/updates/:updateId/files/:id/content` | Upload the bytes |
 | `PATCH` `DELETE` | `/admin/applications/:applicationId/updates/:updateId/files/:id` | One build |
-| `GET` | `/admin/purchases` | Every payment taken, with totals over the page |
+| `GET` | `/admin/purchases` | Every payment taken, across every application, with totals over the page |
 | `GET` | `/admin/applications/:applicationId/downloads` | Served downloads of one application |
 | `GET` | `/admin/audit` | The trail of every write |
 | `POST` | `/admin/translate` | Draft a translation of one prose field with Workers AI |
+
+The back office of one application, all nested under it:
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/admin/applications/:applicationId/sales` | Its sales, filtered by status, source, environment, kind, buyer or date |
+| `GET` | `/admin/applications/:applicationId/sales/summary` | Gross, returned, net and the buckets, over the same filters |
+| `POST` | `/admin/applications/:applicationId/sales` | Records a sale taken in cash, by transfer, or given away |
+| `GET` `PATCH` | `/admin/applications/:applicationId/sales/:saleId` | One sale with its vouchers; the address, account and note are editable |
+| `POST` | `/admin/applications/:applicationId/sales/:saleId/refund` | Refunds it, in full or in part, with a reason |
+| `POST` | `/admin/applications/:applicationId/sales/:saleId/vouchers` | Issues a voucher, voiding whatever was live |
+| `GET` | `/admin/applications/:applicationId/vouchers` | Every voucher it ever issued, void ones included |
+| `GET` | `/admin/applications/:applicationId/vouchers/:voucherId` | One voucher |
+| `POST` | `/admin/applications/:applicationId/vouchers/:voucherId/send` | Emails it again, optionally elsewhere |
+| `POST` | `/admin/applications/:applicationId/vouchers/:voucherId/void` | Voids it without replacing it |
+
+A sale's amount, status, source and dates are deliberately not editable: correcting one of those is a
+refund and a new sale, not an edit.
 
 Pricing itself is not a route of its own: `pricing_mode`, `price_amount` and `suggested_amount` are
 fields on `POST`/`PATCH /admin/applications`, filed on the audit trail under `pricing.updated`.
@@ -294,6 +350,8 @@ All configuration lives in `wrangler.jsonc` under `vars`:
 | `PAGES_ACCOUNT_AUDIENCES` | Client ids whose tokens identify a *buyer* — the website's. A separate list on purpose |
 | `PAGES_PUBLIC_URL` | This Worker's public base URL, for the download links and the notification URL |
 | `SITE_BASE_URL` | Where a buyer is returned to after checkout — a page on the website, never the API |
+| `MERCADOPAGO_ENVIRONMENT` | `live` or `sandbox`: which account takes the money, which checkout URL is handed back, and what is stamped on every purchase |
+| `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Sender of the vouchers and refund notices |
 | `AI_TEXT_MODEL` | Workers AI model behind the translation drafts |
 
 Secrets, set with `wrangler secret put` and listed in `.dev.vars.example` for local work:
@@ -311,9 +369,11 @@ either one is a checkbox; the third is how a dispute arrives in the old model. A
 acknowledged and dropped.
 
 Bindings: `DB` (D1 `franciscosolis_pages`), `RELEASES` (R2 `franciscosolis-app-releases`, no public
-access of its own), `AI` (Workers AI, used only by `POST /admin/translate`) and `AUTH` (service
-binding to the auth Worker, used only to read its published JWKS). Token verification still needs public keys rather than a signing key — this Worker is not an
-OAuth client of anything.
+access of its own), `AUTH` (service binding to the auth Worker, used only to read its published
+JWKS), `AI` (Workers AI, used only by `POST /admin/translate`) and `EMAIL` (Cloudflare Email Sending,
+used for the voucher and the refund notice and nothing else — this Worker has no inbox, and a reply
+belongs on a support ticket). Token verification still needs public keys rather than a signing key —
+this Worker is not an OAuth client of anything.
 
 ---
 

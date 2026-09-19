@@ -1,6 +1,7 @@
 import type { Env } from '@/env'
 import type { PurchaseStatus } from '@/lib/config'
 import { CURRENCY } from '@/lib/pricing'
+import { type PaymentEnvironment, parsePaymentEnvironment } from '@/lib/sales'
 
 /**
  * The MercadoPago half of the payment flow: Checkout Pro, and nothing else.
@@ -35,6 +36,15 @@ import { CURRENCY } from '@/lib/pricing'
  * Preferences are deliberately *not* migrated: `POST /checkout/preferences` is how a Checkout Pro
  * flow is still created, and the Orders API is a different integration whose own checkout this
  * Worker does not use.
+ *
+ * **Which account the money goes to is configuration, and which URL the browser gets follows from
+ * it.** `MERCADOPAGO_ENVIRONMENT` is `sandbox` on the development stack and `live` in production,
+ * and it decides one thing here: whether a created preference is answered with its
+ * `sandbox_init_point` or its `init_point`. It is an explicit variable rather than a guess at the
+ * shape of the credential because both are inferable and neither is reliable — a test *user*'s
+ * application credential is spelled exactly like a production one, so "does the token start with
+ * TEST-" is a check that passes a live credential off as a test one. The variable is also what is
+ * stamped onto the purchase, which is how a refund knows which account to ask.
  */
 
 const API_BASE = 'https://api.mercadopago.com'
@@ -273,6 +283,74 @@ const mapOrderStatus = (status: string): PurchaseStatus => {
   }
 }
 
+/**
+ * Which MercadoPago account this Worker is configured against.
+ *
+ * Falls back to `sandbox` on an unset or unrecognised value, because the fallback has to be the
+ * side that cannot take real money by accident.
+ */
+const resolveEnvironment = (env: Env): PaymentEnvironment => parsePaymentEnvironment(env.MERCADOPAGO_ENVIRONMENT)
+
+/**
+ * The URL the browser is sent to, for the environment this Worker is running as.
+ *
+ * A test credential answers both `init_point` and `sandbox_init_point`, and they are not the same
+ * checkout: the first runs the live flow against the test account and the second is the sandbox one
+ * the provider's test cards work on. Preferring `init_point` for everybody — which is what this used
+ * to do — meant the development stack never actually reached the sandbox, and a test card was
+ * refused there for reasons that look like a broken integration.
+ *
+ * In `live` the sandbox URL is never used as a fallback. A production preference has no
+ * `sandbox_init_point` to begin with, and were one ever to appear, sending a real buyer into the
+ * sandbox would take no money while telling them it had.
+ */
+const checkoutUrlFor = (preference: Preference, environment: PaymentEnvironment): string | null => {
+  // An empty string is treated as absent rather than as a URL: `??` would hand one straight back,
+  // and the caller's only check on the result is whether it is falsy — which would leave a browser
+  // redirected to the page it is already on with no error anywhere.
+  const usable = (value: string | undefined) => (value && value.length > 0 ? value : null)
+
+  if (environment === 'sandbox') {
+    return usable(preference.sandbox_init_point) ?? usable(preference.init_point)
+  }
+  return usable(preference.init_point)
+}
+
+/** What the provider says about a refund it accepted. */
+type Refund = {
+  id: number | string
+  payment_id?: number | string
+  amount?: number | string | null
+  status?: string | null
+}
+
+/**
+ * Refunds a payment, in full or in part.
+ *
+ * Total and partial refunds are the same endpoint: a body with no `amount` refunds everything, and
+ * one with an amount refunds that much. This is the only call in this module that *moves money*,
+ * which is why the idempotency key is mandatory rather than convenient — MercadoPago treats two
+ * unkeyed refund requests for one payment as two refunds, and a double-click in an editor's browser
+ * is exactly how that happens.
+ *
+ * The refund is not what changes the purchase row. The notification that follows is, exactly as with
+ * a payment: this asks for the refund and the webhook records that it happened. The caller applies
+ * the status anyway so an editor is not left looking at an unchanged screen waiting for a webhook —
+ * both paths converge, and `applyPaymentStatus` stamps `refunded_at` once.
+ */
+const refundPayment = async (
+  env: Env,
+  paymentId: string,
+  input: { idempotencyKey: string; amount?: number | null },
+): Promise<Refund> =>
+  request<Refund>(env, `/v1/payments/${encodeURIComponent(paymentId)}/refunds`, {
+    method: 'POST',
+    headers: { 'X-Idempotency-Key': input.idempotencyKey },
+    // An empty object rather than no body: the endpoint expects JSON, and a total refund is the
+    // absence of an amount inside it rather than the absence of the document.
+    body: JSON.stringify(input.amount ? { amount: input.amount } : {}),
+  })
+
 const toHex = (buffer: ArrayBuffer): string =>
   [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 
@@ -342,6 +420,7 @@ const verifyWebhookSignature = async (
 }
 
 export {
+  checkoutUrlFor,
   createPreference,
   getChargeback,
   getOrder,
@@ -349,8 +428,10 @@ export {
   mapOrderStatus,
   mapPaymentStatus,
   orderPaymentIds,
+  refundPayment,
+  resolveEnvironment,
   toAmount,
   TOPICS,
   verifyWebhookSignature,
 }
-export type { Chargeback, CreatePreferenceInput, Order, OrderPayment, Payment, Preference }
+export type { Chargeback, CreatePreferenceInput, Order, OrderPayment, Payment, Preference, Refund }

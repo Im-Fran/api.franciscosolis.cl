@@ -6,7 +6,8 @@ import { getDb } from '@/db/client'
 import type { Database } from '@/db/client'
 import type { AppEnv } from '@/env'
 import { PAGINATION, PUBLIC_CACHE_SECONDS } from '@/lib/config'
-import { createPreference } from '@/lib/mercadopago'
+import { LOCALES } from '@/lib/locales'
+import { checkoutUrlFor, createPreference, resolveEnvironment } from '@/lib/mercadopago'
 import { amountInput, purchaseKindFor, resolveChargeAmount } from '@/lib/pricing'
 import { paginationSchema } from '@/lib/validation'
 import { optionalAccount, requireAccount } from '@/middleware/account'
@@ -14,6 +15,7 @@ import type { Application } from '@/services/applications'
 import { findApplicationBySlug } from '@/services/applications'
 import { resolveAccess, toPublicAccess } from '@/services/access'
 import { listDownloadsForAccount, toPublicDownload } from '@/services/downloads'
+import { listVouchersForAccount, toPublicVoucher } from '@/services/vouchers'
 import {
   attachPreference,
   createPendingPurchase,
@@ -119,6 +121,14 @@ const checkoutSchema = v.object({
   amount: v.optional(amountInput),
   /** Where to send the browser back to. Must be a path on the website, not a URL. */
   return_path: v.optional(v.pipe(v.string(), v.regex(/^\/[A-Za-z0-9\-._~/]{0,200}$/))),
+  /**
+   * Language the buyer is reading the site in.
+   *
+   * Kept on the purchase's metadata for one purpose: the receipt. The voucher is issued by the
+   * webhook, long after the browser that knew the language has gone, and a Spanish-speaking buyer
+   * sent an English receipt is a small rudeness this is the only chance to avoid.
+   */
+  locale: v.optional(v.picklist(LOCALES)),
 })
 
 const checkoutResponseSchema = v.object({
@@ -186,6 +196,7 @@ app.post(
     }
 
     const kind = purchaseKindFor(access.pricing.mode)
+    const environment = resolveEnvironment(c.env)
     const purchase = await createPendingPurchase(db, {
       applicationId: application.id,
       applicationSlug: application.slug,
@@ -193,7 +204,12 @@ app.post(
       userId: account.id,
       email: account.email,
       amount: charge.amount,
-      metadata: { application_name: application.name, pricing_mode: access.pricing.mode },
+      environment,
+      metadata: {
+        application_name: application.name,
+        pricing_mode: access.pricing.mode,
+        ...(body.locale ? { locale: body.locale } : {}),
+      },
     })
 
     const site = c.env.SITE_BASE_URL.replace(/\/+$/, '')
@@ -223,10 +239,13 @@ app.post(
 
     await attachPreference(db, purchase.id, preference.id)
 
-    // `init_point` on a live credential, `sandbox_init_point` on a test one — which is what makes local
-    // work possible without taking real money. A preference with neither is a provider response we do
-    // not understand, and sending the browser nowhere is worse than saying so.
-    const checkoutUrl = preference.init_point ?? preference.sandbox_init_point
+    // Which of the two URLs a preference carries is decided by `MERCADOPAGO_ENVIRONMENT`, not by
+    // which one happens to be present: a test credential answers both, and they are different
+    // checkouts — the sandbox one is where the provider's test cards work. Preferring `init_point`
+    // for everybody, which is what this used to do, meant the development stack never reached the
+    // sandbox at all. A preference with no usable URL is a provider response we do not understand,
+    // and sending the browser nowhere is worse than saying so.
+    const checkoutUrl = checkoutUrlFor(preference, environment)
     if (!checkoutUrl) {
       console.error('MercadoPago returned a preference with no checkout URL', preference.id)
       throw new HTTPException(502, { message: 'The payment provider returned no checkout URL' })
@@ -343,6 +362,41 @@ app.get(
 
     const rows = await listDownloadsForAccount(getDb(c.env), account.id, { limit, offset })
     return c.json({ code: 200, data: rows.map(toPublicDownload) })
+  },
+)
+
+app.get(
+  '/me/vouchers',
+  requireAccount,
+  describeRoute({
+    description:
+      'Receipts issued to the signed-in account, newest first — purchases, donations and copies given away alike. Matched on the verified address the voucher was issued to, which is the only thing a receipt carries. A voided receipt is listed too: "you sent me this and it is not valid" is the conversation the row exists to settle.',
+    tags: ['Store'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description: 'Your receipts',
+        content: {
+          'application/json': {
+            schema: resolver(
+              v.object({ code: v.literal(200), data: v.array(v.looseObject({ id: v.string(), number: v.string() })) }),
+            ),
+          },
+        },
+      },
+      401: { description: 'Missing or invalid access token' },
+    },
+  }),
+  validator('query', paginationSchema),
+  async (c) => {
+    const { limit = PAGINATION.defaultLimit, offset = 0 } = c.req.valid('query')
+    const account = c.get('account')
+    if (!account) {
+      throw new HTTPException(401, { message: 'A Bearer access token is required' })
+    }
+
+    const rows = await listVouchersForAccount(getDb(c.env), account, { limit, offset })
+    return c.json({ code: 200, data: rows.map(toPublicVoucher) })
   },
 )
 

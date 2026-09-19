@@ -254,6 +254,9 @@ importers:
 
   apps/pages:
     dependencies:
+      '@franciscosolis/emails':
+        specifier: workspace:*
+        version: link:../../packages/emails
       '@franciscosolis/translate':
         specifier: workspace:*
         version: link:../../packages/translate

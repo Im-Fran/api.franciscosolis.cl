@@ -209,9 +209,17 @@ const applicationReleaseFiles = sqliteTable('application_release_files', {
  * application must not cascade into it. `applicationSlug` is snapshotted for the same reason: it is
  * what the row can still be read by once the application is gone.
  *
- * `userId` is the `sub` of the auth account that paid. It is never null: checkout requires a signed-in
- * account precisely so that a purchase has somewhere to live, which is why buying an application
- * creates an SSO account when the buyer has none.
+ * `userId` is the `sub` of the auth account that paid, and it is never null: checkout requires a
+ * signed-in account precisely so that a purchase has somewhere to live, which is why buying an
+ * application creates an SSO account when the buyer has none.
+ *
+ * One case cannot supply it — a sale **recorded by hand**, for cash taken at a stand or a copy given
+ * away, where the recipient may not have signed in yet and this Worker cannot ask whether an address
+ * has an account. Those rows carry `UNLINKED_USER_ID` (the empty string, see `src/lib/sales.ts`)
+ * rather than making the column nullable, and are found by their address instead — which is what
+ * `findActivePurchase` already matches on. The sentinel is what keeps every migration on this table
+ * purely additive: a `DROP TABLE`/rename rebuild races the production deploy (see the root
+ * `CLAUDE.md`) and, for the length of it, every paid download would 404 rather than degrade.
  */
 const purchases = sqliteTable('purchases', {
   id: text('id').primaryKey(),
@@ -220,7 +228,10 @@ const purchases = sqliteTable('purchases', {
   applicationSlug: text('application_slug').notNull(),
   /** `purchase` for a paid application, `donation` for an optional-pay one. */
   kind: text('kind').notNull().default('purchase'),
-  /** `sub` claim of the account that paid. */
+  /**
+   * `sub` claim of the account that paid, or `UNLINKED_USER_ID` on a manual sale recorded before the
+   * recipient had an account. Never null; see the note above for why the sentinel is preferred.
+   */
   userId: text('user_id').notNull(),
   /** Verified address the account held at the time, for the receipt and for support. */
   email: text('email').notNull(),
@@ -229,7 +240,27 @@ const purchases = sqliteTable('purchases', {
   /** What was charged, in whole units of `currency`. CLP has no minor unit. */
   amount: integer('amount').notNull(),
   currency: text('currency').notNull().default('CLP'),
+  /** Which system holds the transaction: `mercadopago`, or `manual` for one recorded by hand. */
   provider: text('provider').notNull().default('mercadopago'),
+  /**
+   * What the payer actually did: `mercadopago`, `cash`, `bank_transfer`, `gift` or `other`.
+   *
+   * Kept apart from `provider` because the two answer different questions, and the second is the one
+   * an accountant reconciles against: cash at a stand and a bank transfer are both `manual` and are
+   * not the same fact. Only `mercadopago` can be produced by the Worker itself; the rest are what an
+   * editor records, which is why a manual row is always visibly manual. See `src/lib/sales.ts`.
+   */
+  source: text('source').notNull().default('mercadopago'),
+  /**
+   * Which MercadoPago account took the money: `live` or `sandbox`.
+   *
+   * Stamped from `MERCADOPAGO_ENVIRONMENT` at the time rather than read from the configuration when
+   * the row is displayed, because the configuration is the thing that changes. It is what keeps a
+   * test payment out of a revenue total, and what stops a refund being attempted against the account
+   * that never saw the payment — the provider answers 404 for the other environment's ids, which
+   * looks exactly like a payment that never existed.
+   */
+  environment: text('environment').notNull().default('live'),
   /** Checkout Pro preference this purchase was started from. */
   preferenceId: text('preference_id'),
   /** MercadoPago payment id, once one exists. */
@@ -242,6 +273,20 @@ const purchases = sqliteTable('purchases', {
   approvedAt: integer('approved_at', { mode: 'timestamp' }),
   refundedAt: integer('refunded_at', { mode: 'timestamp' }),
   /**
+   * How much went back, in whole units of `currency`.
+   *
+   * A column of its own rather than an edit to `amount`: a partial refund is a real case — a donor
+   * refunded down to what they meant to give — and overwriting what was charged would misstate the
+   * sale. Null on a row that was never refunded, and equal to `amount` on a total one.
+   */
+  refundedAmount: integer('refunded_amount'),
+  /** Why the money went back, from the closed set in `src/lib/sales.ts`. `withdrawal` is statutory. */
+  refundReason: text('refund_reason'),
+  /** Email of the editor who issued the refund. Null for one that arrived from the provider's console. */
+  refundedBy: text('refunded_by'),
+  /** The provider's own id for the refund, so it can be traced to their console. */
+  refundId: text('refund_id'),
+  /**
    * When the payer's bank took the money back. Kept apart from `refundedAt` for the same reason the
    * statuses are: a refund is ours, a chargeback is theirs, and only one of them comes with a fee and
    * a dispute deadline.
@@ -249,6 +294,10 @@ const purchases = sqliteTable('purchases', {
   chargedBackAt: integer('charged_back_at', { mode: 'timestamp' }),
   /** MercadoPago's id for the dispute, so a support conversation can be traced to their console. */
   chargebackId: text('chargeback_id'),
+  /** Editor's note on a manual sale: which stand, which transfer, who the copy was given to. */
+  note: text('note'),
+  /** Email of the editor who recorded a manual sale. Null for one the provider's webhook created. */
+  createdBy: text('created_by'),
   /** Free-form JSON. Must never carry a card detail, a provider token or an access token. */
   metadata: text('metadata'),
   ...timestamps,
@@ -258,6 +307,72 @@ const purchases = sqliteTable('purchases', {
   index('purchases_user_created_idx').on(table.userId, table.createdAt),
   index('purchases_payment_idx').on(table.paymentId),
   index('purchases_status_created_idx').on(table.status, table.createdAt),
+  index('purchases_application_created_idx').on(table.applicationId, table.createdAt),
+  index('purchases_email_idx').on(table.email),
+])
+
+/**
+ * One voucher: the receipt for a sale, as the buyer was sent it.
+ *
+ * It is a row rather than a rendering because the *document* is the thing that matters. A receipt
+ * somebody was emailed in March has to still say in December what it said then, including for a sale
+ * whose application page has since been deleted and whose price has since changed — so the amount,
+ * the address and the application's slug are snapshotted here rather than read back through the
+ * purchase.
+ *
+ * It is never edited and never deleted, for the same reason: every copy already in an inbox would
+ * become a forgery of the row. Correcting one means voiding it and issuing the next, which is what
+ * `status` is for and why there is no third state.
+ *
+ * No foreign keys, exactly like `purchases` — a receipt outlives the page it was written for.
+ */
+const saleVouchers = sqliteTable('sale_vouchers', {
+  id: text('id').primaryKey(),
+  /** Human-facing number, e.g. `FS-2026-000042`. Allocated per year; see `src/lib/sales.ts`. */
+  number: text('number').notNull(),
+  /** Sale this is the receipt for. */
+  purchaseId: text('purchase_id').notNull(),
+  applicationId: text('application_id').notNull(),
+  /** Snapshot of the slug, so the voucher still names its application once the page is gone. */
+  applicationSlug: text('application_slug').notNull(),
+  /** Snapshot of the application's name at issue time, because the receipt printed it. */
+  applicationName: text('application_name').notNull(),
+  /** Address the voucher was issued to. Snapshotted: correcting the sale's address re-issues. */
+  email: text('email').notNull(),
+  /** `purchase` or `donation`, copied from the sale. */
+  kind: text('kind').notNull().default('purchase'),
+  /** What the voucher states was paid, in whole units of `currency`. Zero for a gift. */
+  amount: integer('amount').notNull(),
+  currency: text('currency').notNull().default('CLP'),
+  /** How the money arrived, copied from the sale. The receipt prints it. */
+  source: text('source').notNull().default('mercadopago'),
+  /** `issued` | `void`. */
+  status: text('status').notNull().default('issued'),
+  /** Language the voucher was rendered in, so a re-send reads the same as the original. */
+  locale: text('locale').notNull().default('en'),
+  /** Editor who issued it, or null when the webhook issued it on approval. */
+  issuedBy: text('issued_by'),
+  issuedAt: integer('issued_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  voidedAt: integer('voided_at', { mode: 'timestamp' }),
+  voidedBy: text('voided_by'),
+  voidReason: text('void_reason'),
+  /**
+   * How many times it has been emailed, and where it went last.
+   *
+   * Counted rather than logged as rows: "did this reach them, and when did we last try" is the whole
+   * question a support conversation asks, and a table of sends for a document that is always the same
+   * document would be a log nobody reads. The failure of a send is not recorded here at all — it is
+   * returned to the editor, who is looking at the screen.
+   */
+  sentCount: integer('sent_count').notNull().default(0),
+  lastSentAt: integer('last_sent_at', { mode: 'timestamp' }),
+  lastSentTo: text('last_sent_to'),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('sale_vouchers_number_unique').on(table.number),
+  index('sale_vouchers_purchase_idx').on(table.purchaseId),
+  index('sale_vouchers_application_issued_idx').on(table.applicationId, table.status, table.issuedAt),
+  index('sale_vouchers_email_idx').on(table.email),
 ])
 
 /**
@@ -376,4 +491,5 @@ export {
   downloadEvents,
   paymentEvents,
   purchases,
+  saleVouchers,
 }

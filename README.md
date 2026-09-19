@@ -67,14 +67,20 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   MercadoPago Checkout Pro, tied to an account on the franciscosolis.cl SSO: its builds sit in R2 with
   no public access and are served by the Worker against a signed per-request ticket, so the download
   itself is what knows whether the person taking it has paid — a non-payer is always shown the offer and
-  waits five seconds, somebody who paid gets the link straight away.
+  waits five seconds, somebody who paid gets the link straight away. Around that sits a **back office
+  per application**: its sales with gross, returned and net totals; sales *recorded by hand* for money
+  taken in cash or by transfer, or a copy given away, which entitle exactly as a card payment does;
+  **vouchers** — numbered receipts, issued, re-issued, re-sent and voided rather than edited; and
+  refunds, with the ten-day *derecho a retracto* reported on every sale. A test payment can never be
+  confused with a real one: `MERCADOPAGO_ENVIRONMENT` decides which account takes the money and is
+  stamped on every purchase.
 - **Support tickets and a help centre** — `apps/support` takes a request for help from the website
   or from `soporte@franciscosolis.cl`, and the conversation works in both places: replies, internal
   notes only the team sees, labels, assignment and watchers. When the team answers and nobody comes
   back within thirty minutes, one digest email goes out. Behind it sits a bilingual help centre,
   searched lexically with SQLite's FTS5 and semantically with Workers AI embeddings in Vectorize —
   the second of which also drafts an agent's reply out of the published articles.
-- **Shared email templates** — every message either Worker sends is a react-email component in
+- **Shared email templates** — every message any of these Workers sends is a react-email component in
   `packages/emails`, rendered to an HTML + plain-text pair at send time. Values are escaped by
   construction, the text alternative is derived from the HTML so the two cannot drift, and the
   whole set is previewable in a browser with `pnpm --filter @franciscosolis/emails run preview`.
@@ -168,6 +174,9 @@ cd apps/auth && pnpm run keys:generate   # prints the JWT_PRIVATE_KEY to paste i
 `apps/cms` has no secrets of its own — its `.dev.vars` only points `AUTH_JWKS_URL` and `AUTH_ISSUER`
 at the local auth Worker. `apps/pages` does hold three: a MercadoPago credential (use a **test** one,
 so nothing charges a real card), its webhook secret, and the key its download links are signed with.
+Its `.dev.vars` also sets `MERCADOPAGO_ENVIRONMENT=sandbox`, and that line is not optional: the
+committed config says `live` at the top level, and a test credential's *live* checkout URL is not
+where the provider's test cards work.
 
 | Variable | Description | Where |
 |----------|-------------|-------|
@@ -348,9 +357,10 @@ The Workers and their configuration live in this repository; four things do not,
 done once against the account.
 
 **Secrets, per environment.** `wrangler secret put` writes to one environment, so every secret is
-set twice. Give `apps/pages` a MercadoPago **test** credential on dev — a preference created with
-one answers a `sandbox_init_point`, so nothing charges a real card — and give `apps/auth` a signing
-key of its own, which is what keeps a dev token from verifying against the production JWKS.
+set twice. Give `apps/pages` a MercadoPago **test** credential on dev — paired with the
+`MERCADOPAGO_ENVIRONMENT: sandbox` var already in its `env.dev`, which is the half that actually sends
+the browser to the sandbox checkout — and give `apps/auth` a signing key of its own, which is what
+keeps a dev token from verifying against the production JWKS.
 
 ```bash
 cd apps/auth

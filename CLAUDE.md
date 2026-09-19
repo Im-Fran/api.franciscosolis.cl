@@ -28,7 +28,9 @@ together six Cloudflare Workers, all living directly in this repo:
   and edited from the CMS front-end rather than from an application of its own. It is also the one
   Worker here that **takes money**: an application can be paid for or donated to through MercadoPago
   Checkout Pro, and its downloadable builds live in R2 and are served by the Worker against a signed
-  per-request ticket rather than from a bucket URL.
+  per-request ticket rather than from a bucket URL. It also runs the back office around those payments
+  — per-application sales, sales recorded by hand for cash or a transfer, vouchers (receipts) and
+  refunds — and sends the one kind of mail it has: the receipt.
 - `apps/support` — internal Worker with the **support ticket system** and the help centre behind it,
   reachable through `apps/api` at `/support/*`. A ticket can be opened from the website or by writing
   to `soporte@franciscosolis.cl`, and answered in either place; the help centre is searched both
@@ -38,8 +40,8 @@ together six Cloudflare Workers, all living directly in this repo:
 Alongside them, `packages/` holds the shared code the Workers import:
 
 - `packages/emails` (`@franciscosolis/emails`) — every email body in the monorepo, written as
-  react-email components. Imported by `apps/auth`, `apps/cms` and `apps/support`; no Worker builds
-  mail markup itself.
+  react-email components. Imported by `apps/auth`, `apps/cms`, `apps/pages` and `apps/support`; no
+  Worker builds mail markup itself.
 - `packages/translate` (`@franciscosolis/translate`) — the one prompt behind every machine
   translation here, and the parsing of the model's answer. Imported by `apps/cms`, `apps/pages` and
   `apps/support`; no Worker writes a translation prompt itself.
@@ -56,12 +58,12 @@ workspace/catalog, root scripts).
 - Every Worker uses Hono + hono-openapi + valibot + Wrangler, all pinned via a
   shared pnpm `catalog` in `pnpm-workspace.yaml` — do not add per-app version pins for
   those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/pages` and
-  `apps/support` additionally use drizzle-orm/drizzle-kit; `apps/auth`, `apps/cms` and `apps/support`
-  also pull react + react-email through `@franciscosolis/emails`, all catalogued too. `apps/cms`,
-  `apps/pages` and `apps/support` use **Workers AI** through `@franciscosolis/translate`;
-  `apps/support` is the only one with `postal-mime`, and the only one using Vectorize. `apps/pages`
-  talks to MercadoPago over plain `fetch` rather than through an SDK — three functions in
-  `src/lib/mercadopago.ts` against a dependency that assumes Node.
+  `apps/support` additionally use drizzle-orm/drizzle-kit, and those same four pull react +
+  react-email through `@franciscosolis/emails`, all catalogued too. `apps/cms`, `apps/pages` and
+  `apps/support` use **Workers AI** through `@franciscosolis/translate`; `apps/support` is the only
+  one with `postal-mime`, and the only one using Vectorize. `apps/pages` talks to MercadoPago over
+  plain `fetch` rather than through an SDK — a handful of functions in `src/lib/mercadopago.ts`
+  against a dependency that assumes Node.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
   on `dev`/`deploy`.
 - Vitest running inside `workerd` via `@cloudflare/vitest-pool-workers`, also catalogued.
@@ -174,7 +176,11 @@ Four things about this are worth not re-deriving:
   "Service binding 'AUTH' references Worker 'auth-dev' which was not found".
 - **Secrets are per environment.** `wrangler secret put --env dev` is a different store, and that
   is deliberate rather than a chore: `apps/pages` takes a MercadoPago *test* credential on dev, and
-  `apps/auth` a signing key of its own.
+  `apps/auth` a signing key of its own. The credential is only half of that split, though:
+  `MERCADOPAGO_ENVIRONMENT` is a plain var (`live` / `sandbox`) and it is what actually sends a dev
+  buyer to the sandbox checkout, because a test credential answers a preference with *both* URLs and
+  they are two different checkouts. It is also stamped on every purchase, so a test payment can never
+  be read as revenue or refunded against the live account. See `apps/pages/CLAUDE.md`.
 
 `.github/workflows/deploy-dev.yml` deploys the stack on a push to `dev`, in four stages that follow
 the binding graph above: migrations, `auth-dev`, the four remaining modules in parallel, then
@@ -297,6 +303,17 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   topic and the orders API's `order` topic, plus `topic_chargebacks_wh` for disputes — keyed on the
   payment id so the same money arriving down two channels is applied once. Buying requires signing in first — that is what ties a payment to an SSO account, and
   it is also why no service binding back into `auth` was needed to create one.
+- **The back office around that money is `apps/pages`' too, and it is the one place a payment is
+  written without a provider behind it** (`apps/pages/src/routes/admin/sales.ts`). The rule that no
+  endpoint may declare a payment approved was always about the *webhook*, which is public and therefore
+  believes nothing it is told; a sale recorded by hand sits behind the editorial gate, names the editor
+  in `created_by`, carries a `source` that says no provider was involved, and is its own audit event —
+  because money does change hands in cash, and the alternative is a spreadsheet nothing can refund
+  from. Three more things there are worth not re-deriving, and `apps/pages/CLAUDE.md` has the rest: a
+  **voucher** is a document rather than a view of a sale, so it is never edited and correcting one
+  voids it and issues the next; a refund asks MercadoPago *first* and writes the row second; and the
+  ten-day *derecho a retracto* (ley 19.496) is a constant in `src/lib/sales.ts` rather than a setting,
+  reported on every sale with its days left rounded **up**.
 - **The CMS content model is a registry, not a table per type**: every collection lives in
   one `content_entries` table discriminated by `collection`, with collection-specific fields
   validated by `apps/cms/src/lib/collections.ts`. Adding a collection is a registry entry,
@@ -317,13 +334,13 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   and resolve it server-side, so the website reads plain `title`/`body` fields and gets a `locale`
   telling it which language actually came back. Only prose is translated — slugs, ordering, dates
   and the `data` blob are the same fact in every language. See `apps/cms/src/lib/locales.ts`.
-- **Email bodies are react-email components, in one shared package**: neither Worker builds
+- **Email bodies are react-email components, in one shared package**: no Worker builds
   mail markup any more. `@franciscosolis/emails` renders `{ subject, html, text }` and the
   Worker only hands that to its `EMAIL` binding. Three consequences worth knowing before
-  touching either: rendering is asynchronous; both Workers alias `prettier/standalone`
-  and `prettier/plugins/html` out of their bundle (in `wrangler.jsonc` *and* in
+  touching any of them: rendering is asynchronous; every Worker that imports the package aliases
+  `prettier/standalone` and `prettier/plugins/html` out of its bundle (in `wrangler.jsonc` *and* in
   `vitest.config.ts`) because `@react-email/render` imports ~1.5 MB of formatter statically
-  for an option neither uses; and the layout is deliberately light-first — a dark email body
+  for an option none of them uses; and the layout is deliberately light-first — a dark email body
   is what mail clients' colour rewriting breaks worst, and the palette, the `bgcolor`
   attributes and the missing `<style>` block are all defending against a specific client.
   See `packages/emails/CLAUDE.md` before changing any of them.
