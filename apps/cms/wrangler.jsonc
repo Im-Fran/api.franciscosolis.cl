@@ -81,5 +81,51 @@
       "enabled": true,
       "head_sampling_rate": 0.25
     }
+  },
+  // The development stack: `cms-dev`, behind api-dev.franciscosolis.cl/cms.
+  //
+  // Restated in full because a named environment inherits no bindings. Two things carry the safety
+  // here: the database is the `-dev` copy, so editing content on dev cannot publish to the real
+  // site, and `AUTH_ISSUER` names the dev issuer, so a production token is refused here and a dev
+  // token is refused in production.
+  "env": {
+    "dev": {
+      "alias": {
+        "prettier/standalone": "../../packages/emails/src/prettier-stub.ts",
+        "prettier/plugins/html": "../../packages/emails/src/prettier-stub.ts"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_cms_dev",
+          "database_id": "57d1c8c6-2105-43df-a6bd-dccab8e200d4",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "hola@mail.franciscosolis.cl",
+            "no-reply@mail.franciscosolis.cl"
+          ]
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth-dev"
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
+        "CMS_ALLOWED_AUDIENCES": "franciscosolis-cms",
+        "CMS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+        "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "Francisco Solis (dev)",
+        "MAIL_ALLOWED_SENDERS": "hola@mail.franciscosolis.cl,no-reply@mail.franciscosolis.cl"
+      }
+    }
   }
 }

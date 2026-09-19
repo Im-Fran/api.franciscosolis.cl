@@ -78,5 +78,55 @@
       "enabled": true,
       "head_sampling_rate": 0.25
     }
+  },
+  // The development stack: `pages-dev`, behind api-dev.franciscosolis.cl/pages.
+  //
+  // This is the Worker where an isolated environment earns its keep, because this is the one that
+  // takes money. Three things are deliberate:
+  //
+  // - The bucket is `franciscosolis-app-releases-dev`. A download route reads the payment state of
+  //   an application before it hands back a byte, and a dev database paired with the production
+  //   bucket would be a payment table that knows nothing about the builds it is gating.
+  // - `MERCADOPAGO_ACCESS_TOKEN` and `MERCADOPAGO_WEBHOOK_SECRET` are secrets, so they are set per
+  //   environment. Give dev a *test* credential: a preference created with one answers a
+  //   `sandbox_init_point`, which is what the Worker hands the browser, so nothing charges a real
+  //   card. A production credential here would take real money for a test.
+  // - `DOWNLOAD_SIGNING_KEY` is likewise per environment, which is what keeps a ticket minted on
+  //   dev from opening a download in production.
+  "env": {
+    "dev": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_pages_dev",
+          "database_id": "375b7df8-0573-4847-9425-6f6110444550",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "RELEASES",
+          "bucket_name": "franciscosolis-app-releases-dev"
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth-dev"
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
+        "PAGES_ALLOWED_AUDIENCES": "franciscosolis-cms",
+        "PAGES_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+        "PAGES_ACCOUNT_AUDIENCES": "franciscosolis-web",
+        // Both of these are what MercadoPago is told to come back to, so both have to name the
+        // development stack: the notification URL is built from the first, and a buyer returning
+        // from checkout lands on the second.
+        "PAGES_PUBLIC_URL": "https://api-dev.franciscosolis.cl/pages",
+        "SITE_BASE_URL": "https://dev.franciscosolis.cl"
+      }
+    }
   }
 }

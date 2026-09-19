@@ -282,6 +282,116 @@ app is added or renamed.
 
 ---
 
+## 🌱 Environments
+
+There are two full stacks of these Workers on the account, and they share nothing but the code.
+
+| | Production | Development |
+|---|---|---|
+| Gateway | `api` → `api.franciscosolis.cl` | `api-dev` → `api-dev.franciscosolis.cl` |
+| Modules | `landing`, `auth`, `cms`, `pages`, `support` | `landing-dev`, `auth-dev`, `cms-dev`, `pages-dev`, `support-dev` |
+| Front-end | `franciscosolis` → `franciscosolis.cl` | `franciscosolis-dev` → `dev.franciscosolis.cl` |
+| Databases | `franciscosolis_auth`, `_cms`, `_pages`, `_support` | the same four with a `_dev` suffix |
+| Buckets | `franciscosolis-avatars`, `franciscosolis-app-releases` | the same two with a `-dev` suffix |
+| Deployed by | Cloudflare's Git integration (dashboard) | `.github/workflows/deploy-dev.yml` |
+
+The `-dev` suffix is not typed anywhere: each app declares a named Wrangler environment called
+`dev`, and Wrangler appends the environment name to the Worker name. `wrangler deploy --env dev`
+on `api` produces `api-dev`.
+
+```bash
+pnpm run build:dev            # dry-run deploy of every dev Worker — needs no credentials
+pnpm run deploy:dev           # deploy them all (the gateway needs the modules to exist first)
+pnpm run db:migrate:list:dev  # what is pending on the dev databases
+pnpm run db:migrate:remote:dev
+```
+
+### What a named environment costs, and the check that pays for it
+
+A named Wrangler environment **inherits no bindings and no vars**. Every database, bucket, service
+binding and variable is therefore written twice in each `wrangler.jsonc`: once at the top level for
+production, once under `env.dev`. That is how Wrangler works, and it is exactly the kind of
+duplication that rots — a var added for production breaks nothing until the day somebody tests the
+code path on dev.
+
+`scripts/check-environments.mjs` is the guard, and CI runs it as the `environments` job. For every
+app it asserts that `env.dev` declares the same bindings and the same vars as the top level, that
+every resource it names is a *different* resource, and that no var still points at a production
+host. Run it by hand with `node scripts/check-environments.mjs`.
+
+It also covers the sharpest edge here. `routes` is one of the few keys a named environment *does*
+inherit, so an app with a production route and no override under `env.dev` would deploy its
+development Worker straight onto the production hostname.
+
+### Setting up the development stack
+
+The Workers and their configuration live in this repository; four things do not, and have to be
+done once against the account.
+
+**Secrets, per environment.** `wrangler secret put` writes to one environment, so every secret is
+set twice. Give `apps/pages` a MercadoPago **test** credential on dev — a preference created with
+one answers a `sandbox_init_point`, so nothing charges a real card — and give `apps/auth` a signing
+key of its own, which is what keeps a dev token from verifying against the production JWKS.
+
+```bash
+cd apps/auth
+pnpm exec wrangler secret put JWT_PRIVATE_KEY --env dev
+pnpm exec wrangler secret put GOOGLE_CLIENT_ID --env dev
+pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET --env dev
+
+cd ../landing && pnpm exec wrangler secret put GH_TOKEN --env dev
+
+cd ../pages
+pnpm exec wrangler secret put MERCADOPAGO_ACCESS_TOKEN --env dev   # a TEST credential
+pnpm exec wrangler secret put MERCADOPAGO_WEBHOOK_SECRET --env dev
+pnpm exec wrangler secret put DOWNLOAD_SIGNING_KEY --env dev
+```
+
+The Google OAuth client also needs `https://api-dev.franciscosolis.cl/auth/callback/google` among
+its authorized redirect URIs, and MercadoPago needs its notification URL pointed at
+`https://api-dev.franciscosolis.cl/pages`.
+
+**The Vectorize index.** `apps/support` binds `franciscosolis-support-help-dev`, which does not
+exist until it is created — Vectorize has no local emulation and no lazy creation:
+
+```bash
+cd apps/support
+pnpm exec wrangler vectorize create franciscosolis-support-help-dev --dimensions=1024 --metric=cosine
+pnpm exec wrangler vectorize create-metadata-index franciscosolis-support-help-dev --property-name=locale --type=string
+```
+
+**Client applications.** An OAuth client is a row in the auth database, and the development stack
+has its own, so nothing registered for `franciscosolis.cl` exists on `api-dev`. Register them
+against the dev database and give each the `dev.franciscosolis.cl` redirect URI:
+
+```bash
+cd apps/auth
+pnpm run admin:bootstrap -- --dev --remote
+pnpm run applications -- create franciscosolis-web --dev --remote \
+  --name "Landing (dev)" --redirect-uri https://dev.franciscosolis.cl/auth/callback
+pnpm run applications -- create franciscosolis-cms --dev --remote \
+  --name "CMS (dev)" --redirect-uri https://dev.franciscosolis.cl/cms/callback
+pnpm run applications -- create franciscosolis-support --dev --remote \
+  --name "Support (dev)" --redirect-uri https://dev.franciscosolis.cl/support/callback
+```
+
+**Inbound email for `apps/support`, which is deliberately left unrouted.** The development Worker
+sends mail and receives none: its `SUPPORT_INBOX_ADDRESSES` and `MAIL_REPLY_TO` name
+`soporte-dev@franciscosolis.cl`, which nothing delivers to until an Email Routing rule is added in
+the dashboard. That is the safe half to be missing — pointing them at `soporte@franciscosolis.cl`
+instead would make a reply to a test email open a real ticket in the production system. Add the
+rule when inbound mail is what is being tested.
+
+### Where the `prd` branch fits
+
+Today `dev` is the default branch and every push to it releases *both* stacks: Cloudflare's Git
+integration builds production from it, and `deploy-dev.yml` deploys the development one. That is
+temporary. Once a `prd` branch exists, production moves behind it — one dashboard change, pointing
+each Worker's build at `prd` — and nothing in this repository has to move with it: `deploy-dev.yml`
+already watches `dev` and only `dev`.
+
+---
+
 ## 🌐 Deployment
 
 Deployment targets **Cloudflare Workers** directly, using each app's `wrangler.jsonc`.

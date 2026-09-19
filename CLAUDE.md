@@ -72,6 +72,11 @@ workspace/catalog, root scripts).
 - `pnpm run build` — `wrangler deploy --dry-run` in every app. Not an artifact; it is the
   check that each `wrangler.jsonc` is valid and each Worker still bundles.
 - `pnpm run deploy` — deploys every workspace app.
+- `pnpm run build:dev` / `deploy:dev` / `db:migrate:remote:dev` / `db:migrate:list:dev` /
+  `db:migrate:local:dev` — the same against the **development stack** (see *Environments*). Every
+  one of them is `--env dev` underneath.
+- `node scripts/check-environments.mjs` — asserts each app's `env.dev` still mirrors its
+  production config. CI runs it as the `environments` job.
 - `pnpm run cf-typegen` — regenerates Cloudflare binding types (`CloudflareBindings`) in
   every app after a `wrangler.jsonc` change.
 - `pnpm run db:migrate:list` / `db:migrate:remote` / `db:migrate:local` — D1 migrations across
@@ -123,14 +128,65 @@ Non-obvious things about this harness, learned the hard way — do not re-derive
 
 `.github/workflows/ci.yml` runs one job per app (`fail-fast: false`), so every Worker is an
 independent check and a break in one does not mask the others. Each job typechecks, runs the
-suite with coverage, and does a credential-free `wrangler deploy --dry-run`. An aggregate `ci`
-job is the single status branch protection should require. When adding an app, add it to the
-`matrix.app` list.
+suite with coverage, and does a credential-free `wrangler deploy --dry-run`. Each job also does a second dry-run against `--env dev`, because a named environment is a second
+config that nothing else would ever load. Alongside them an `environments` job runs
+`scripts/check-environments.mjs`. An aggregate `ci` job is the single status branch protection
+should require. When adding an app, add it to the `matrix.app` list.
+
+## Environments
+
+Two full stacks, sharing nothing but the code: production (`api`, `landing`, `auth`, `cms`,
+`pages`, `support`) and development (the same six with a `-dev` suffix, fronted by
+`api-dev.franciscosolis.cl` and paired with `dev.franciscosolis.cl` in the front-end repository).
+Each stateful Worker has its own `_dev` database, each bucket its own `-dev` copy, and `apps/auth`
+its own signing key — so a dev token is structurally unusable in production and a test payment
+cannot reach a real build.
+
+The suffix is not typed anywhere. Each app declares a named Wrangler environment called `dev`, and
+Wrangler appends the environment name to the Worker name.
+
+Four things about this are worth not re-deriving:
+
+- **A named environment inherits no bindings and no vars**, so every one of them is written twice
+  per `wrangler.jsonc`. That is the documented cost, and `scripts/check-environments.mjs` is what
+  keeps the two halves from drifting: same bindings, same var keys, different resources, no
+  production host left in a dev var. Adding a var for production and not for dev fails CI.
+- **`routes` is inherited**, which is the sharpest edge in the whole arrangement: an app with a
+  production route and no override under `env.dev` deploys its development Worker onto the
+  production hostname. `apps/api` overrides it, the front-end repository overrides it, and the
+  check above fails anything that does not.
+- **Service bindings resolve by Worker name**, so `env.dev` in `apps/api` names `landing-dev`,
+  `auth-dev` and so on. Leaving one as `landing` would wire the development gateway into a
+  production module without any error to say so — which is the single failure this environment
+  exists to make impossible.
+- **Secrets are per environment.** `wrangler secret put --env dev` is a different store, and that
+  is deliberate rather than a chore: `apps/pages` takes a MercadoPago *test* credential on dev, and
+  `apps/auth` a signing key of its own.
+
+`.github/workflows/deploy-dev.yml` deploys the stack on a push to `dev`, in three stages —
+migrations, then the five modules, then `api-dev` last, because a service binding is resolved at
+deploy time against a Worker that must already exist. Unlike production (below), the migrations
+there are strictly ordered before the deploy.
+
+Three pieces of setup live outside this repository and are listed in the README: the per-environment
+secrets, the `franciscosolis-support-help-dev` Vectorize index, and the OAuth client applications,
+which are rows in the *dev* auth database and therefore do not exist until they are registered
+(`pnpm run applications -- … --dev --remote`). One piece is deliberately missing: nothing delivers
+mail to `apps/support`'s dev inbox addresses, so the development Worker sends and never receives
+until an Email Routing rule is added. Pointing it at the production inbox instead would make a reply
+to a test email open a real ticket.
+
+Today `dev` is the default branch and a push to it releases *both* stacks. When the `prd` branch
+arrives, production moves behind it as a dashboard change and nothing here moves with it —
+`deploy-dev.yml` already watches `dev` and only `dev`.
 
 ## Deploys and migrations
 
-The Workers are deployed by **Cloudflare's Git integration**, not from this repo — that is what the
-"Workers Builds" checks on a PR are. Nothing here configures it, and no workflow should duplicate it.
+The **production** Workers are deployed by **Cloudflare's Git integration**, not from this repo —
+that is what the "Workers Builds" checks on a PR are. Nothing here configures it, and no workflow
+should duplicate it. The development stack is the half that *can* live in git, and does:
+`.github/workflows/deploy-dev.yml` owns it, because that integration runs a plain `wrangler deploy`
+with no way to pass `--env dev`.
 
 What that integration does not do is touch D1, so `.github/workflows/migrate.yml` owns that:
 it applies pending migrations for the stateful Workers (`auth`, `cms`, `pages`, `support`) on a push to `dev`
