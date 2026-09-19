@@ -151,6 +151,8 @@ Four things about this are worth not re-deriving:
   per `wrangler.jsonc`. That is the documented cost, and `scripts/check-environments.mjs` is what
   keeps the two halves from drifting: same bindings, same var keys, different resources, no
   production host left in a dev var. Adding a var for production and not for dev fails CI.
+  The converse also bites: `alias` *is* inherited and Wrangler refuses it inside an environment, so
+  restating it buys a warning on every deploy and nothing else. The same check now fails on that.
 - **`routes` is inherited**, which is the sharpest edge in the whole arrangement: an app with a
   production route and no override under `env.dev` deploys its development Worker onto the
   production hostname. `apps/api` overrides it, the front-end repository overrides it, and the
@@ -158,15 +160,20 @@ Four things about this are worth not re-deriving:
 - **Service bindings resolve by Worker name**, so `env.dev` in `apps/api` names `landing-dev`,
   `auth-dev` and so on. Leaving one as `landing` would wire the development gateway into a
   production module without any error to say so — which is the single failure this environment
-  exists to make impossible.
+  exists to make impossible. The same bindings also **dictate the deploy order**, because one is
+  resolved at deploy time against a Worker that must already exist: `auth` first, then the modules
+  that bind it (`cms`, `pages`, `support`), then `api`. Out of order, a first deploy fails with
+  "Service binding 'AUTH' references Worker 'auth-dev' which was not found".
 - **Secrets are per environment.** `wrangler secret put --env dev` is a different store, and that
   is deliberate rather than a chore: `apps/pages` takes a MercadoPago *test* credential on dev, and
   `apps/auth` a signing key of its own.
 
-`.github/workflows/deploy-dev.yml` deploys the stack on a push to `dev`, in three stages —
-migrations, then the five modules, then `api-dev` last, because a service binding is resolved at
-deploy time against a Worker that must already exist. Unlike production (below), the migrations
-there are strictly ordered before the deploy.
+`.github/workflows/deploy-dev.yml` deploys the stack on a push to `dev`, in four stages that follow
+the binding graph above: migrations, `auth-dev`, the four remaining modules in parallel, then
+`api-dev`. Unlike production (below), the migrations there are strictly ordered before the deploy.
+Its token needs `Workers R2 Storage:Edit` on top of `D1:Edit` and `Workers Scripts:Edit` — `auth`
+and `pages` each bind a bucket, and a deploy that cannot read one fails with an authentication
+error rather than anything that mentions R2 permissions.
 
 Three pieces of setup live outside this repository and are listed in the README: the per-environment
 secrets, the `franciscosolis-support-help-dev` Vectorize index, and the OAuth client applications,

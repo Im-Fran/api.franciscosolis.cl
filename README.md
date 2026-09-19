@@ -301,10 +301,25 @@ on `api` produces `api-dev`.
 
 ```bash
 pnpm run build:dev            # dry-run deploy of every dev Worker — needs no credentials
-pnpm run deploy:dev           # deploy them all (the gateway needs the modules to exist first)
 pnpm run db:migrate:list:dev  # what is pending on the dev databases
 pnpm run db:migrate:remote:dev
 ```
+
+Deploying by hand follows the service bindings, because one is resolved at deploy time against a
+Worker that must already exist — `auth` first, then the modules that bind it, then the gateway:
+
+```bash
+cd apps/auth    && pnpm run deploy:dev
+cd ../landing   && pnpm run deploy:dev
+cd ../cms       && pnpm run deploy:dev
+cd ../pages     && pnpm run deploy:dev
+cd ../support   && pnpm run deploy:dev
+cd ../api       && pnpm run deploy:dev
+```
+
+`pnpm run deploy:dev` from the root does exist, but `pnpm run -r` gives no useful order for it:
+these apps have no workspace dependency on each other, so nothing tells it that `auth` goes first.
+It is there for redeploying a stack that already exists, where order no longer matters.
 
 ### What a named environment costs, and the check that pays for it
 

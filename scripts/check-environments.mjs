@@ -23,6 +23,19 @@ import { readFileSync } from 'node:fs'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
+/**
+ * Keys a named environment *inherits* and therefore must not restate. Wrangler rejects them inside
+ * one — "Unexpected fields found in env.dev field: …" — and then carries on with the inherited
+ * value, so restating one costs a warning on every deploy and changes nothing. `alias` was
+ * restated under `env.dev` in `auth` and `cms` at first, and the dev bundles came out byte for byte
+ * the size of the production ones, which is what proved it inherited.
+ *
+ * This is deliberately not the full list of inheritable keys: `routes` is inheritable too and is
+ * checked further down precisely *because* it has to be overridden. These are the ones where
+ * restating is both useless and rejected.
+ */
+const INHERITED_ONLY_KEYS = ['alias']
+
 /** Hosts that belong to production. A dev environment naming one of them is the bug this catches. */
 const PRODUCTION_HOSTS = ['api.franciscosolis.cl', 'https://franciscosolis.cl']
 
@@ -141,6 +154,12 @@ for (const app of apps) {
   for (const binding of development.keys()) {
     if (!production.has(binding)) {
       problems.push(`${app}: \`env.dev\` declares the ${binding} binding and production does not.`)
+    }
+  }
+
+  for (const key of INHERITED_ONLY_KEYS) {
+    if (key in dev) {
+      problems.push(`${app}: \`env.dev\` restates \`${key}\`, which a named environment inherits and Wrangler refuses inside one. Delete it — the top-level value already applies to the development stack.`)
     }
   }
 

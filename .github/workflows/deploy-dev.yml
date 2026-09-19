@@ -16,10 +16,14 @@ name: Deploy (development)
 #     migrate.yml explains at length — but here both halves are ours, so the schema is always
 #     ahead of the code that reads it. That is worth having somewhere: a migration that breaks on
 #     a real database breaks here first, in an environment nobody is reading.
-#  2. `modules` deploys the five internal Workers.
-#  3. `gateway` deploys `api-dev` last, because a service binding is resolved at deploy time
-#     against a Worker that must already exist. Deploying the gateway first fails outright the
-#     first time, and after that silently keeps the previous generation of a module bound.
+#  2. `auth` deploys `auth-dev` on its own, ahead of the rest. `cms`, `pages` and `support` each
+#     bind it as a service, and a service binding is resolved at deploy time against a Worker that
+#     must already exist — so on a first deploy all three fail with "Service binding 'AUTH'
+#     references Worker 'auth-dev' which was not found" if they run as its peers. (They did, once.)
+#  3. `modules` deploys the four that are left, in parallel: none of them binds another.
+#  4. `gateway` deploys `api-dev` last, for the same reason as stage 2 — it binds all five.
+#     Deploying it first fails outright, and after that silently keeps the previous generation of a
+#     module bound.
 #
 # Until the `prd` branch exists, this runs on the same push to `dev` that ships production. That is
 # deliberate and temporary: today `dev` is the default branch and releases both. Once `prd` is
@@ -65,7 +69,7 @@ jobs:
       - name: Check credentials
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set as repository secrets. The token needs D1:Edit and Workers Scripts:Edit on this account."
+            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be set as repository secrets. The token needs D1:Edit, Workers Scripts:Edit and Workers R2 Storage:Edit on this account — `auth` and `pages` each bind a bucket, and a deploy that cannot read it fails with an authentication error."
             exit 1
           fi
 
@@ -99,18 +103,47 @@ jobs:
       - name: Apply migrations
         run: pnpm --filter ${{ matrix.app }} run db:migrate:remote:dev
 
-  # The internal Workers. None of them is publicly routed: each answers only through the gateway's
-  # service binding, plus — for `support` — an Email Routing rule and a cron trigger.
-  modules:
-    name: deploy ${{ matrix.app }}-dev
+  # `auth-dev` on its own, and ahead of the rest: three of the modules below bind it as a service,
+  # and a service binding has to name a Worker that already exists at deploy time. It is the same
+  # constraint that puts the gateway last, one level further down.
+  auth:
+    name: deploy auth-dev
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: migrate
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy
+        run: pnpm --filter auth run deploy:dev
+
+  # The rest of the internal Workers. None is publicly routed: each answers only through the
+  # gateway's service binding, plus — for `support` — an Email Routing rule and a cron trigger.
+  # `landing` binds nothing and only waits here for the sake of one ordering rule instead of two.
+  modules:
+    name: deploy ${{ matrix.app }}-dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: auth
+
     strategy:
       fail-fast: false
       matrix:
-        app: [landing, auth, cms, pages, support]
+        app: [landing, cms, pages, support]
 
     steps:
       - name: Checkout
