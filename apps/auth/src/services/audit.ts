@@ -62,6 +62,8 @@ const AUDIT_EVENTS = [
   'avatar.withdrawn',
   'avatar.approved',
   'avatar.rejected',
+  /** An administrator changed a setting — today, opening or closing registration. */
+  'settings.updated',
 ] as const
 
 type AuditEvent = (typeof AUDIT_EVENTS)[number]

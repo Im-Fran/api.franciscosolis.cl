@@ -50,7 +50,7 @@ const completeAuthentication = async (
 ) => {
   const { request, profile } = input
 
-  const { user, isNewUser } = await resolveUserForProfile(db, profile, request.application.id)
+  const { user, isNewUser, signupSource } = await resolveUserForProfile(db, profile, request.application.id)
 
   const ssoSession = await startSsoSession(c, db, {
     user,
@@ -76,7 +76,9 @@ const completeAuthentication = async (
     applicationId: request.application.id,
     ip: input.ip,
     userAgent: input.userAgent,
-    metadata: { provider: profile.provider },
+    // `signup` says which of the two ways in produced the account, which is the difference between
+    // an invitation somebody issued and registration having been left open.
+    metadata: { provider: profile.provider, ...(isNewUser ? { signup: signupSource } : {}) },
   })
 
   // The location is read off the session rather than the context again: it was stamped from this
@@ -94,7 +96,7 @@ const completeAuthentication = async (
     city: ssoSession.city,
   })
 
-  return { redirectUrl: codeRedirect(request, code), user, isNewUser, ssoSession }
+  return { redirectUrl: codeRedirect(request, code), user, isNewUser, signupSource, ssoSession }
 }
 
 /**

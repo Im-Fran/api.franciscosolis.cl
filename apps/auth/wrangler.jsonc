@@ -65,7 +65,14 @@
     // reads /oauth/authorize/:handle and drives the providers from there.
     "AUTH_LOGIN_URL": "https://franciscosolis.cl/apps/auth",
     "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
-    "MAIL_FROM_NAME": "FranciscoSolis"
+    "MAIL_FROM_NAME": "FranciscoSolis",
+    // Public half of the Cloudflare Turnstile keypair. It is a var and not a secret because the
+    // sign-in front-end renders it into the widget; the private half is the `TURNSTILE_SECRET_KEY`
+    // secret, set with `wrangler secret put`. An empty value here — or a missing secret — turns the
+    // bot check off rather than failing every sign-in, which is what makes a local Worker and the
+    // test suite work without a keypair. Each environment needs its own: a token is bound to the
+    // hostnames the widget was created for.
+    "TURNSTILE_SITE_KEY": ""
   },
   "observability": {
     "enabled": true,
@@ -128,7 +135,11 @@
         // Suffixed so an email from the development stack is recognisable in an inbox before it is
         // opened. Magic links in dev point at api-dev and work nowhere else, and somebody has to be
         // able to tell that from the sender line.
-        "MAIL_FROM_NAME": "FranciscoSolis (dev)"
+        "MAIL_FROM_NAME": "FranciscoSolis (dev)",
+        // The development keypair, whose widget is registered for dev.franciscosolis.cl. Empty
+        // until it is created, which leaves the development stack unchallenged — see the note on
+        // the production var above.
+        "TURNSTILE_SITE_KEY": ""
       }
     }
   }

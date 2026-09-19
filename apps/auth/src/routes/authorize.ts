@@ -5,6 +5,7 @@ import { getDb } from '@/db/client'
 import type { AppEnv } from '@/env'
 import { CODE_CHALLENGE_METHOD, DEFAULT_LOGIN_URL, PROMPT_VALUES, RESPONSE_TYPE, TTL } from '@/lib/config'
 import { buildErrorRedirect, OAuthException } from '@/lib/errors'
+import { describeTurnstile, verifyTurnstile } from '@/lib/turnstile'
 import { googleProvider } from '@/providers/google'
 import { getAvailableProviders } from '@/providers'
 import { requestMagicLink } from '@/providers/magic-link'
@@ -21,6 +22,7 @@ import {
   toAuthorizationRequest,
 } from '@/services/authorization-requests'
 import { authorizeFromSsoSession, startGoogleFlow } from '@/services/authorization'
+import { getSettings } from '@/services/settings'
 import { getSsoSessionById, readSsoSession } from '@/services/sso'
 import type { ResolvedSsoSession } from '@/services/sso'
 
@@ -252,6 +254,13 @@ const pendingRequestSchema = v.object({
     scope: v.nullable(v.string()),
     login_hint: v.nullable(v.string()),
     expires_at: v.string(),
+    /** Whether an address nobody invited may create an account by signing in here. */
+    registration_open: v.boolean(),
+    /** The bot check the front-end has to render, or `required: false` where none is configured. */
+    turnstile: v.object({
+      required: v.boolean(),
+      site_key: v.nullable(v.string()),
+    }),
     /** Who this browser is already signed in as, or null when it has to authenticate. */
     authenticated: v.nullable(
       v.object({
@@ -300,6 +309,7 @@ app.get(
     // learn who the browser that started this request was signed in as, and nothing more:
     // `/continue` asks for the cookie again before it mints anything.
     const sso = record.ssoSessionId ? await getSsoSessionById(db, record.ssoSessionId) : null
+    const settings = await getSettings(db)
 
     return c.json({
       code: 200,
@@ -310,6 +320,11 @@ app.get(
         scope: record.scope,
         login_hint: record.loginHint,
         expires_at: record.expiresAt.toISOString(),
+        // Both are here so the front-end can render the one screen it has correctly: whether to
+        // offer sign-up at all, and whether a widget has to be solved before the form is worth
+        // submitting. Neither is a decision — the endpoints below enforce both again.
+        registration_open: settings.registration_open,
+        turnstile: describeTurnstile(c.env),
         authenticated: sso
           ? {
               sub: sso.user.id,
@@ -409,6 +424,8 @@ app.get(
 
 const magicLinkBodySchema = v.object({
   email: v.pipe(v.string(), v.trim(), v.email('A valid email address is required')),
+  /** Turnstile token from the widget, required wherever this deployment is configured with keys. */
+  turnstile_token: v.optional(v.string()),
 })
 
 const magicLinkResponseSchema = v.object({
@@ -423,14 +440,18 @@ app.post(
   '/oauth/authorize/:handle/magic-link',
   describeRoute({
     description:
-      'Continues a parked authorization request by emailing a magic link. This is what the sign-in front-end calls when the user submits their address. Like `POST /magic-link`, it always reports the same thing regardless of whether the address can actually sign in.',
+      'Continues a parked authorization request by emailing a magic link. This is what the sign-in front-end calls when the user submits their address. Like `POST /magic-link`, it always reports the same thing regardless of whether the address can actually sign in, and it takes the same `turnstile_token` where this deployment is configured to challenge.',
     tags: ['OAuth'],
     responses: {
       202: {
         description: 'The request was accepted',
         content: { 'application/json': { schema: resolver(magicLinkResponseSchema) } },
       },
-      400: { description: 'The handle is unknown or expired, or the address is not an email address' },
+      400: {
+        description:
+          'The handle is unknown or expired, the address is not an email address, or the Turnstile token did not pass',
+      },
+      503: { description: 'The Turnstile check could not be completed' },
     },
   }),
   async (c) => {
@@ -439,12 +460,20 @@ app.post(
     const { record, application } = await loadAuthorizationRequest(db, c.req.param('handle'))
 
     const payload = await c.req.json().catch(() => ({}))
-    const parsed = v.safeParse(magicLinkBodySchema, { email: payload.email })
+    const parsed = v.safeParse(magicLinkBodySchema, {
+      email: payload.email,
+      turnstile_token: payload.turnstile_token,
+    })
 
     if (!parsed.success) {
       const message = parsed.issues[0]?.message ?? 'A valid email address is required'
       return c.json({ code: 400, error: message }, 400)
     }
+
+    // Same reasoning as `POST /magic-link`: this sends mail and, with registration open, creates
+    // accounts, so the bot check comes before either. The parked handle is not a credential — it
+    // travels in a URL — so holding one buys no exemption.
+    await verifyTurnstile(c.env, parsed.output.turnstile_token, context.ip)
 
     const result = await requestMagicLink(db, c.env, {
       email: parsed.output.email,
