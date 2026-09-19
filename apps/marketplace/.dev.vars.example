@@ -1,0 +1,34 @@
+# Local overrides for the marketplace Worker.
+#
+# Unlike the CMS Worker, this one *does* hold secrets — the payment provider's credential and the key
+# the download links are signed with. None of them may ever be committed: `.dev.vars` is gitignored,
+# and production values are set with `wrangler secret put`.
+
+# Issuer a local auth Worker stamps into its tokens. `AUTH_JWKS_URL` is fetched over the AUTH service
+# binding, so its host is a placeholder either way — what has to match is the issuer.
+AUTH_ISSUER=http://localhost:8787/auth
+
+# MercadoPago. Use a *test* credential for local work, and keep the line below beside it.
+MERCADOPAGO_ACCESS_TOKEN=TEST-0000000000000000-000000-00000000000000000000000000000000-000000000
+# Which account this Worker thinks it is taking money against, and therefore which of the two URLs a
+# created preference is answered with. `wrangler.jsonc` says `live` at the top level, which is what a
+# local `wrangler dev` would otherwise inherit — so this override is not optional: without it a test
+# preference's live URL is handed to the browser and the provider's test cards are refused there.
+MERCADOPAGO_ENVIRONMENT=sandbox
+# Webhook signing secret from the MercadoPago dashboard. Without it every notification is refused —
+# the endpoint fails closed, because it is the endpoint that can grant a licence.
+MERCADOPAGO_WEBHOOK_SECRET=replace-me
+
+# HMAC key the download tickets are signed with. Any high-entropy string; rotating it invalidates
+# every ticket already minted, which is at most five minutes of downloads.
+DOWNLOAD_SIGNING_KEY=local-development-download-signing-key
+
+# Where a local Worker thinks it is reachable, so a minted download link points at it rather than at
+# production. Through the local gateway that is the API on :8787.
+MARKETPLACE_PUBLIC_URL=http://localhost:8787/marketplace
+SITE_BASE_URL=http://localhost:5173
+
+# Sender of the vouchers and refund notices. `wrangler dev` prints a message rather than delivering
+# it, so the address only has to be one Cloudflare would accept in `allowed_sender_addresses`.
+MAIL_FROM_EMAIL=no-reply@mail.franciscosolis.cl
+MAIL_FROM_NAME=FranciscoSolis (local)

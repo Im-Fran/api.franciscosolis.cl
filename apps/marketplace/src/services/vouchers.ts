@@ -14,9 +14,9 @@ import type { Purchase } from '@/services/purchases'
  * Three rules hold this together and none of them are convenience:
  *
  * 1. **A voucher is a document, not a view of the sale.** Everything it prints — the amount, the
- *    address, the application's name — is copied onto the row when it is issued. A receipt emailed
+ *    address, the product's name — is copied onto the row when it is issued. A receipt emailed
  *    in March has to still say in December what it said then, for a sale whose price has since
- *    changed and whose application page may since have been deleted.
+ *    changed and whose product page may since have been deleted.
  * 2. **It is never edited.** Every copy already in an inbox would become a forgery of the row.
  *    Correcting one means voiding it and issuing the next, which is the whole reason `status` exists.
  * 3. **At most one is live per sale.** Two valid receipts for one payment is how the same sale gets
@@ -101,7 +101,7 @@ const voidVoucher = async (
 
 type IssueVoucherInput = {
   purchase: Purchase
-  /** Name of the application as the receipt should print it. Snapshotted onto the row. */
+  /** Name of the product as the receipt should print it. Snapshotted onto the row. */
   productName: string
   /** Editor issuing it, or null when the payment's own approval did. */
   issuedBy: string | null
@@ -132,9 +132,9 @@ const issueVoucher = async (db: Database, input: IssueVoucherInput): Promise<Vou
       id: crypto.randomUUID(),
       number: await nextVoucherNumber(db, year),
       purchaseId: input.purchase.id,
-      applicationId: input.purchase.applicationId,
-      applicationSlug: input.purchase.applicationSlug,
-      productName: input.applicationName,
+      productId: input.purchase.productId,
+      productSlug: input.purchase.productSlug,
+      productName: input.productName,
       email: (input.email ?? input.purchase.email).toLowerCase(),
       kind: input.purchase.kind,
       amount: input.purchase.amount,
@@ -191,7 +191,7 @@ const sendVoucher = async (
 
   const rendered = await renderSaleReceiptEmail({
     voucherNumber: voucher.number,
-    productName: voucher.applicationName,
+    productName: voucher.productName,
     kind: voucher.kind === 'donation' ? 'donation' : 'purchase',
     amount: voucher.amount,
     currency: voucher.currency,
@@ -200,7 +200,7 @@ const sendVoucher = async (
     // and this is the one place that knows the recipient's language and the issue date together.
     issuedAt: formatMailDate(voucher.issuedAt, locale),
     reference: voucher.number,
-    url: `${env.SITE_BASE_URL.replace(/\/+$/, '')}/application/${voucher.applicationSlug}`,
+    url: `${env.SITE_BASE_URL.replace(/\/+$/, '')}/product/${voucher.productSlug}`,
     locale,
     brandName: env.MAIL_FROM_NAME,
   })
@@ -238,7 +238,7 @@ const issueVoucherForApproval = async (
 
     const voucher = await issueVoucher(db, {
       purchase: input.purchase,
-      productName: input.applicationName,
+      productName: input.productName,
       issuedBy: null,
       locale: input.locale,
     })
@@ -250,7 +250,7 @@ const issueVoucherForApproval = async (
 }
 
 type VoucherFilters = {
-  applicationId?: string
+  productId?: string
   purchaseId?: string
   status?: VoucherStatus
   email?: string
@@ -261,7 +261,7 @@ type VoucherFilters = {
 /** The editorial listing, newest first. */
 const listVouchers = async (db: Database, filters: VoucherFilters): Promise<Voucher[]> => {
   const clauses = [
-    filters.applicationId ? eq(saleVouchers.applicationId, filters.applicationId) : undefined,
+    filters.productId ? eq(saleVouchers.productId, filters.productId) : undefined,
     filters.purchaseId ? eq(saleVouchers.purchaseId, filters.purchaseId) : undefined,
     filters.status ? eq(saleVouchers.status, filters.status) : undefined,
     filters.email ? eq(saleVouchers.email, filters.email.toLowerCase()) : undefined,
@@ -305,8 +305,8 @@ const toPublicVoucher = (voucher: Voucher) => ({
   id: voucher.id,
   number: voucher.number,
   purchase_id: voucher.purchaseId,
-  application_slug: voucher.applicationSlug,
-  application_name: voucher.applicationName,
+  product_slug: voucher.productSlug,
+  product_name: voucher.productName,
   kind: voucher.kind,
   amount: voucher.amount,
   currency: voucher.currency,
@@ -319,7 +319,7 @@ const toPublicVoucher = (voucher: Voucher) => ({
 /** The same voucher for an editor: who issued it, where it was sent and how often. */
 const toAdminVoucher = (voucher: Voucher) => ({
   ...toPublicVoucher(voucher),
-  application_id: voucher.applicationId,
+  product_id: voucher.productId,
   email: voucher.email,
   issued_by: voucher.issuedBy,
   voided_at: voucher.voidedAt?.toISOString() ?? null,

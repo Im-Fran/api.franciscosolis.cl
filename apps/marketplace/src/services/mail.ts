@@ -74,7 +74,7 @@ const sendRefundNotice = async (env: Env, input: RefundNoticeInput): Promise<voi
   const locale = resolveEmailLocale(input.locale)
   const rendered = await renderSaleRefundEmail({
     voucherNumber: input.voucherNumber ?? null,
-    productName: input.applicationName,
+    productName: input.productName,
     amount: input.purchase.refundedAmount ?? input.purchase.amount,
     currency: input.purchase.currency,
     reason: input.reason,
