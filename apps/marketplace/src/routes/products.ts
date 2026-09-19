@@ -3,6 +3,10 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, resolver, validator } from 'hono-openapi'
 import * as v from 'valibot'
 import { channelFilterInput, channelInput, resolveChannelFilter } from '@/lib/channels'
+import { listCompatibility, toPublicCompatibility } from '@/services/compatibility'
+import { isChannelGated } from '@/services/access'
+import { listReleaseFiles, toPublicReleaseFile } from '@/services/release-files'
+import { describePricing } from '@/lib/pricing'
 import { getDb } from '@/db/client'
 import type { Database } from '@/db/client'
 import type { AppEnv } from '@/env'
@@ -169,7 +173,7 @@ app.get(
   '/products/:slug/releases/:channel/:version',
   describeRoute({
     description:
-      'One published release, addressed by its channel and its version label inside the product. The channel is part of the address because it is part of the key: `1.4.0` can exist as an `rc` and, later, as a `release`.',
+      'One published release, addressed by its channel and its version label inside the product, with its builds and what they run on inlined — this is the view behind "see detail". The channel is part of the address because it is part of the key: `1.4.0` can exist as an `rc` and, later, as a `release`. It carries no per-caller access block on purpose, so it stays cacheable; ask `GET /products/:slug/access?channel=…` for that half.',
     tags: ['Products'],
     responses: {
       200: { description: 'The release note', content: { 'application/json': { schema: resolver(v.object({ code: v.literal(200), data: releaseSchema })) } } },
@@ -189,8 +193,29 @@ app.get(
       throw new HTTPException(404, { message: 'Release not found' })
     }
 
+    // The builds and the requirements are inlined rather than left to two more round trips: this is
+    // the view that renders the download buttons and the "runs on" panel, and it would fetch both
+    // immediately anyway. `object_key` is still absent — `toPublicReleaseFile` cannot carry it.
+    const [compatibility, files] = await Promise.all([
+      listCompatibility(db, release.id),
+      listReleaseFiles(db, { releaseId: release.id, status: 'published' }),
+    ])
+    const pricing = describePricing(product)
+
+    // Fully public and fully cacheable, and carrying **no** per-caller access block. A shared cache
+    // keying only on the URL would otherwise serve one buyer's `can_download: true` to everybody;
+    // the per-person half is `GET /products/:slug/access?channel=…`, which is `no-store`.
     c.header('Cache-Control', `public, max-age=${PUBLIC_CACHE_SECONDS}`)
-    return c.json({ code: 200, data: toPublicRelease(release, locale) })
+    return c.json({
+      code: 200,
+      data: {
+        ...toPublicRelease(release, locale),
+        compatibility: compatibility.map(toPublicCompatibility),
+        files: files.filter((file) => file.uploadedAt !== null).map(toPublicReleaseFile),
+        requires_payment: pricing.requires_payment,
+        channel_requires_purchase: isChannelGated(pricing, channel),
+      },
+    })
   },
 )
 

@@ -180,6 +180,30 @@ const seedReleaseFile = async (seed: ReleaseFileSeed, contents = 'seeded-build-b
   return row
 }
 
+type CompatibilitySeed = Partial<typeof productReleaseCompatibility.$inferInsert> & {
+  productId: string
+  releaseId: string
+}
+
+const seedCompatibility = async (seed: CompatibilitySeed) => {
+  const now = new Date()
+  const row = {
+    id: crypto.randomUUID(),
+    kind: 'os',
+    name: 'macOS',
+    constraintText: '>= 14.0',
+    optional: false,
+    position: 0,
+    createdBy: 'seed@franciscosolis.cl',
+    updatedBy: 'seed@franciscosolis.cl',
+    createdAt: now,
+    updatedAt: now,
+    ...seed,
+  }
+  await db().insert(productReleaseCompatibility).values(row)
+  return row
+}
+
 type PurchaseSeed = Partial<typeof purchases.$inferInsert> & { productId: string; productSlug: string }
 
 const seedPurchase = async (seed: PurchaseSeed) => {
@@ -290,6 +314,8 @@ export {
   purchases,
   readAuditLog,
   saleVouchers,
+  productReleaseCompatibility,
+  seedCompatibility,
   seedProduct,
   seedPurchase,
   seedReleaseFile,

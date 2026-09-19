@@ -20,7 +20,24 @@ type AuditEvent =
   | 'file.uploaded'
   | 'file.updated'
   | 'file.deleted'
+  | 'compatibility.created'
+  | 'compatibility.updated'
+  | 'compatibility.deleted'
+  | 'compatibility.reordered'
   | 'pricing.updated'
+  /**
+   * The moderation half of the trail.
+   *
+   * Hiding and deleting a review are each their own event rather than one `review.moderated`,
+   * because the two are not the same act: one is reversible and one is not, and "how often does
+   * somebody's review get removed here" is a question the answer to matters for.
+   */
+  | 'review.hidden'
+  | 'review.unhidden'
+  | 'review.deleted'
+  | 'review.replied'
+  | 'review.reply_deleted'
+  | 'report.resolved'
   /**
    * The sales half of the trail.
    *
