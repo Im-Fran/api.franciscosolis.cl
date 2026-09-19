@@ -292,6 +292,12 @@ Secrets, set with `wrangler secret put` and listed in `.dev.vars.example` for lo
 | `MERCADOPAGO_WEBHOOK_SECRET` | Verifies notifications. Without it every notification is refused |
 | `DOWNLOAD_SIGNING_KEY` | HMAC key the download tickets are signed with |
 
+In the MercadoPago dashboard, the webhook points at `/pages/payments/mercadopago/webhook` with three
+events enabled: **Pagos (legacy)**, **Order (Mercado Pago)** and **Contracargos**. The first two
+describe the same money in the provider's old and new models and are both accepted so that retiring
+either one is a checkbox; the third is how a dispute arrives in the old model. Anything else is
+acknowledged and dropped.
+
 Bindings: `DB` (D1 `franciscosolis_pages`), `RELEASES` (R2 `franciscosolis-app-releases`, no public
 access of its own) and `AUTH` (service binding to the auth Worker, used only to read its published
 JWKS). Token verification still needs public keys rather than a signing key — this Worker is not an

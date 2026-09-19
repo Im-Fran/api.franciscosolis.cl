@@ -15,6 +15,13 @@
       "when": 1789776890624,
       "tag": "0001_payments_and_downloads",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789781566620,
+      "tag": "0002_chargebacks",
+      "breakpoints": true
     }
   ]
 }

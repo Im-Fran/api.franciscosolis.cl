@@ -241,6 +241,14 @@ const purchases = sqliteTable('purchases', {
   externalReference: text('external_reference').notNull(),
   approvedAt: integer('approved_at', { mode: 'timestamp' }),
   refundedAt: integer('refunded_at', { mode: 'timestamp' }),
+  /**
+   * When the payer's bank took the money back. Kept apart from `refundedAt` for the same reason the
+   * statuses are: a refund is ours, a chargeback is theirs, and only one of them comes with a fee and
+   * a dispute deadline.
+   */
+  chargedBackAt: integer('charged_back_at', { mode: 'timestamp' }),
+  /** MercadoPago's id for the dispute, so a support conversation can be traced to their console. */
+  chargebackId: text('chargeback_id'),
   /** Free-form JSON. Must never carry a card detail, a provider token or an access token. */
   metadata: text('metadata'),
   ...timestamps,

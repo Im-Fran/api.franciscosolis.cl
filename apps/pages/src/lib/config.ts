@@ -30,8 +30,21 @@ const PUBLIC_CACHE_SECONDS = 60
  * Only `approved` grants access. `refunded` is deliberately in the same column rather than a boolean
  * beside it: a refund is the payment's current state, and a row that says both "paid" and "refunded"
  * is a row two code paths will disagree about.
+ *
+ * `charged_back` is kept apart from `refunded` even though both end the entitlement. A refund is us
+ * giving money back; a chargeback is the payer's bank taking it, with a dispute, a deadline and a fee
+ * attached. Collapsing them would make "how often does this get disputed" unanswerable from the data,
+ * and that is the number that decides whether an application should be sold at all.
  */
-const PURCHASE_STATUSES = ['pending', 'in_process', 'approved', 'rejected', 'cancelled', 'refunded'] as const
+const PURCHASE_STATUSES = [
+  'pending',
+  'in_process',
+  'approved',
+  'rejected',
+  'cancelled',
+  'refunded',
+  'charged_back',
+] as const
 type PurchaseStatus = (typeof PURCHASE_STATUSES)[number]
 
 /** The one status that entitles an account to a download. Stated once so nothing widens it locally. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mapPaymentStatus, verifyWebhookSignature } from '@/lib/mercadopago'
+import { mapOrderStatus, mapPaymentStatus, orderPaymentIds, toAmount, verifyWebhookSignature } from '@/lib/mercadopago'
 
 const SECRET = 'test-webhook-secret'
 
@@ -73,14 +73,83 @@ describe('mapPaymentStatus', () => {
     expect(mapPaymentStatus('in_mediation')).toBe('in_process')
   })
 
-  it('maps the refusals and the reversals', () => {
+  it('maps the refusals and the reversals, keeping a dispute apart from a refund', () => {
     expect(mapPaymentStatus('rejected')).toBe('rejected')
     expect(mapPaymentStatus('cancelled')).toBe('cancelled')
     expect(mapPaymentStatus('refunded')).toBe('refunded')
-    expect(mapPaymentStatus('charged_back')).toBe('refunded')
+    // A refund is us giving money back; a chargeback is the payer's bank taking it. Both end the
+    // entitlement, and only one of them comes with a fee and a deadline.
+    expect(mapPaymentStatus('charged_back')).toBe('charged_back')
   })
 
   it('treats a status it has never seen as pending rather than as paid', () => {
     expect(mapPaymentStatus('something_new')).toBe('pending')
+  })
+})
+
+describe('mapOrderStatus', () => {
+  it('treats `processed` and only `processed` as money in', () => {
+    expect(mapOrderStatus('processed')).toBe('approved')
+    for (const status of ['created', 'processing', 'action_required', 'canceled', 'expired', 'failed']) {
+      expect(mapOrderStatus(status)).not.toBe('approved')
+    }
+  })
+
+  it('maps the waiting states', () => {
+    expect(mapOrderStatus('created')).toBe('pending')
+    expect(mapOrderStatus('processing')).toBe('in_process')
+    expect(mapOrderStatus('action_required')).toBe('in_process')
+  })
+
+  it('collapses the two ways of never paying onto one status', () => {
+    // The difference between walking away and running out of time is not one anything downstream
+    // can act on: neither produced a payment.
+    expect(mapOrderStatus('canceled')).toBe('cancelled')
+    expect(mapOrderStatus('expired')).toBe('cancelled')
+  })
+
+  it('maps the reversals and the failures', () => {
+    expect(mapOrderStatus('failed')).toBe('rejected')
+    expect(mapOrderStatus('refunded')).toBe('refunded')
+    expect(mapOrderStatus('charged_back')).toBe('charged_back')
+  })
+
+  it('treats a status it has never seen as pending rather than as paid', () => {
+    expect(mapOrderStatus('something_new')).toBe('pending')
+  })
+})
+
+describe('toAmount', () => {
+  it('reads the orders API\'s string amounts and the payments API\'s numbers alike', () => {
+    expect(toAmount('4990.00')).toBe(4990)
+    expect(toAmount(4990)).toBe(4990)
+  })
+
+  it('rounds to whole pesos, because CLP has no minor unit', () => {
+    expect(toAmount('4990.60')).toBe(4991)
+  })
+
+  it('answers null for an absent or unreadable amount rather than zero', () => {
+    // Zero would be written onto the row as "they paid nothing", which is a different claim.
+    expect(toAmount(null)).toBeNull()
+    expect(toAmount(undefined)).toBeNull()
+    expect(toAmount('not a number')).toBeNull()
+  })
+})
+
+describe('orderPaymentIds', () => {
+  it('pulls the payment ids out of an order, as strings', () => {
+    expect(
+      orderPaymentIds({
+        id: 'ORD01',
+        status: 'processed',
+        transactions: { payments: [{ id: 123 }, { id: '456' }] },
+      }),
+    ).toEqual(['123', '456'])
+  })
+
+  it('answers empty for an order nobody has paid yet', () => {
+    expect(orderPaymentIds({ id: 'ORD01', status: 'created' })).toEqual([])
+    expect(orderPaymentIds({ id: 'ORD01', status: 'created', transactions: { payments: null } })).toEqual([])
   })
 })
