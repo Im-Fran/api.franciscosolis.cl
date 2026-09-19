@@ -7,6 +7,7 @@ import { listCompatibility, toPublicCompatibility } from '@/services/compatibili
 import { isChannelGated } from '@/services/access'
 import { listReleaseFiles, toPublicReleaseFile } from '@/services/release-files'
 import { describePricing } from '@/lib/pricing'
+import { buildOverview } from '@/services/overview'
 import { getDb } from '@/db/client'
 import type { Database } from '@/db/client'
 import type { AppEnv } from '@/env'
@@ -113,6 +114,40 @@ app.get(
 
     c.header('Cache-Control', `public, max-age=${PUBLIC_CACHE_SECONDS}`)
     return c.json({ code: 200, data: toPublicProduct(product, locale) })
+  },
+)
+
+const overviewResponseSchema = v.object({
+  code: v.literal(200),
+  data: v.looseObject({
+    product: v.looseObject({ id: v.string(), slug: v.string(), name: v.string() }),
+    stats: v.looseObject({ download_count: v.number(), view_count: v.number() }),
+    rating: v.looseObject({ average: v.nullable(v.number()), count: v.number() }),
+    latest_version: v.nullable(v.looseObject({ version: v.string() })),
+  }),
+})
+
+app.get(
+  '/products/:slug/overview',
+  describeRoute({
+    description:
+      'The panel beside the Overview tab, in one request: the category, the download and purchase counts, the first and last release dates, the star rating and how many releases sit on each channel — plus the latest stable version with its own date, counts, rating and compatibility list. It is chrome beside the banner rather than a tab, which is why it has a route of its own and no entry in the tab registry.',
+    tags: ['Products'],
+    responses: {
+      200: { description: 'The overview panel', content: { 'application/json': { schema: resolver(overviewResponseSchema) } } },
+      404: { description: 'No published product with that slug' },
+    },
+  }),
+  validator('query', v.object({ locale: localeQuery })),
+  async (c) => {
+    const { locale = DEFAULT_LOCALE } = c.req.valid('query')
+    const db = getDb(c.env)
+    const product = await requirePublishedProduct(db, c.req.param('slug'))
+
+    const overview = await buildOverview(db, product, locale)
+
+    c.header('Cache-Control', `public, max-age=${PUBLIC_CACHE_SECONDS}`)
+    return c.json({ code: 200, data: overview })
   },
 )
 

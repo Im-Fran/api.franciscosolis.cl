@@ -12,6 +12,7 @@ import {
   resolveLocale,
   type Locale,
 } from '@/lib/locales'
+import { describeCategory } from '@/lib/categories'
 import { describePricing } from '@/lib/pricing'
 import { parseTabs } from '@/lib/tabs'
 
@@ -55,6 +56,10 @@ const toPublicProduct = (product: Product, requested: Locale = DEFAULT_LOCALE) =
     accent_color: product.accentColor,
     tabs: parseTabs(product.tabs),
     links: parseLinks(product.links),
+    // Structure rather than prose: the key is the same fact in every language, and its label is a
+    // front-end translation of a registry entry, exactly as a tab's name is. It never enters a
+    // `TRANSLATABLE_FIELDS` set.
+    category: describeCategory(product.category),
     // Derived rather than raw: `describePricing` nulls the price of a product that is no longer
     // paid, so a listing can never quote a figure for something currently free. See `lib/pricing.ts`.
     pricing: describePricing(product),
