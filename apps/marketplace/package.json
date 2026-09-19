@@ -2,7 +2,7 @@
   "name": "marketplace",
   "type": "module",
   "license": "GPL-3.0-only",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "scripts": {
     "dev": "wrangler dev --ip 0.0.0.0 --port 8794 --inspector-port 9235",
     "build": "wrangler deploy --dry-run --outdir dist",
