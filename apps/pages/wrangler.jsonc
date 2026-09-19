@@ -31,6 +31,16 @@
       "bucket_name": "franciscosolis-app-releases"
     }
   ],
+  // Workers AI, and the only thing this Worker asks it for: a first-draft translation of one prose
+  // field, offered in the editor's translation modal and saved like any other override. It is never
+  // on the path that saves a record — see `src/routes/admin/translate.ts`.
+  //
+  // Workers AI has no local simulation, so it always runs against the real service. That is also
+  // why the `test` environment below leaves this binding out: the Vitest pool answers an `ai`
+  // binding by opening a remote proxy session against the real account.
+  "ai": {
+    "binding": "AI"
+  },
   "services": [
     {
       // Only ever asked for `/.well-known/jwks.json`, and a binding rather than a public fetch for
@@ -65,7 +75,10 @@
     "PAGES_PUBLIC_URL": "https://api.franciscosolis.cl/pages",
     // Website the buyer is returned to after checkout. `back_urls` point at pages here, never at the
     // API: a person coming back from MercadoPago should land on the application page.
-    "SITE_BASE_URL": "https://franciscosolis.cl"
+    "SITE_BASE_URL": "https://franciscosolis.cl",
+    // Workers AI model behind the translation drafts. A var rather than a constant so a model that
+    // Cloudflare retires — on their schedule, not ours — is a deploy rather than a code change.
+    "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
   },
   "observability": {
     "enabled": true,
@@ -109,6 +122,9 @@
           "bucket_name": "franciscosolis-app-releases-dev"
         }
       ],
+      "ai": {
+        "binding": "AI"
+      },
       "services": [
         {
           "binding": "AUTH",
@@ -125,7 +141,54 @@
         // development stack: the notification URL is built from the first, and a buyer returning
         // from checkout lands on the second.
         "PAGES_PUBLIC_URL": "https://api-dev.franciscosolis.cl/pages",
-        "SITE_BASE_URL": "https://dev.franciscosolis.cl"
+        "SITE_BASE_URL": "https://dev.franciscosolis.cl",
+        "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+      }
+    },
+    // The environment the test suite runs against, and the only reason it exists is the `ai`
+    // binding above. Workers AI has no local emulation, so @cloudflare/vitest-pool-workers responds
+    // to that binding by opening a *remote proxy session* against the real account — which needs a
+    // CLOUDFLARE_API_TOKEN, which CI deliberately does not have, and which would bill real neurons
+    // for a unit test either way. A named environment inherits nothing, so everything the suite
+    // needs is restated here and the binding that must not be reached is simply absent.
+    //
+    // The suite supplies its own `env.AI` by assignment instead — see `test/helpers/ai.ts`. That has
+    // the useful property that any code path reaching the real service in a test throws loudly, and
+    // it is the same technique already used for the AUTH service binding.
+    //
+    // The MercadoPago credentials are secrets and therefore absent here too, which is wanted: a
+    // suite that could reach the provider would be one bad mock away from creating a real
+    // preference. `test/helpers/` supplies them per test file.
+    "test": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_pages",
+          "database_id": "9fe9b5de-c4aa-42e9-88a5-72347ca41712",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "RELEASES",
+          "bucket_name": "franciscosolis-app-releases"
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth"
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.test/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://auth.test",
+        "PAGES_ALLOWED_AUDIENCES": "franciscosolis-cms",
+        "PAGES_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+        "PAGES_ACCOUNT_AUDIENCES": "franciscosolis-web",
+        "PAGES_PUBLIC_URL": "https://api.test/pages",
+        "SITE_BASE_URL": "https://site.test",
+        "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       }
     }
   }

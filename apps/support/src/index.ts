@@ -11,6 +11,7 @@ import {
   TICKET_PRIORITY,
   TICKET_SOURCE,
   TICKET_STATUS,
+  TRANSLATION,
 } from '@/lib/config'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
 
@@ -71,6 +72,12 @@ const rootResponseSchema = v.object({
     timeline_events: v.array(v.string()),
     locales: v.array(v.string()),
     default_locale: v.string(),
+    translation: v.object({
+      /** Whether machine-translation drafts are offered. False would mean the console hides the button. */
+      ai: v.boolean(),
+      /** Longest source text `POST /admin/translate` accepts, in characters. */
+      max_source_chars: v.number(),
+    }),
   }),
 })
 
@@ -101,6 +108,13 @@ app.get(
         timeline_events: [...TICKET_EVENTS],
         locales: [...LOCALES],
         default_locale: DEFAULT_LOCALE,
+        // Advertised for the same reason as the locale list: the console's translation modal only
+        // offers to draft a field with Workers AI when the service it is talking to says it can,
+        // and only up to the length that service will actually accept.
+        translation: {
+          ai: true,
+          max_source_chars: TRANSLATION.maxSourceChars,
+        },
       },
     }),
 )

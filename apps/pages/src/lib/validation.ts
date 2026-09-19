@@ -1,5 +1,5 @@
 import * as v from 'valibot'
-import { BODY_LIMITS, PAGINATION } from '@/lib/config'
+import { BODY_LIMITS, PAGINATION, TRANSLATABLE_FIELD_LIMITS } from '@/lib/config'
 import {
   APPLICATION_TRANSLATABLE_FIELDS,
   TRANSLATION_LOCALES,
@@ -65,20 +65,20 @@ const proseBody = (max: number) => v.optional(v.nullable(v.pipe(v.string(), v.ma
 
 /** Length caps mirror the source columns, so a translation is never allowed to outgrow its source. */
 const applicationTranslations = translationsFor({
-  name: prose(120),
-  tagline: prose(200),
-  summary: prose(600),
+  name: prose(TRANSLATABLE_FIELD_LIMITS.name),
+  tagline: prose(TRANSLATABLE_FIELD_LIMITS.tagline),
+  summary: prose(TRANSLATABLE_FIELD_LIMITS.summary),
   overview_body: proseBody(BODY_LIMITS.page),
   contact_body: proseBody(BODY_LIMITS.page),
 })
 
 const updateTranslations = translationsFor({
-  title: prose(200),
+  title: prose(TRANSLATABLE_FIELD_LIMITS.title),
   body: proseBody(BODY_LIMITS.update),
 })
 
 const wikiTranslations = translationsFor({
-  title: prose(200),
+  title: prose(TRANSLATABLE_FIELD_LIMITS.title),
   body: proseBody(BODY_LIMITS.page),
 })
 

@@ -46,6 +46,16 @@
       ]
     }
   ],
+  // Workers AI, and the only thing this Worker asks it for: a first-draft translation of one prose
+  // field, offered in the editor's translation modal and saved like any other override. It is never
+  // on the path that saves a record — see `src/routes/admin/translate.ts`.
+  //
+  // Workers AI has no local simulation, so it always runs against the real service. That is also
+  // why the `test` environment below leaves this binding out: the Vitest pool answers an `ai`
+  // binding by opening a remote proxy session against the real account.
+  "ai": {
+    "binding": "AI"
+  },
   "services": [
     {
       // Only ever asked for `/.well-known/jwks.json`. It is a binding rather than a public fetch
@@ -73,7 +83,10 @@
     "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
     "MAIL_FROM_NAME": "Francisco Solis",
     // Senders an editor may pick per message. Subset of `allowed_sender_addresses`.
-    "MAIL_ALLOWED_SENDERS": "hola@mail.franciscosolis.cl,no-reply@mail.franciscosolis.cl"
+    "MAIL_ALLOWED_SENDERS": "hola@mail.franciscosolis.cl,no-reply@mail.franciscosolis.cl",
+    // Workers AI model behind the translation drafts. A var rather than a constant so a model that
+    // Cloudflare retires — on their schedule, not ours — is a deploy rather than a code change.
+    "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
   },
   "observability": {
     "enabled": true,
@@ -112,6 +125,9 @@
           ]
         }
       ],
+      "ai": {
+        "binding": "AI"
+      },
       "services": [
         {
           "binding": "AUTH",
@@ -125,7 +141,52 @@
         "CMS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
         "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
         "MAIL_FROM_NAME": "Francisco Solis (dev)",
-        "MAIL_ALLOWED_SENDERS": "hola@mail.franciscosolis.cl,no-reply@mail.franciscosolis.cl"
+        "MAIL_ALLOWED_SENDERS": "hola@mail.franciscosolis.cl,no-reply@mail.franciscosolis.cl",
+        "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+      }
+    },
+    // The environment the test suite runs against, and the only reason it exists is the `ai`
+    // binding above. Workers AI has no local emulation, so @cloudflare/vitest-pool-workers responds
+    // to that binding by opening a *remote proxy session* against the real account — which needs a
+    // CLOUDFLARE_API_TOKEN, which CI deliberately does not have, and which would bill real neurons
+    // for a unit test either way. A named environment inherits nothing, so everything the suite
+    // needs is restated here and the binding that must not be reached is simply absent.
+    //
+    // The suite supplies its own `env.AI` by assignment instead — see `test/helpers/ai.ts`. That has
+    // the useful property that any code path reaching the real service in a test throws loudly.
+    "test": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_cms",
+          "database_id": "ca36fa0f-aa0d-4955-87b3-285a462a8e91",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "hola@mail.franciscosolis.cl",
+            "no-reply@mail.franciscosolis.cl"
+          ]
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth"
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.test/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://auth.test",
+        "CMS_ALLOWED_AUDIENCES": "franciscosolis-cms",
+        "CMS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+        "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "Francisco Solis",
+        "MAIL_ALLOWED_SENDERS": "hola@mail.franciscosolis.cl,no-reply@mail.franciscosolis.cl",
+        "AI_TEXT_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
       }
     }
   }

@@ -1,5 +1,5 @@
 import * as v from 'valibot'
-import { BODY_LIMITS, PAGINATION } from '@/lib/config'
+import { BODY_LIMITS, PAGINATION, TRANSLATABLE_FIELD_LIMITS } from '@/lib/config'
 import {
   ARTICLE_TRANSLATABLE_FIELDS,
   CATEGORY_TRANSLATABLE_FIELDS,
@@ -73,8 +73,8 @@ const proseBody = (max: number) => v.optional(v.nullable(v.pipe(v.string(), v.ma
 
 /** Length caps mirror the source columns, so a translation is never allowed to outgrow its source. */
 const articleTranslations = translationsFor({
-  title: prose(200),
-  summary: prose(600),
+  title: prose(TRANSLATABLE_FIELD_LIMITS.title),
+  summary: prose(TRANSLATABLE_FIELD_LIMITS.summary),
   body: proseBody(BODY_LIMITS.article),
 })
 
@@ -84,8 +84,8 @@ const categoryTranslations = translationsFor({
 })
 
 const labelTranslations = translationsFor({
-  name: prose(60),
-  description: prose(300),
+  name: prose(TRANSLATABLE_FIELD_LIMITS.name),
+  description: prose(TRANSLATABLE_FIELD_LIMITS.description),
 })
 
 /**

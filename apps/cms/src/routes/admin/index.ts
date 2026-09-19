@@ -12,6 +12,7 @@ import content from '@/routes/admin/content'
 import emailTemplates from '@/routes/admin/email-templates'
 import emails from '@/routes/admin/emails'
 import legal from '@/routes/admin/legal'
+import translate from '@/routes/admin/translate'
 
 /**
  * Editorial API, mounted under `/admin`.
@@ -116,5 +117,6 @@ app.route('/', content)
 app.route('/', legal)
 app.route('/', emailTemplates)
 app.route('/', emails)
+app.route('/', translate)
 
 export default app
