@@ -204,6 +204,77 @@ const seedCompatibility = async (seed: CompatibilitySeed) => {
   return row
 }
 
+type ReviewSeed = Partial<typeof productReviews.$inferInsert> & { productId: string }
+
+const seedReview = async (seed: ReviewSeed) => {
+  const now = new Date()
+  const row = {
+    id: crypto.randomUUID(),
+    releaseId: null,
+    releaseVersion: null,
+    releaseChannel: null,
+    anchoredAt: now,
+    userId: seed.userId ?? `reviewer-${crypto.randomUUID().slice(0, 8)}`,
+    email: 'reviewer@example.com',
+    authorName: 'A Reviewer',
+    rating: 5,
+    title: 'Seeded review',
+    body: 'Seeded body',
+    status: 'visible',
+    reportCount: 0,
+    replyBody: null,
+    replyBy: null,
+    replyAt: null,
+    replyUpdatedAt: null,
+    createdAt: now,
+    updatedAt: now,
+    ...seed,
+  }
+  await db().insert(productReviews).values(row)
+  return row
+}
+
+type ReportSeed = Partial<typeof productReviewReports.$inferInsert> & { reviewId: string; productId: string }
+
+const seedReport = async (seed: ReportSeed) => {
+  const row = {
+    id: crypto.randomUUID(),
+    reporterUserId: `reporter-${crypto.randomUUID().slice(0, 8)}`,
+    reporterEmail: 'reporter@example.com',
+    reason: 'spam',
+    note: null,
+    status: 'open',
+    createdAt: new Date(),
+    ...seed,
+  }
+  await db().insert(productReviewReports).values(row)
+  return row
+}
+
+type DownloadEventSeed = Partial<typeof downloadEvents.$inferInsert> & { productId: string }
+
+/** A download on record, which is the second of the two ways a review becomes eligible. */
+const seedDownloadEvent = async (seed: DownloadEventSeed) => {
+  const row = {
+    id: crypto.randomUUID(),
+    fileId: crypto.randomUUID(),
+    productSlug: 'seeded-app',
+    releaseId: crypto.randomUUID(),
+    version: '1.0.0',
+    channel: 'release',
+    filename: 'seeded.zip',
+    userId: null,
+    purchaseId: null,
+    paid: false,
+    ip: null,
+    userAgent: null,
+    createdAt: new Date(),
+    ...seed,
+  }
+  await db().insert(downloadEvents).values(row)
+  return row
+}
+
 type PurchaseSeed = Partial<typeof purchases.$inferInsert> & { productId: string; productSlug: string }
 
 const seedPurchase = async (seed: PurchaseSeed) => {
@@ -315,7 +386,12 @@ export {
   readAuditLog,
   saleVouchers,
   productReleaseCompatibility,
+  productReviewReports,
+  productReviews,
   seedCompatibility,
+  seedDownloadEvent,
+  seedReport,
+  seedReview,
   seedProduct,
   seedPurchase,
   seedReleaseFile,

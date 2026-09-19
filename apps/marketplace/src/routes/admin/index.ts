@@ -15,6 +15,7 @@ import sales from '@/routes/admin/sales'
 import translate from '@/routes/admin/translate'
 import compatibility from '@/routes/admin/compatibility'
 import releases from '@/routes/admin/releases'
+import reviews from '@/routes/admin/reviews'
 import wiki from '@/routes/admin/wiki'
 
 /**
@@ -119,6 +120,7 @@ app.get(
 app.route('/', products)
 app.route('/', releases)
 app.route('/', compatibility)
+app.route('/', reviews)
 app.route('/', wiki)
 app.route('/', files)
 app.route('/', purchases)
