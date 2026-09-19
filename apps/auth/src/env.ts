@@ -57,6 +57,15 @@ type Env = {
 
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
+
+  /**
+   * Cloudflare Turnstile site key, the public half. It is a var rather than a secret because the
+   * sign-in front-end renders it into a widget, and it is optional because a deployment without it
+   * simply does not challenge: `lib/turnstile.ts` skips the check when either half is missing.
+   */
+  TURNSTILE_SITE_KEY?: string
+  /** Turnstile secret key, the half that verifies a token against Cloudflare. Secret. */
+  TURNSTILE_SECRET_KEY?: string
 }
 
 /** Values `requireAuth` puts on the Hono context for downstream handlers. */

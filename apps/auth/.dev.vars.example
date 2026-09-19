@@ -20,3 +20,10 @@ AUTH_ISSUER=http://localhost:8787/auth
 # appended as ?request=. This Worker renders no pages, so leaving it unset falls back to the
 # production front-end (https://franciscosolis.cl/apps/auth) rather than to a local screen.
 AUTH_LOGIN_URL=http://localhost:5173/apps/auth
+
+# Cloudflare Turnstile (https://dash.cloudflare.com → Turnstile). Both halves are needed before
+# anything is challenged: the site key is what the sign-in front-end renders, the secret key is what
+# verifies the token here. Leaving them unset is supported and is what a local run normally does —
+# `lib/turnstile.ts` skips the check when either is missing, rather than refusing every sign-in.
+TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=

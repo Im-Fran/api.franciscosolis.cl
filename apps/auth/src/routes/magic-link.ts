@@ -5,6 +5,7 @@ import { getDb } from '@/db/client'
 import type { AppEnv } from '@/env'
 import { CODE_CHALLENGE_METHOD, TTL } from '@/lib/config'
 import { buildErrorRedirect, OAuthException, RedirectValidationException } from '@/lib/errors'
+import { verifyTurnstile } from '@/lib/turnstile'
 import { consumeMagicLinkToken, requestMagicLink } from '@/providers/magic-link'
 import {
   assertGrantAllowed,
@@ -27,6 +28,13 @@ const requestSchema = v.object({
   code_challenge: v.optional(v.string()),
   code_challenge_method: v.optional(v.literal(CODE_CHALLENGE_METHOD)),
   scope: v.optional(v.string()),
+  /**
+   * Cloudflare Turnstile token, required whenever this deployment is configured with a pair of
+   * Turnstile keys. It is optional in the schema rather than required because a deployment with no
+   * keys — a local Worker, the test suite — does not challenge at all; `verifyTurnstile` is what
+   * refuses a missing one where it matters.
+   */
+  turnstile_token: v.optional(v.string()),
 })
 
 const requestResponseSchema = v.object({
@@ -41,14 +49,15 @@ app.post(
   '/magic-link',
   describeRoute({
     description:
-      'Starts a magic link sign-in. Always answers 202 regardless of whether the address exists or was invited, so this endpoint cannot be used to discover which addresses have an account. The link is emailed and is valid once.',
+      'Starts a magic link sign-in. Always answers 202 regardless of whether the address exists or was invited, so this endpoint cannot be used to discover which addresses have an account. The link is emailed and is valid once. Where Turnstile is configured — `turnstile.required` on `GET /` says whether it is — a `turnstile_token` from the widget is required, and a request without a valid one is refused before anything is written or sent.',
     tags: ['Magic Link'],
     responses: {
       202: {
         description: 'The request was accepted; an email is sent only if the address may sign in',
         content: { 'application/json': { schema: resolver(requestResponseSchema) } },
       },
-      400: { description: 'Invalid client, redirect URI or PKCE parameters' },
+      400: { description: 'Invalid client, redirect URI or PKCE parameters, or a Turnstile token that did not pass' },
+      503: { description: 'The Turnstile check could not be completed' },
     },
   }),
   validator('json', requestSchema),
@@ -58,6 +67,10 @@ app.post(
     const context = getRequestContext(c)
 
     const { application, redirectUri } = await resolveClient(db, body.client_id, body.redirect_uri)
+    // Before the client is even resolved this endpoint is a way to have mail sent to an arbitrary
+    // address, and with registration open it is also a way to create accounts. The bot check
+    // therefore runs ahead of everything that writes or sends.
+    await verifyTurnstile(c.env, body.turnstile_token, context.ip)
     assertGrantAllowed(application, 'authorization_code')
     const pkce = validatePkceParameters(application, body.code_challenge, body.code_challenge_method)
     const scope = normalizeScope(body.scope, application)

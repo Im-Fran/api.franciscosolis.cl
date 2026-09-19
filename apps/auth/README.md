@@ -55,6 +55,17 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
   how the person authenticated, when it happened, the device the user agent describes, the city and
   country Cloudflare placed the request in, and the IP address. It is sent on a best effort: a
   message that cannot be delivered is logged and never fails the sign-in it reports on.
+- **Registration is a switch, not a deploy** — sign-up is invitation-only by default, and an
+  administrator can open it from `PATCH /admin/settings` (`registration_open`) or the console's
+  checkbox. Open means an address nobody invited creates an account on its first verified sign-in;
+  closed is the original behaviour, and closing it again refuses the next sign-up — including a
+  magic link emailed while it was open, because the setting is read again when the link is used.
+  Accounts that already exist are never touched either way.
+- **Turnstile on the way in** — where a Cloudflare Turnstile keypair is configured, the two
+  endpoints that start a magic link sign-in require a token from the widget and verify it against
+  Cloudflare before anything is written or sent. A deployment with no keypair challenges nobody, so
+  a local Worker and the test suite behave exactly as they did before; a Cloudflare that cannot be
+  reached refuses rather than waves the request through.
 - **OpenID Connect** — `id_token` with `nonce`, `at_hash`, `auth_time`, `sid` and `groups`, a
   UserInfo endpoint, token introspection, RP-initiated logout and a discovery document published
   at both `/.well-known/openid-configuration` and `/.well-known/oauth-authorization-server`.
@@ -155,6 +166,13 @@ OAuth client.
 | `AUTH_PUBLIC_URL` | `wrangler.jsonc` var | Public base URL, e.g. `https://api.franciscosolis.cl/auth` |
 | `AUTH_ISSUER` | `wrangler.jsonc` var | `iss` claim of issued access tokens |
 | `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | `wrangler.jsonc` var | Sender identity for outgoing email |
+| `TURNSTILE_SITE_KEY` | `wrangler.jsonc` var, optional | Public half of the Turnstile keypair, rendered by the sign-in front-end |
+| `TURNSTILE_SECRET_KEY` | secret, optional | Private half, used to verify a widget token against Cloudflare |
+
+Turnstile is off until **both** halves are present, which is what lets a local Worker and the test
+suite sign in without a keypair. Create one widget per environment (its token is bound to the
+hostnames it was created for), put the site key in the `vars` of the matching half of
+`wrangler.jsonc`, and the secret key in that environment's secret store.
 
 In production, set the secrets with Wrangler:
 
@@ -163,6 +181,7 @@ cd apps/auth
 pnpm exec wrangler secret put JWT_PRIVATE_KEY
 pnpm exec wrangler secret put GOOGLE_CLIENT_ID
 pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
+pnpm exec wrangler secret put TURNSTILE_SECRET_KEY   # only if you challenge on this deployment
 ```
 
 ### 2. Set up the database
@@ -184,8 +203,9 @@ and `http://localhost:5173/auth/callback`).
 
 ### 3. Create the first administrator
 
-Sign-up is invitation-only and nothing in the environment bypasses that, so the first account is
-seeded straight into the database:
+Sign-up is invitation-only out of the box and nothing in the environment bypasses that — opening
+registration is a setting an administrator writes, which needs an administrator first — so the first
+account is seeded straight into the database:
 
 ```bash
 cd apps/auth
@@ -448,8 +468,10 @@ Then, in the Cloudflare dashboard, add a generic OIDC identity provider with the
 | Claims | `groups` (role slugs), `email`, `name` |
 
 Group rules read the `groups` claim, which carries this service's role slugs, so an Access policy
-can be written against a role granted here. Note that sign-up stays invitation-only: an address
-Access sends over that has no account and no pending invitation is refused, deliberately.
+can be written against a role granted here. Note what sign-up does here: with registration closed —
+the default — an address Access sends over that has no account and no pending invitation is refused,
+deliberately. Opening registration widens that to anybody Google or a magic link can verify an
+address for, which is a decision about who may reach the applications behind Access too.
 
 ---
 
@@ -461,7 +483,7 @@ All paths are relative to `https://api.franciscosolis.cl/auth`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | Service status and the available providers |
+| `GET` | `/` | Service status, the available providers, whether registration is open and the Turnstile site key |
 | `GET` | `/.well-known/jwks.json` | Public keys for offline access token verification |
 | `GET` | `/.well-known/oauth-authorization-server` | RFC 8414 metadata |
 | `GET` | `/.well-known/openid-configuration` | The same document, under its OpenID Connect name |
@@ -570,6 +592,8 @@ enumerate their own countries, networks and devices first. Three guarantees are 
 | `POST` | `/admin/avatars/:id/reject` | `avatars:review` |
 | `GET` | `/admin/audit` | `audit:read` |
 | `GET` | `/admin/audit/events` | `audit:read` |
+| `GET` | `/admin/settings` | `settings:read` |
+| `PATCH` | `/admin/settings` | `settings:write` |
 
 `GET /admin/me` is the one admin route that names no permission: it answers whether the caller
 belongs in an administration interface at all, which is the question asked before a panel has been
@@ -581,7 +605,7 @@ Three of the write routes refuse a request that would make the API unusable from
 
 - `DELETE /admin/roles/:id` is refused when it is the last role anybody holds that carries
   `roles:write`. Every other permission can be granted again afterwards; that one cannot.
-- `DELETE /admin/permissions/:id` is refused for the thirteen slugs this Worker guards its own routes
+- `DELETE /admin/permissions/:id` is refused for the fifteen slugs this Worker guards its own routes
   with (`GUARDED_PERMISSIONS` in `src/lib/config.ts`). Deleting one takes no capability away from
   anybody — it leaves a guard nothing can satisfy. Permissions created through `POST` are for other
   services to check, since they travel in the access token, and delete freely.
@@ -609,6 +633,7 @@ Three of the write routes refuse a request that would make the API unusable from
 | `sessions` / `refresh_tokens` | Sign-ins and their rotating token chains, one per application |
 | `sso_sessions` | A browser's session with this server: what "Authorize" stands on |
 | `avatar_uploads` | Uploaded avatars and where each one stands with the reviewers |
+| `settings` | Operational settings as key/value text — today, whether registration is open |
 | `audit_logs` | Append-only trail of security-relevant events |
 
 Every user-facing token is stored only as a SHA-256 hash.

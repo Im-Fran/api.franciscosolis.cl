@@ -15,6 +15,10 @@ describe('GET /', () => {
       data: {
         message: 'Hello, Auth!',
         issuer: env.AUTH_ISSUER,
+        // The suite carries no Turnstile keypair, so the deployment it exercises challenges nobody
+        // — the same shape a local Worker has.
+        registration_open: false,
+        turnstile: { required: false, site_key: null },
         providers: [
           { name: 'magic_link', display_name: 'Magic Link', initiation: 'email', start_path: '/magic-link', available: true },
           {

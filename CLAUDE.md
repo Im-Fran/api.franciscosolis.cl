@@ -417,6 +417,14 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   cookie makes the *second* application an "Authorize" rather than a sign-in — no credential, no
   email — `apps/auth` emails the account holder a notice of every access it grants, sign-in and
   authorization alike (`apps/auth/src/services/notifications.ts`).
+- **Who may create an account is a row in `apps/auth`, not configuration**: sign-up is
+  invitation-only until an administrator turns `registration_open` on through
+  `PATCH /auth/admin/settings` (the console has a checkbox for it), and the two endpoints that start
+  a magic link sign-in sit behind **Cloudflare Turnstile** wherever a keypair is configured — which
+  is what stops an open registration from being a mailing endpoint with an account generator behind
+  it. Both are per environment and per database: dev can be open while production is closed, and a
+  deployment with no Turnstile keypair (a local run, the suite) challenges nobody rather than
+  refusing everybody. See `apps/auth/CLAUDE.md`.
 - **The gateway's CORS allows write verbs because of auth**: `apps/api` used to allow `GET`
   only; sign-in, token exchange and the admin API need `POST`/`PATCH`/`DELETE`. The origin
   allowlist must stay locked down — but `/auth/*` is excluded from it entirely (`ownsCors` in

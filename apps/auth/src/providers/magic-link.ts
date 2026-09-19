@@ -7,6 +7,7 @@ import { generateId, randomToken, sha256 } from '@/lib/crypto'
 import { OAuthException } from '@/lib/errors'
 import { magicLinkTemplate, sendEmail } from '@/services/email'
 import { findPendingInvitation } from '@/services/invitations'
+import { isRegistrationOpen } from '@/services/settings'
 import { findUserByEmail, normalizeEmail } from '@/services/users'
 import type { AuthorizationRequest, ProviderDescriptor, ProviderProfile } from '@/providers/types'
 
@@ -31,9 +32,10 @@ const countRecentRequests = async (db: Database, email: string) => {
 }
 
 /**
- * Decides whether an address is allowed to receive a link. Sign-up is invitation-only, so an
- * address that matches no user and no pending invitation gets nothing — but the caller still
- * answers 202, so this never becomes an account-enumeration oracle.
+ * Decides whether an address is allowed to receive a link. Sign-up is invitation-only unless the
+ * `registration_open` setting says otherwise, so an address that matches no user and no pending
+ * invitation gets nothing while registration is closed — but the caller still answers 202, so this
+ * never becomes an account-enumeration oracle either way.
  */
 const canReceiveMagicLink = async (db: Database, email: string, applicationId: string) => {
   const user = await findUserByEmail(db, email)
@@ -41,7 +43,14 @@ const canReceiveMagicLink = async (db: Database, email: string, applicationId: s
     return { allowed: user.status === 'active', userId: user.id, reason: user.status === 'active' ? null : 'disabled' }
   }
   const invitation = await findPendingInvitation(db, email, applicationId)
-  return { allowed: invitation !== null, userId: null, reason: invitation ? null : 'not_invited' }
+  if (invitation) {
+    return { allowed: true, userId: null, reason: null }
+  }
+  // Registration being open is what makes a link to an unknown address a sign-up rather than mail
+  // sent to somebody who cannot use it. `resolveUserForProfile` re-reads the setting when the link
+  // is clicked, so closing registration in between refuses the sign-up rather than honouring it.
+  const open = await isRegistrationOpen(db)
+  return { allowed: open, userId: null, reason: open ? null : 'not_invited' }
 }
 
 type RequestMagicLinkInput = {
