@@ -52,6 +52,18 @@
       ]
     }
   ],
+  // Events for `apps/notifications`: a sign-in, an authorization, an avatar decision. A queue and not
+  // a service binding because `notifications` binds `AUTH` to reach the JWKS, and a binding back
+  // from here would make each Worker's first deploy wait on the other. A queue is not a Worker, so
+  // it only has to exist before this deploys, and the consumer can be down without this noticing.
+  "queues": {
+    "producers": [
+      {
+        "binding": "NOTIFICATIONS_QUEUE",
+        "queue": "franciscosolis-notifications"
+      }
+    ]
+  },
   "vars": {
     // Public base URL this Worker is reachable at. It is NOT derived from the incoming
     // request because the Worker is only reachable through the `api` gateway's service
@@ -127,6 +139,16 @@
           ]
         }
       ],
+      // The development queue, drained by `notifications-dev`. Publishing a dev sign-in onto the
+      // production queue would put it in a real account's notification list.
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS_QUEUE",
+            "queue": "franciscosolis-notifications-dev"
+          }
+        ]
+      },
       "vars": {
         "AUTH_PUBLIC_URL": "https://api-dev.franciscosolis.cl/auth",
         "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",

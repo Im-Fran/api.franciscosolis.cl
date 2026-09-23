@@ -10,8 +10,9 @@ import { parseReplyAddress, sha256 } from '@/lib/tokens'
 import { extractFromEmail } from '@/services/ai'
 import { recordSystemAudit } from '@/services/audit'
 import { sendTicketReceived } from '@/services/email'
-import { inboundFromSender } from '@/services/rate-limit'
 import { cancelNotificationsFor } from '@/services/notifications'
+import { notifyTicketReply } from '@/services/notify'
+import { inboundFromSender } from '@/services/rate-limit'
 import {
   addMessage,
   createTicket,
@@ -209,6 +210,12 @@ const ingestEmail = async (db: Database, env: Env, message: InboundMessage): Pro
     if (!authorIsAgent) {
       // They answered, so whatever we were about to email them about, they have read.
       await cancelNotificationsFor(db, matched.id, from, 'author_replied_by_email')
+    } else {
+      // An agent answering from their mail client is still the team answering in public, so the
+      // requester's account hears about it the same way it would for a reply typed in the console.
+      // No name: the envelope's display name is whatever the agent's mail client says, and the
+      // consumer has a better default for "the support team" than a guess.
+      await notifyTicketReply(env, matched, { email: from, name: null, userId: null })
     }
     if (matched.status === 'solved' || matched.status === 'closed') {
       await recordEvent(db, {

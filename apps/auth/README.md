@@ -50,11 +50,18 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
   `prompt=login`/`select_account` and an exceeded `max_age` force a fresh authentication, and
   `GET /oauth/logout` ends the session and clears the cookie.
 - **Access notifications** — every time an application gains access to an account, the account
-  holder is emailed: a sign-in, and equally an application authorized from a session the browser
+  holder is told: a sign-in, and equally an application authorized from a session the browser
   already had, which is the one that needs no credential at all. The notice names the application,
   how the person authenticated, when it happened, the device the user agent describes, the city and
-  country Cloudflare placed the request in, and the IP address. It is sent on a best effort: a
-  message that cannot be delivered is logged and never fails the sign-in it reports on.
+  country Cloudflare placed the request in, and the IP address. It is published as an
+  `account.sign_in` / `account.authorization` event on the `franciscosolis-notifications` queue, and
+  `apps/notifications` delivers it — in the site's bell, by push, and by email immediately or in a
+  digest, as the account holder chose. When the queue refuses the event, this Worker emails the
+  notice itself as it always did, because a security notice must not be lost to an outage. Either
+  way it never fails the sign-in it reports on.
+- **Avatar decisions reach the owner** — approving or rejecting an upload publishes
+  `account.avatar_approved` / `account.avatar_rejected` (with the reason) for the account it belongs
+  to, so a rejection no longer reads as the picture silently vanishing.
 - **Registration is a switch, not a deploy** — sign-up is invitation-only by default, and an
   administrator can open it from `PATCH /admin/settings` (`registration_open`) or the console's
   checkbox. Open means an address nobody invited creates an account on its first verified sign-in;
@@ -131,6 +138,7 @@ all live in the `franciscosolis_auth` D1 database, accessed through **Drizzle OR
 | Framework | [Hono](https://hono.dev) 4 |
 | Database | Cloudflare D1 (`franciscosolis_auth`) via [Drizzle ORM](https://orm.drizzle.team) |
 | Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`send_email` binding) |
+| Events | [Cloudflare Queues](https://developers.cloudflare.com/queues/) producer (`NOTIFICATIONS_QUEUE` → `franciscosolis-notifications`) |
 | Email templates | [react-email](https://react.email) via `@franciscosolis/emails` |
 | Validation / OpenAPI | [valibot](https://valibot.dev) + [hono-openapi](https://www.npmjs.com/package/hono-openapi) |
 | Tokens | JWT, EdDSA (Ed25519) via WebCrypto |
@@ -697,7 +705,9 @@ touches `migrations/`, and `pnpm run db:migrate:remote` is the manual fallback. 
 for the ordering caveat between the two.
 
 The Worker must be deployed under the exact name `auth` for the gateway's `AUTH` service binding
-to resolve. It needs no route or custom domain of its own.
+to resolve. It needs no route or custom domain of its own. The `franciscosolis-notifications`
+queue (and `-dev` for `--env dev`) has to exist before the first deploy, since a producer binding is
+resolved against it; see the root README.
 
 ---
 

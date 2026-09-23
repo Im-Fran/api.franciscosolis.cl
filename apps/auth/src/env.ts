@@ -1,4 +1,5 @@
 import type { AuthenticatedActor } from '@/middleware/auth'
+import type { NotificationEvent } from '@/services/notify'
 
 /** One recipient/sender of an email sent through Cloudflare Email Sending. */
 type EmailAddress = {
@@ -36,6 +37,13 @@ type Env = {
    * approved one, so a picture waiting for review is unreachable rather than merely unlinked.
    */
   AVATARS: R2Bucket
+  /**
+   * Producer half of the `franciscosolis-notifications` queue, drained by `apps/notifications`.
+   * The shipped `Queue` type is used as is — unlike `EMAIL`, it describes this binding accurately —
+   * narrowed to the one message shape the contract with that Worker allows. Only
+   * `services/notify.ts` touches it, so nothing else here has to know what a failed send means.
+   */
+  NOTIFICATIONS_QUEUE: Queue<NotificationEvent>
 
   /** Public base URL of this Worker, e.g. `https://api.franciscosolis.cl/auth`. No trailing slash. */
   AUTH_PUBLIC_URL: string

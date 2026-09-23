@@ -4,9 +4,10 @@ import { defineConfig } from 'vitest/config'
 import { internalWorkers } from './test/stubs.ts'
 
 /**
- * The gateway is nothing but its bindings, so the three internal Workers it proxies to are booted
- * alongside it as auxiliary Miniflare Workers. `LANDING`, `AUTH` and `CMS` therefore resolve to
- * real service bindings under test, exactly as they do once deployed.
+ * The gateway is nothing but its bindings, so the internal Workers it proxies to are booted alongside
+ * it as auxiliary Miniflare Workers. Every binding in `wrangler.jsonc` — `LANDING`, `AUTH`, `CMS`,
+ * `MARKETPLACE`, `SUPPORT` and `NOTIFICATIONS` — therefore resolves to a real service binding under
+ * test, exactly as it does once deployed.
  */
 export default defineConfig({
   plugins: [

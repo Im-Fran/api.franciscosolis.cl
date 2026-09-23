@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [api, landing, auth, cms, marketplace, support]
+        app: [api, landing, auth, cms, marketplace, support, notifications]
 
     steps:
       - name: Checkout
@@ -110,7 +110,7 @@ jobs:
 
   # Cross-environment consistency: every `env.dev` mirrors its top-level bindings and vars, and
   # names resources of its own. It is a repository-wide check rather than a per-app one because
-  # that is what it compares — the two halves of each config against each other, across all six.
+  # that is what it compares — the two halves of each config against each other, across all seven.
   environments:
     name: environments
     runs-on: ubuntu-latest

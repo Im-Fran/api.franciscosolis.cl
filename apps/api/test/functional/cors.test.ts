@@ -136,6 +136,20 @@ describe('CORS preflight', () => {
     expect(response.headers.get('Access-Control-Allow-Methods')).toContain('PUT')
   })
 
+  it('covers what the notifications module needs without a list of its own', async () => {
+    // Marking one read is a POST, saving preferences a PUT, dropping a push subscription a DELETE,
+    // and every one carries a bearer token — all already on the gateway's lists, which is why
+    // `notifications` does not own its CORS the way `auth` does.
+    const response = await preflight('/notifications/me/preferences', 'PUT')
+
+    expect(response.status).toBe(204)
+    for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+      expect(response.headers.get('Access-Control-Allow-Methods')).toContain(method)
+    }
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Authorization')
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Content-Type')
+  })
+
   it('allows only the request headers the modules actually read', async () => {
     const response = await preflight('/cms/content/projects', 'POST')
 

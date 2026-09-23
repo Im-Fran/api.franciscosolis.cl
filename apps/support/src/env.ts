@@ -1,4 +1,5 @@
 import type { AccessTokenClaims } from '@/lib/jwks'
+import type { NotificationEvent } from '@/services/notify'
 
 /**
  * Cloudflare Email Sending binding (`send_email` in wrangler.jsonc). Declared locally instead of
@@ -68,6 +69,12 @@ type Env = {
   EMAIL: EmailSender
   AI: AiBinding
   VECTORIZE: VectorizeBinding
+  /**
+   * Producer half of the notifications queue, drained by `apps/notifications`. The shipped `Queue`
+   * type is accurate for this binding, unlike the two above, so it is used as is — narrowed to the
+   * one message shape the contract allows. Only `services/notify.ts` touches it.
+   */
+  NOTIFICATIONS_QUEUE: Queue<NotificationEvent>
 
   AUTH_JWKS_URL: string
   AUTH_ISSUER: string

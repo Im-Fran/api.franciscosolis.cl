@@ -41,6 +41,10 @@
     {
       "binding": "SUPPORT",
       "service": "support"
+    },
+    {
+      "binding": "NOTIFICATIONS",
+      "service": "notifications"
     }
   ],
   "observability": {
@@ -93,6 +97,10 @@
         {
           "binding": "SUPPORT",
           "service": "support-dev"
+        },
+        {
+          "binding": "NOTIFICATIONS",
+          "service": "notifications-dev"
         }
       ]
     }

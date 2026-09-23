@@ -26,6 +26,8 @@ plain OIDC — another application on its own domain, or Cloudflare Access — c
 - **Drizzle ORM** over D1 (`drizzle-orm/d1`).
 - **`@franciscosolis/emails`** (workspace package) for the magic link, invitation and access
   notification bodies.
+- **Cloudflare Queues**, producer only: `NOTIFICATIONS_QUEUE` → `franciscosolis-notifications`
+  (`-dev` under `env.dev`), drained by `apps/notifications`.
 - Dependency versions come from the parent workspace's pnpm `catalog` — use `catalog:`,
   never a hardcoded version.
 - `pnpm` install/deps are managed from the **monorepo root**.
@@ -78,7 +80,8 @@ front-end `/oauth/authorize` hands the browser to; it is set in `wrangler.jsonc`
   `tokens.ts` (codes, sessions, refresh rotation, the token responses), `sso.ts` (the browser's own
   session with this server, and its cookie), `settings.ts` (the settings catalog and its defaults),
   `invitations.ts`,
-  `email.ts`, `notifications.ts` (the access notice sent to the account holder), `audit.ts`,
+  `email.ts`, `notifications.ts` (the access notice sent to the account holder), `notify.ts` (the
+  notifications-queue producer and its message shape), `audit.ts`,
   `authorization.ts` (the shared flow head and tail).
 - `src/routes/` — one file per area (`authorize`, `token`, `userinfo`, `introspect`, `logout`,
   `google`, `magic-link`, `me`, `avatars`, `well-known`); `routes/admin/` is the permission-gated
@@ -263,11 +266,20 @@ front-end `/oauth/authorize` hands the browser to; it is set in `wrangler.jsonc`
   `services/authorization.ts`: `completeAuthentication` sends a `sign_in` notice, and
   `authorizeFromSsoSession` an `authorization` one. The second is the one that matters — letting a
   new application into an account from an existing SSO session takes no credential, sends no magic
-  link and leaves nothing a user can see except an audit row they have no access to. Four things
+  link and leaves nothing a user can see except an audit row they have no access to. Five things
   about it are deliberate:
+  - **It is published, and emailed only as a fallback.** The notice goes onto the notifications
+    queue as `account.sign_in` / `account.authorization`, with every detail already rendered here
+    (device, location, provider name — the consumer never sees a raw user agent or country code),
+    and `apps/notifications` delivers it per the account holder's preferences: bell, push, and email
+    immediately or in a digest. Only when `publishNotification` answers `false` — the queue refused
+    it — does this Worker email the notice itself, exactly as it used to. It never does both: an
+    email per sign-in on top of the queue would make "weekly" mean nothing. Missing details travel as
+    `null` rather than "Unknown", because the consumer localises the placeholder.
   - **It never throws.** By the time it runs the code is minted and the browser is mid-redirect, so
     a bounced notice is logged like a lost audit row rather than turned into a 500 that would strand
-    the user. `test/functional/sso.test.ts` pins that a failing `EMAIL` binding still returns a code.
+    the user. `test/functional/sso.test.ts` pins that a failing queue *and* a failing `EMAIL` binding
+    still return a code.
   - **It is awaited rather than deferred to `waitUntil`.** One binding call is not what makes a
     redirect slow, the magic link path already blocks on exactly one, and a failure is worth having
     logged against the request that caused it.
@@ -325,6 +337,10 @@ front-end `/oauth/authorize` hands the browser to; it is set in `wrangler.jsonc`
   free-form URL there would make the whole review step optional. Anything displaced — superseded,
   rejected, withdrawn — has its object deleted while its row survives for the trail, so
   `object_key` being null is the normal end state, not damage.
+- **An avatar decision is published to its owner** (`routes/admin/avatars.ts`):
+  `account.avatar_approved`, or `account.avatar_rejected` carrying the reviewer's reason. The owner is
+  re-read for their address and locale, after the decision is written and audited, and a failure
+  there is logged rather than turned into an error — the decision already happened.
 - **A provider's picture is not ours to clear.** `clearManagedPicture` only nulls `users.picture`
   when it points inside `${AUTH_PUBLIC_URL}/avatars/`. Google's photo was never moderated here, and
   withdrawing an upload must not take it away.
