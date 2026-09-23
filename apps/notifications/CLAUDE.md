@@ -5,8 +5,7 @@
 ALL code, comments, variable/function names, commit messages, PR descriptions, and any
 other written content in this repository MUST be in English. This applies regardless of
 the language the user writes to Claude Code in. Never write Spanish (or any other
-language) into files, commits, or code in this repo. The one exception is *user-facing copy*:
-the Spanish half of `src/lib/catalog.ts` and of the email templates is content, not code.
+language) into files, commits, or code in this repo.
 
 ## Repo purpose
 
