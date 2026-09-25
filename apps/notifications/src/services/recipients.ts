@@ -74,6 +74,12 @@ type RecipientIdentity = {
  * Only fields that were actually supplied overwrite: a producer that knows an account id but not its
  * address must not blank the address another event taught us. Preferences are never touched here —
  * a new row starts from the column defaults, which are the product defaults.
+ *
+ * The language is a preference too, so a supplied one only *seeds* a new row and never overwrites an
+ * existing one. Producers send whatever they happen to hold — a provider's profile locale, the
+ * language a support ticket was written in — and letting each event rewrite the column is what made
+ * a Spanish reader's notifications flip back to English with the next sign-in. From then on it
+ * changes through `PUT /me/preferences` alone, which the website calls with its own language.
  */
 const upsertRecipient = async (db: Database, identity: RecipientIdentity) => {
   const email = identity.email?.trim().toLowerCase() || null
@@ -93,7 +99,6 @@ const upsertRecipient = async (db: Database, identity: RecipientIdentity) => {
       set: {
         email: sql`coalesce(excluded.email, ${recipients.email})`,
         name: sql`coalesce(excluded.name, ${recipients.name})`,
-        ...(locale ? { locale } : {}),
         updatedAt: sql`(unixepoch())`,
       },
     })

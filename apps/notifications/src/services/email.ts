@@ -42,8 +42,8 @@ const text = (value: NotificationData[string] | undefined) =>
  * it sent this notice itself, and for the same reason: a reader checking "was that me" needs to know
  * which clock they are reading.
  */
-const formatUtc = (date: Date) =>
-  `${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(date)} UTC`
+const formatUtc = (date: Date, locale: Locale) =>
+  `${new Intl.DateTimeFormat(locale === 'es' ? 'es-CL' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(date)} UTC`
 
 type ImmediateInput = {
   to: string
@@ -72,10 +72,11 @@ const sendImmediate = async (env: Env, input: ImmediateInput) => {
         event: input.type === 'account.sign_in' ? 'sign_in' : 'authorization',
         applicationName: text(input.data.application_name) ?? '—',
         providerName: text(input.data.provider_name) ?? '—',
-        occurredAt: formatUtc(input.occurredAt),
+        occurredAt: formatUtc(input.occurredAt, input.locale),
         device: text(input.data.device),
         location: text(input.data.location),
         ipAddress: text(input.data.ip_address),
+        locale: resolveEmailLocale(input.locale),
         brandName: env.MAIL_FROM_NAME,
       }),
     )
