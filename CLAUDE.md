@@ -233,7 +233,7 @@ per-environment secrets (`VAPID_PRIVATE_KEY` for `apps/notifications` among them
 `node apps/notifications/scripts/generate-vapid-keys.mjs`), the `franciscosolis-support-help-dev` Vectorize
 index, the two notifications queues (`wrangler queues create franciscosolis-notifications` and
 `…-dev`, before the first deploy of any Worker bound to them), the `franciscosolis_notifications`
-and `_dev` D1 databases (whose ids replace the placeholders in `apps/notifications/wrangler.jsonc`),
+and `_dev` D1 databases (whose ids are committed in `apps/notifications/wrangler.jsonc`),
 and the OAuth client applications, which are rows in the *dev* auth database and therefore do not
 exist until they are registered (`pnpm run applications -- … --dev --remote`). One piece is deliberately missing: nothing delivers
 mail to `apps/support`'s dev inbox addresses, so the development Worker sends and never receives
