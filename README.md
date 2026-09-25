@@ -461,8 +461,8 @@ pnpm exec wrangler queues create franciscosolis-notifications-dev
 ```
 
 `apps/notifications` owns `franciscosolis_notifications` and `franciscosolis_notifications_dev`,
-which likewise do not exist until they are created; their ids go into
-`apps/notifications/wrangler.jsonc`, replacing the placeholders committed there:
+which were created with the commands below; their ids are committed in
+`apps/notifications/wrangler.jsonc`, so a new account only needs this to recreate them:
 
 ```bash
 pnpm exec wrangler d1 create franciscosolis_notifications

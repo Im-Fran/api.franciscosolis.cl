@@ -64,8 +64,8 @@ Events arrive on a **Cloudflare Queue**, not over HTTP — see [How events arriv
 Beyond a `pnpm install` at the monorepo root, this Worker needs four things that live in the
 Cloudflare account rather than in this repository — twice, once per environment:
 
-- A **D1 database**: `franciscosolis_notifications` (and `franciscosolis_notifications_dev`). Put the
-  ids `wrangler d1 create` prints into `wrangler.jsonc`, replacing the placeholders.
+- A **D1 database**: `franciscosolis_notifications` (and `franciscosolis_notifications_dev`). Both
+  exist and their ids are in `wrangler.jsonc`; recreating one means replacing its id there.
 - A **queue**: `franciscosolis-notifications` (and `franciscosolis-notifications-dev`).
 - The **`VAPID_PRIVATE_KEY` secret** — see [Deployment](#-deployment). Without it everything works but push.
 - `hola@mail.franciscosolis.cl` verified for Email Sending, which `apps/auth` already needs.
