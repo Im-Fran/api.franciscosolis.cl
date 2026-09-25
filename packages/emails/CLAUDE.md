@@ -89,6 +89,11 @@ package. That is deliberate on all four counts — see below.
   `display` on anything, so a two-column layout that is not a table is a two-line layout there — and a
   stacked-on-mobile layout would need a client that supports stacking, which Word never will. Two
   narrow columns read correctly at every width; a stacked layout that silently does not is worse.
+- **Every template an account holder receives takes a `locale`** (`locale.ts`, `en` / `es`), with its
+  copy as a plain object inside the template. `resolveEmailLocale` reads only the base tag, so an
+  account's stored `es-CL` or `es-419` resolves to `es`, and anything else to English. The magic link
+  and the account-access notice joined the support and sale templates in taking one; the invitation
+  is the one left in English, because it goes to an address nobody has a language for yet.
 - **Amounts are formatted here, dates are not** (`money.ts`). `formatMoney` pins
   `maximumFractionDigits` to zero because every amount this monorepo charges is an integer of the
   currency's major unit — CLP has no minor unit, and `$1.990,00` on a peso receipt is the kind of thing

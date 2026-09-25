@@ -29,6 +29,11 @@ const requestSchema = v.object({
   code_challenge_method: v.optional(v.literal(CODE_CHALLENGE_METHOD)),
   scope: v.optional(v.string()),
   /**
+   * Language the sign-in screen is in, so the email arrives in it. Anything unrecognised falls back
+   * to the account's stored language, then to English — a bad value never blocks the send.
+   */
+  locale: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(20))),
+  /**
    * Cloudflare Turnstile token, required whenever this deployment is configured with a pair of
    * Turnstile keys. It is optional in the schema rather than required because a deployment with no
    * keys — a local Worker, the test suite — does not challenge at all; `verifyTurnstile` is what
@@ -86,6 +91,7 @@ app.post(
         codeChallengeMethod: pkce.codeChallengeMethod,
         scope,
       },
+      locale: body.locale ?? null,
       ...context,
     })
 

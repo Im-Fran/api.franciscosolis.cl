@@ -3,6 +3,7 @@ import {
   renderInvitationEmail,
   renderMagicLinkEmail,
   type AccountAccessEmailProps,
+  type EmailLocale,
   type RenderedEmail,
 } from '@franciscosolis/emails'
 import type { Env } from '@/env'
@@ -22,6 +23,7 @@ const magicLinkTemplate = (input: {
   url: string
   applicationName: string
   expiresInMinutes: number
+  locale?: EmailLocale
   brandName?: string
 }): Promise<Template> => renderMagicLinkEmail(input)
 

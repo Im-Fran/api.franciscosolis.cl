@@ -291,6 +291,13 @@ front-end `/oauth/authorize` hands the browser to; it is set in `wrangler.jsonc`
     the request. The location comes from `getRequestLocation`, so it is the same one the session
     carries under `/me/sso-sessions`, and the country code is expanded through `Intl.DisplayNames` —
     except for `Unknown Region`, CLDR's real name for `ZZ`, which is worse than the code itself.
+- **Mail an account holder reads is written in their language.** The magic link takes a `locale`
+  from the sign-in screen on both entry points (`POST /magic-link` and the parked request's
+  `/magic-link`), falling back to `users.locale` and then English — the screen wins because an
+  unknown address has no stored language and the person reading the email chose that one a moment
+  ago. The access notice's fallback email uses `users.locale`, which the website keeps in step with
+  its own language through `PATCH /me`. The invitation stays English: nobody has a language for an
+  address that has never signed in.
 - **Email bodies live in `@franciscosolis/emails`, and rendering is async.** `services/email.ts`
   is now a thin wrapper: `magicLinkTemplate` and `invitationTemplate` return *promises* of
   `{ subject, html, text }`, so every call site awaits them. There is no `escapeHtml` here any
