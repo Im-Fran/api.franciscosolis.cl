@@ -4,6 +4,7 @@ import type { ProviderName } from '@/lib/config'
 import { describeUserAgent } from '@/lib/user-agent'
 import { PROVIDER_REGISTRY } from '@/providers'
 import { accountAccessTemplate, sendEmail } from '@/services/email'
+import { publishNotification } from '@/services/notify'
 import type { User } from '@/services/users'
 
 /**
@@ -62,6 +63,12 @@ const formatLocation = (location: { country: string | null; city: string | null 
   return [location.city, country].filter(Boolean).join(', ')
 }
 
+/**
+ * Where a notice about access points on the website: the page listing the account's sessions, which
+ * is also where somebody who does not recognise one goes to close it.
+ */
+const ACCOUNT_SESSIONS_PATH = '/account/sessions'
+
 /** How the user proved who they were, as the sign-in screen names it. */
 const providerDisplayName = (provider: string) =>
   PROVIDER_REGISTRY.find((descriptor) => descriptor.name === provider)?.displayName ?? provider
@@ -80,17 +87,55 @@ type AccountAccessNotification = {
 }
 
 /**
- * Emails the notice, and never throws.
+ * The notice itself, delivered by `apps/notifications` when the queue takes it and by this Worker
+ * when it does not. Never throws.
+ *
+ * Handing it to the notifications Worker is what lets the account holder choose how they hear about
+ * it — straight away, in a daily or weekly digest, or only in the site's notification list — instead
+ * of every sign-in being an email whether they want one or not. The details are rendered here rather
+ * than there because this is the only place that has the raw request: the consumer receives
+ * "Chrome on macOS" and "Santiago, Chile", the same strings the email always carried, and never a
+ * user agent or a country code it would have to learn to format the same way.
+ *
+ * **The email is the fallback, not a second copy.** A security notice is the one notification here
+ * that must not be lost to an outage, so when the queue refuses the event the notice goes out the
+ * way it always did. When the queue accepts it, it is not also emailed from here: the consumer owns
+ * that decision, and doing both would mean somebody who picked "weekly" still gets an email per
+ * sign-in. The residual gap — the queue accepted it and the consumer then failed on every retry — is
+ * logged by the consumer, and it is the trade a queue is for: five retries with backoff against an
+ * email that was attempted exactly once.
  *
  * A notification that could not be delivered must not turn a completed sign-in into a 500 — the user
  * is mid-redirect with a valid authorization code by the time this runs, and failing here would lose
  * it. Same reasoning as `recordAudit`: this is a report about the flow, not a step of it.
  *
- * It is awaited rather than handed to `waitUntil` so that a delivery failure is logged against the
- * request that caused it, and because the Worker already blocks on an email send in the magic link
- * path — one binding call is not what makes a redirect slow.
+ * It is awaited rather than handed to `waitUntil` so that a failure is logged against the request
+ * that caused it, and because the Worker already blocks on an email send in the magic link path —
+ * one binding call is not what makes a redirect slow.
  */
 const notifyAccountAccess = async (env: Env, input: AccountAccessNotification) => {
+  const providerName = providerDisplayName(input.provider)
+  const device = describeUserAgent(input.userAgent)
+  const location = formatLocation({ country: input.country, city: input.city })
+
+  const queued = await publishNotification(env, {
+    type: input.event === 'sign_in' ? 'account.sign_in' : 'account.authorization',
+    user: { id: input.user.id, email: input.user.email, name: input.user.name, locale: input.user.locale },
+    occurredAt: input.occurredAt,
+    // Nulls rather than "Unknown": the consumer localises the placeholder, and "Unknown" is English.
+    data: {
+      application_name: input.applicationName,
+      provider_name: providerName,
+      device,
+      location,
+      ip_address: input.ip,
+    },
+    url: ACCOUNT_SESSIONS_PATH,
+  })
+  if (queued) {
+    return
+  }
+
   try {
     await sendEmail(
       env,
@@ -98,10 +143,10 @@ const notifyAccountAccess = async (env: Env, input: AccountAccessNotification) =
       await accountAccessTemplate({
         event: input.event,
         applicationName: input.applicationName,
-        providerName: providerDisplayName(input.provider),
+        providerName,
         occurredAt: formatTimestamp(input.occurredAt),
-        device: describeUserAgent(input.userAgent),
-        location: formatLocation({ country: input.country, city: input.city }),
+        device,
+        location,
         ipAddress: input.ip,
         brandName: env.MAIL_FROM_NAME,
       }),

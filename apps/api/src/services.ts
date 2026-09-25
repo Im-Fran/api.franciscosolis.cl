@@ -123,6 +123,20 @@ const SERVICE_MODULES = [
     // ticket form is rate limited per client IP, so `CF-Connecting-IP` has to survive the hop or the
     // limit would count every request in the world as coming from one address.
   },
+  {
+    name: 'notifications',
+    binding: 'NOTIFICATIONS',
+    tag: 'Notifications',
+    description:
+      'Proxy to the notifications Worker (the in-site notification list, preferences, Web Push subscriptions and digests)',
+    // Forwards the whole Request for the same reasons as the CMS: the body of a preference update or
+    // a push subscription, and the `Authorization` header the module verifies itself. Its CORS is the
+    // gateway's, not its own — every caller is the website, which is already on the allowlist, and
+    // `PUT /me/preferences` and `DELETE` of a subscription are verbs the allowlist already carries.
+    //
+    // This is the only direction the two are wired in. The producers (`auth`, `support`,
+    // `marketplace`) reach this Worker through a queue, not through a binding and not through here.
+  },
 ] as const satisfies readonly ServiceModule[]
 
 /** A registry entry as written above, with its `binding` and `name` narrowed to the literals used. */

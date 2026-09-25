@@ -42,6 +42,14 @@ export { InvitationEmail, renderInvitationEmail } from './templates/invitation'
 export type { InvitationEmailProps } from './templates/invitation'
 export { MagicLinkEmail, renderMagicLinkEmail } from './templates/magic-link'
 export type { MagicLinkEmailProps } from './templates/magic-link'
+export { NotificationEmail, renderNotificationEmail } from './templates/notification'
+export type { NotificationEmailProps } from './templates/notification'
+export {
+  NotificationDigestEmail,
+  notificationDigestSubject,
+  renderNotificationDigestEmail,
+} from './templates/notification-digest'
+export type { DigestItem, DigestPeriod, NotificationDigestEmailProps } from './templates/notification-digest'
 export { renderSaleReceiptEmail, SaleReceiptEmail } from './templates/sale-receipt'
 export type { SaleReceiptEmailProps, SaleSource } from './templates/sale-receipt'
 export { renderSaleRefundEmail, SaleRefundEmail } from './templates/sale-refund'

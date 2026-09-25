@@ -1,5 +1,6 @@
 import type { Account } from '@/middleware/account'
 import type { Editor } from '@/middleware/auth'
+import type { NotificationEvent } from '@/services/notify'
 
 /** One recipient/sender of an email sent through Cloudflare Email Sending. */
 type EmailAddress = {
@@ -55,6 +56,12 @@ type Env = {
    * `apps/support`'s job and a ticket is where a reply belongs.
    */
   EMAIL: EmailSender
+  /**
+   * Producer half of the notifications queue, drained by `apps/notifications`. The shipped `Queue`
+   * type describes this binding accurately, unlike `EMAIL`'s, so it is used as is — narrowed to the
+   * one message shape the contract allows. Only `services/notify.ts` touches it.
+   */
+  NOTIFICATIONS_QUEUE: Queue<NotificationEvent>
 
   /** Path the JWKS is read from over `AUTH`. Access tokens are verified offline against it. */
   AUTH_JWKS_URL: string

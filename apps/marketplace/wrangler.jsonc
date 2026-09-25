@@ -68,6 +68,18 @@
   "ai": {
     "binding": "AI"
   },
+  // Events for `apps/notifications`: a purchase approved or refunded, a release published to the
+  // people who bought the product, a reply to somebody's review. The receipt and the refund notice
+  // are still mailed from here; the event is the bell on the website beside them. A queue and not a
+  // service binding because that Worker binds `AUTH`, and a payment webhook must not wait on it.
+  "queues": {
+    "producers": [
+      {
+        "binding": "NOTIFICATIONS_QUEUE",
+        "queue": "franciscosolis-notifications"
+      }
+    ]
+  },
   "services": [
     {
       // Only ever asked for `/.well-known/jwks.json`, and a binding rather than a public fetch for
@@ -179,6 +191,16 @@
           "service": "auth-dev"
         }
       ],
+      // The development queue. A sandbox purchase published onto the production queue would put a
+      // test payment in a real account's notification list.
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS_QUEUE",
+            "queue": "franciscosolis-notifications-dev"
+          }
+        ]
+      },
       "vars": {
         "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
         "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
@@ -238,6 +260,16 @@
           "service": "auth"
         }
       ],
+      // Kept, unlike `ai`: Miniflare simulates a queue producer locally, with no account behind it.
+      // Tests that assert on what was published replace it by assignment (`test/helpers/queue.ts`).
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS_QUEUE",
+            "queue": "franciscosolis-notifications"
+          }
+        ]
+      },
       // Restated here because a named environment inherits nothing. Unlike the `ai` binding above
       // this one is safe under test: Miniflare implements it locally, writing the message out
       // rather than delivering it, and the suite replaces `env.EMAIL` with a spy where it asserts

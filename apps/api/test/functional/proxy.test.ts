@@ -3,10 +3,10 @@ import { BASE_URL, echoOf, fetcher, gateway, gatewayWithBindings } from '../help
 import type { Env } from '@/env'
 import type { ModuleName } from '../stubs'
 
-const MODULES: ModuleName[] = ['landing', 'auth', 'cms', 'marketplace', 'support']
+const MODULES: ModuleName[] = ['landing', 'auth', 'cms', 'marketplace', 'support', 'notifications']
 
 /** The binding name each proxied prefix forwards to. */
-const BINDING_OF: Record<ModuleName, keyof Env> = { landing: 'LANDING', auth: 'AUTH', cms: 'CMS', marketplace: 'MARKETPLACE', support: 'SUPPORT' }
+const BINDING_OF: Record<ModuleName, keyof Env> = { landing: 'LANDING', auth: 'AUTH', cms: 'CMS', marketplace: 'MARKETPLACE', support: 'SUPPORT', notifications: 'NOTIFICATIONS' }
 
 /** Headers a real caller sends that are not Content-Type or Authorization. */
 const EXTRA_HEADERS = {
@@ -224,7 +224,7 @@ describe('header forwarding differs per module', () => {
     expect(echoed.body).toBe('{"a":1}')
   })
 
-  it.each(['auth', 'cms', 'marketplace', 'support'])('forwards the whole request to %s', async (module) => {
+  it.each(['auth', 'cms', 'marketplace', 'support', 'notifications'])('forwards the whole request to %s', async (module) => {
     const echoed = await echoOf(await gateway(`/${module}/probe`, {
       headers: { Authorization: 'Bearer token', ...EXTRA_HEADERS },
     }))
@@ -239,7 +239,7 @@ describe('header forwarding differs per module', () => {
     })
   })
 
-  it.each(['auth', 'cms', 'marketplace', 'support'])('does not drop the audit headers %s needs', async (module) => {
+  it.each(['auth', 'cms', 'marketplace', 'support', 'notifications'])('does not drop the audit headers %s needs', async (module) => {
     const echoed = await echoOf(await gateway(`/${module}/probe`, { headers: EXTRA_HEADERS }))
 
     expect(echoed.headers['cf-connecting-ip']).toBe('203.0.113.7')

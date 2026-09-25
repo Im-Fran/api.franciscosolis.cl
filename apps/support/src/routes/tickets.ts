@@ -15,6 +15,7 @@ import { requireTicketAccess } from '@/middleware/ticket-access'
 import { getRequestContext, recordAudit } from '@/services/audit'
 import { sendTicketReceived } from '@/services/email'
 import { cancelNotificationsFor, scheduleReplyNotifications } from '@/services/notifications'
+import { notifyTicketReply } from '@/services/notify'
 import { retryAfterSeconds, ticketsFromEmail, ticketsFromIp } from '@/services/rate-limit'
 import {
   addMessage,
@@ -294,6 +295,7 @@ app.post(
     if (level === 'agent') {
       // An agent answering from this route is still answering, so the same deferred notice applies.
       await scheduleReplyNotifications(db, ticket, actorEmail)
+      await notifyTicketReply(c.env, ticket, { email: actorEmail, name: actorName, userId: actorUserId })
     } else if (actorEmail) {
       // They came back. Whatever we were about to email them about, they have just read.
       await cancelNotificationsFor(db, ticket.id, actorEmail)

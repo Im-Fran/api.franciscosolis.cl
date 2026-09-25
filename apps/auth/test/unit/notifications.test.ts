@@ -1,12 +1,13 @@
 import { env } from 'cloudflare:test'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import {
   formatLocation,
   formatTimestamp,
   notifyAccountAccess,
   providerDisplayName,
 } from '@/services/notifications'
-import { captureEmails } from '../helpers/email'
+import { captureEmails, failEmails } from '../helpers/email'
+import { captureNotifications, failNotifications } from '../helpers/queue'
 import { createUser, uniqueEmail } from '../helpers/db'
 
 const mailbox = captureEmails()
@@ -65,8 +66,11 @@ describe('providerDisplayName', () => {
 })
 
 describe('notifyAccountAccess', () => {
-  const notification = async (overrides: Record<string, unknown> = {}) => {
-    const user = await createUser({ email: uniqueEmail('notify') })
+  const CHROME_ON_MACOS =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+
+  const notify = async (overrides: Record<string, unknown> = {}) => {
+    const user = await createUser({ email: uniqueEmail('notify'), name: 'Ada', locale: 'es' })
     await notifyAccountAccess(env, {
       event: 'sign_in',
       user,
@@ -74,63 +78,118 @@ describe('notifyAccountAccess', () => {
       provider: 'magic_link',
       occurredAt: new Date('2026-09-17T14:32:00Z'),
       ip: '203.0.113.24',
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      userAgent: CHROME_ON_MACOS,
       country: 'CL',
       city: 'Santiago',
       ...overrides,
     })
-    return { user, message: mailbox.last() }
+    return user
   }
 
-  it('writes to the account itself, with every detail of the access filled in', async () => {
-    const { user, message } = await notification()
+  describe('when the queue takes the event', () => {
+    // Installed per block rather than at collection time: both blocks' bodies are collected before
+    // either runs, and a fake installed there would be replaced by the next block's before use.
+    let queue: ReturnType<typeof captureNotifications>
+    beforeAll(() => {
+      queue = captureNotifications()
+    })
+    afterEach(() => {
+      queue.sent.length = 0
+    })
+    afterAll(() => queue.restore())
 
-    expect(message.to).toEqual([user.email])
-    expect(message.subject).toBe('New sign-in to franciscosolis.cl')
-    expect(message.text).toContain('17 Sept 2026')
-    expect(message.text).toContain('Chrome on macOS')
-    expect(message.text).toContain('Santiago, Chile')
-    expect(message.text).toContain('203.0.113.24')
-    expect(message.text).toContain('Magic Link')
+    it('publishes it for the account, with every detail already rendered', async () => {
+      const user = await notify()
+
+      expect(queue.sent).toHaveLength(1)
+      const [event] = queue.sent
+      expect(event).toMatchObject({
+        version: 1,
+        type: 'account.sign_in',
+        user: { id: user.id, email: user.email, name: 'Ada', locale: 'es' },
+        occurred_at: '2026-09-17T14:32:00.000Z',
+        url: '/account/sessions',
+        data: {
+          application_name: 'franciscosolis.cl',
+          provider_name: 'Magic Link',
+          device: 'Chrome on macOS',
+          location: 'Santiago, Chile',
+          ip_address: '203.0.113.24',
+        },
+      })
+      expect(event?.id).toMatch(/^[0-9a-f-]{36}$/)
+    })
+
+    it('does not email as well, because how the holder hears about it is now their choice', async () => {
+      await notify()
+
+      expect(mailbox.sent).toHaveLength(0)
+    })
+
+    it('tells an authorization apart from a sign-in', async () => {
+      await notify({ event: 'authorization' })
+
+      expect(queue.sent[0]?.type).toBe('account.authorization')
+    })
+
+    it('leaves what it could not find out as null, for the consumer to say in the reader\'s language', async () => {
+      await notify({ ip: null, userAgent: null, country: null, city: null })
+
+      expect(queue.sent[0]?.data).toMatchObject({ device: null, location: null, ip_address: null })
+    })
+
+    it('mints a fresh idempotency key for every event', async () => {
+      await notify()
+      await notify()
+
+      expect(new Set(queue.sent.map((event) => event.id)).size).toBe(2)
+    })
   })
 
-  it('tells an authorization apart from a sign-in, which is the whole reason it exists', async () => {
-    const { message } = await notification({ event: 'authorization' })
+  describe('when the queue refuses the event', () => {
+    let outage: ReturnType<typeof failNotifications>
+    beforeAll(() => {
+      outage = failNotifications()
+    })
+    afterAll(() => outage.restore())
 
-    expect(message.subject).toBe('franciscosolis.cl was authorized on your account')
-    expect(message.text).toContain('already signed in')
-  })
+    it('falls back to emailing the notice directly, because a security notice must not be lost', async () => {
+      const user = await notify()
+      const message = mailbox.last()
 
-  it('says so plainly when the request carried nothing to place or identify it', async () => {
-    const { message } = await notification({ ip: null, userAgent: null, country: null, city: null })
+      expect(message.to).toEqual([user.email])
+      expect(message.subject).toBe('New sign-in to franciscosolis.cl')
+      expect(message.text).toContain('17 Sept 2026')
+      expect(message.text).toContain('Chrome on macOS')
+      expect(message.text).toContain('Santiago, Chile')
+      expect(message.text).toContain('203.0.113.24')
+      expect(message.text).toContain('Magic Link')
+    })
 
-    expect(message.text).toContain('Device: Unknown')
-    expect(message.text).toContain('Location: Unknown')
-    expect(message.text).toContain('IP address: Unknown')
-  })
+    it('keeps the authorization wording in the fallback', async () => {
+      await notify({ event: 'authorization' })
+      const message = mailbox.last()
 
-  it('swallows a delivery failure, because the sign-in it reports on has already happened', async () => {
-    const original = env.EMAIL.send
-    env.EMAIL.send = async () => {
-      throw new Error('mailbox full')
-    }
+      expect(message.subject).toBe('franciscosolis.cl was authorized on your account')
+      expect(message.text).toContain('already signed in')
+    })
 
-    const user = await createUser({ email: uniqueEmail('notify-fail') })
-    await expect(
-      notifyAccountAccess(env, {
-        event: 'sign_in',
-        user,
-        applicationName: 'franciscosolis.cl',
-        provider: 'magic_link',
-        occurredAt: new Date(),
-        ip: null,
-        userAgent: null,
-        country: null,
-        city: null,
-      }),
-    ).resolves.toBeUndefined()
+    it('says so plainly in the fallback when the request carried nothing to place or identify it', async () => {
+      await notify({ ip: null, userAgent: null, country: null, city: null })
+      const message = mailbox.last()
 
-    env.EMAIL.send = original
+      expect(message.text).toContain('Device: Unknown')
+      expect(message.text).toContain('Location: Unknown')
+      expect(message.text).toContain('IP address: Unknown')
+    })
+
+    it('swallows a failed fallback too, because the sign-in it reports on has already happened', async () => {
+      const broken = failEmails('mailbox full')
+      try {
+        await expect(notify()).resolves.toBeTruthy()
+      } finally {
+        broken.restore()
+      }
+    })
   })
 })

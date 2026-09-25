@@ -18,6 +18,7 @@ import {
   TOPICS,
   verifyWebhookSignature,
 } from '@/lib/mercadopago'
+import { notifyPurchaseCompleted, notifyPurchaseRefunded } from '@/services/notify'
 import {
   applyPaymentStatus,
   findPurchaseByAnyPaymentId,
@@ -346,19 +347,37 @@ app.post(
         chargebackId: resolved.chargebackId,
       })
 
+      // The product's name and the buyer's language were snapshotted onto the purchase at checkout,
+      // which is what lets the receipt be written here — the browser that knew either of them is
+      // long gone, and this Worker holds no session for the buyer.
+      //
+      // Read defensively now that it is read for every status rather than only for an approval: a
+      // snapshot that does not parse costs the product's display name, never the 200 the provider is
+      // waiting for.
+      let metadata: { product_name?: unknown; locale?: unknown } = {}
+      try {
+        metadata = updated.metadata ? JSON.parse(updated.metadata) : {}
+      } catch {
+        // Falls back to the slug and no language below.
+      }
+      const productName = typeof metadata.product_name === 'string' ? metadata.product_name : updated.productSlug
+      const locale = typeof metadata.locale === 'string' ? metadata.locale : null
+      // Compared against the row as it was *before* this notification, because a fresh event is not
+      // the same thing as a fresh status: the same money can arrive down two topics with two event
+      // keys, and the second must not tell the buyer twice. The voucher is protected from that by
+      // `findLiveVoucher`; the bell has no such row to check, so the transition is its guard.
+      const previous = resolved.purchase.status
+
       if (updated.status === 'approved') {
-        // The product's name and the buyer's language were snapshotted onto the purchase at
-        // checkout, which is what lets the receipt be written here — the browser that knew either of
-        // them is long gone, and this Worker holds no session for the buyer.
-        const metadata = updated.metadata
-          ? (JSON.parse(updated.metadata) as { product_name?: unknown; locale?: unknown })
-          : {}
-        await issueVoucherForApproval(db, c.env, {
-          purchase: updated,
-          productName:
-            typeof metadata.product_name === 'string' ? metadata.product_name : updated.productSlug,
-          locale: typeof metadata.locale === 'string' ? metadata.locale : null,
-        })
+        await issueVoucherForApproval(db, c.env, { purchase: updated, productName, locale })
+        if (previous !== 'approved') {
+          await notifyPurchaseCompleted(c.env, { purchase: updated, productName, locale })
+        }
+      } else if (updated.status === 'refunded' && previous !== 'refunded') {
+        // A refund made in the provider's console reaches this Worker only here. No email goes out for
+        // it — the refund notice is sent by the editorial route, which is the one that knows a reason —
+        // but the bell costs nothing and is the only word the buyer gets from us that it happened.
+        await notifyPurchaseRefunded(c.env, { purchase: updated, productName, locale })
       }
     }
 

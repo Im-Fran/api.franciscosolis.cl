@@ -420,8 +420,16 @@ retiring either one is a checkbox; the third is how a dispute arrives in the old
 
 Bindings: `DB` (D1 `franciscosolis_marketplace`), `RELEASES` (R2 `franciscosolis-app-releases`, no
 public access of its own), `AUTH` (service binding to the auth Worker, used only to read its
-published JWKS), `AI` (Workers AI, used only by `POST /admin/translate`) and `EMAIL` (Cloudflare
-Email Sending, used for the voucher and the refund notice and nothing else).
+published JWKS), `AI` (Workers AI, used only by `POST /admin/translate`), `EMAIL` (Cloudflare
+Email Sending, used for the voucher and the refund notice and nothing else) and `NOTIFICATIONS_QUEUE`
+(producer on `franciscosolis-notifications`).
+
+The queue is how the website's bell hears about the store: `marketplace.purchase_completed` when a
+payment is approved or a sale is recorded by hand, `marketplace.purchase_refunded` on a refund,
+`marketplace.release_published` to every account holding the product the first time a release goes
+live, and `marketplace.review_reply` to a review's author on the owner's first answer. Only accounts
+are notified — a hand-recorded sale for an address nobody has signed in with publishes nothing — and
+the receipt and refund emails are unchanged. See `src/services/notify.ts`.
 
 ---
 
@@ -436,7 +444,8 @@ touches `migrations/`, and `pnpm run db:migrate:remote` is the manual fallback. 
 for the ordering caveat between the two.
 
 The Worker must be deployed under the exact name `marketplace` for the gateway's `MARKETPLACE`
-service binding to resolve, and it binds `AUTH`, so `auth` must be deployed first and `api` last. It
+service binding to resolve, and it binds `AUTH`, so `auth` must be deployed first and `api` last.
+The `franciscosolis-notifications` queue has to exist before the first deploy. It
 needs no route or custom domain of its own — it is reached through
 `api.franciscosolis.cl/marketplace`.
 

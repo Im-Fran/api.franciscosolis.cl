@@ -71,7 +71,8 @@ stored as a hash on the row, not a key held here. `.dev.vars` (gitignored, copy 
   `slug.ts`.
 - `src/middleware/` — `auth.ts` (`requireAgent`, `requirePermission`) and `ticket-access.ts`
   (the three-way gate on one ticket).
-- `src/services/` — `tickets.ts`, `notifications.ts` (the thirty-minute rule), `email.ts` (out),
+- `src/services/` — `tickets.ts`, `notifications.ts` (the thirty-minute rule), `notify.ts` (the
+  notifications-queue producer — a different thing from the file before it), `email.ts` (out),
   `inbound.ts` (in), `ai.ts`, `vectors.ts`, `help.ts`, `help-search.ts`, `rate-limit.ts`, `audit.ts`.
 - `src/routes/` — `tickets.ts` and `help.ts` are public; `me.ts` is the signed-in requester;
   `admin/` is the team.
@@ -149,6 +150,18 @@ stored as a hash on the row, not a key held here. `.dev.vars` (gitignored, copy 
   emits the predicate where a `DO UPDATE`'s clause goes, which against `DO NOTHING` is a syntax
   error. Losing the partial index instead is not an option: it is what makes "one pending notice per
   person per ticket" true of the database rather than of that function.
+- **The website's bell is fed through a queue, beside the email and never instead of it**
+  (`services/notify.ts`). A public team reply — from the console, from the ticket page, or from an
+  agent's mail client — publishes `support.ticket_reply` for the requester; adding a participant
+  publishes `support.participant_added`. Three things about it are deliberate. **Only an account is
+  notified**: the requester only once `requester_user_id` is known, and an added participant only when
+  `resolveUserIdByEmail` finds that address on a token this Worker was once shown (a linked ticket, or
+  a stamped participant row) — this Worker cannot ask auth whether an address has an account, and a
+  guess is not evidence. **It is immediate, not on the thirty-minute clock**: the delay protects an
+  inbox while a conversation is live, and a bell entry half an hour after the reply is already on the
+  page is simply stale. **It changes no mail**: the digest, the confirmation and "you were added" are
+  sent exactly as before, and the notifications Worker knows both types as not emailable. A queue
+  that refuses the event is logged and costs the bell, never the reply.
 - **The AI pass runs after the ticket exists, never before it.** An inbound email is written from its
   raw headers and `enrichTicket` improves it in `waitUntil`, so a model outage, a timeout or an answer
   that does not fit the schema costs a plainer subject line and never an email. The alternative —
@@ -223,7 +236,9 @@ Two things about this app's suite are not obvious:
   suite needs is restated there without those two, and `test/unit/env-bindings.test.ts` fails if the
   two halves drift apart. The suite supplies `env.AI` and `env.VECTORIZE` by assignment instead
   (`test/helpers/ai.ts`), with loud defaults so a path that reaches either service unexpectedly says
-  so instead of returning `undefined`.
+  so instead of returning `undefined`. `NOTIFICATIONS_QUEUE` *is* declared there — a queue producer
+  has a local simulation — and `test/helpers/queue.ts` replaces it by assignment where a test asserts
+  on what was published.
 - **Miniflare cannot dispatch an email event**, so `SELF` is useless for the inbound half. The
   handler is called directly — `worker.email(message, env, ctx)` with a fabricated
   `ForwardableEmailMessage` (`test/helpers/inbound.ts`) — which covers the real path,

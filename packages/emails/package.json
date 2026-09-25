@@ -2,7 +2,7 @@
   "name": "@franciscosolis/emails",
   "type": "module",
   "license": "GPL-3.0-only",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "exports": {
     ".": "./src/index.ts"

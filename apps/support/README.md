@@ -246,8 +246,13 @@ baked into an address that sits in every participant's mail client forever.
 | `AI_TEXT_MODEL` / `AI_EMBEDDING_MODEL` | Workers AI models, as vars so a retirement is a deploy |
 
 Bindings: `DB` (D1 `franciscosolis_support`), `AUTH` (service binding, read for its JWKS only),
-`EMAIL` (Email Sending), `AI` (Workers AI) and `VECTORIZE` (`franciscosolis-support-help`). This
-Worker holds **no secrets**.
+`EMAIL` (Email Sending), `AI` (Workers AI), `VECTORIZE` (`franciscosolis-support-help`) and
+`NOTIFICATIONS_QUEUE` (producer on `franciscosolis-notifications`). This Worker holds **no secrets**.
+
+The queue is how the website's bell hears about a ticket: a public team reply publishes
+`support.ticket_reply` for the requester, and adding a participant publishes
+`support.participant_added` — each only when an account is known (see `src/services/notify.ts`).
+Every email this Worker sends is unchanged; the notifications Worker never emails these two types.
 
 The two audience lists are separate on purpose and must stay that way: merging them would leave the
 domain and permission checks as the only thing keeping a token minted for the public website out of
@@ -263,7 +268,8 @@ pnpm run deploy
 ```
 
 The Worker must be deployed under the exact name `support` for the gateway's `SUPPORT` service
-binding to resolve. It needs no route or custom domain of its own.
+binding to resolve. It needs no route or custom domain of its own. The `franciscosolis-notifications`
+queue has to exist before the first deploy (see the root README).
 
 Migrations are applied by the repository's `Migrate` workflow on a push to `dev` that touches
 `apps/*/migrations/**`; `pnpm run db:migrate:remote` is the manual fallback.

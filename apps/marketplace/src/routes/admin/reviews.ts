@@ -10,6 +10,7 @@ import type { AppEnv } from '@/env'
 import { PAGINATION } from '@/lib/config'
 import { replySchema, REPORT_STATUSES, reportResolutionSchema, REVIEW_STATUSES } from '@/lib/reviews'
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
+import { notifyReviewReply } from '@/services/notify'
 import type { Product } from '@/services/products'
 import { findProductById } from '@/services/products'
 import { findReviewById, listReviews, toAdminReview, type ReviewSort } from '@/services/reviews'
@@ -247,6 +248,12 @@ app.put(
       resourceId: review.id,
       metadata: { product: product.slug, edited: review.replyBody !== null },
     })
+
+    // The first answer only. An edit is the editor fixing their own words, and telling the reviewer
+    // again for a corrected typo would teach them to ignore the next one.
+    if (review.replyBody === null) {
+      await notifyReviewReply(c.env, { product, review })
+    }
 
     return c.json({ code: 200, data: toAdminReview({ ...review, ...fields }) })
   },

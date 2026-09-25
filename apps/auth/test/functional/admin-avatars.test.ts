@@ -1,10 +1,11 @@
 import { SELF, env } from 'cloudflare:test'
 import { and, eq } from 'drizzle-orm'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { auditLogs, avatarUploads, users } from '@/db/schema'
 import { approveAvatar, avatarUrl, createAvatarUpload } from '@/services/avatars'
 import { createRole, createUser, db, signIn } from '../helpers/db'
 import { JPEG_BYTES, PNG_BYTES } from '../helpers/images'
+import { captureNotifications, failNotifications } from '../helpers/queue'
 
 const call = (path: string, token?: string, init: RequestInit = {}) =>
   SELF.fetch(`https://auth.internal/admin${path}`, {
@@ -163,5 +164,80 @@ describe('POST /admin/avatars/:id/reject', () => {
     expect(
       (await call(`/avatars/${upload.id}/reject`, token, { method: 'POST', body: JSON.stringify({}) })).status,
     ).toBe(403)
+  })
+})
+
+/**
+ * The owner hears about the decision through the notifications queue. Moderation is the one step of
+ * an avatar's life they do not drive, so without this a rejection reads as the upload vanishing.
+ */
+describe('avatar decision notifications', () => {
+  let queue: ReturnType<typeof captureNotifications>
+  beforeEach(() => {
+    queue = captureNotifications()
+  })
+  afterEach(() => queue.restore())
+
+  it('tells the owner their upload was approved', async () => {
+    const { token } = await callerWith(['avatars:review'])
+    const owner = await createUser({ name: 'Ada Lovelace', locale: 'es' })
+    const upload = await createAvatarUpload(db(), env, { userId: owner.id, bytes: PNG_BYTES, contentType: 'image/png' })
+
+    await call(`/avatars/${upload.id}/approve`, token, { method: 'POST' })
+
+    expect(queue.sent).toHaveLength(1)
+    expect(queue.sent[0]).toMatchObject({
+      version: 1,
+      type: 'account.avatar_approved',
+      user: { id: owner.id, email: owner.email, name: 'Ada Lovelace', locale: 'es' },
+      data: {},
+      url: '/account',
+    })
+  })
+
+  it('tells the owner their upload was rejected, and why', async () => {
+    const { token } = await callerWith(['avatars:review'])
+    const { user, upload } = await pendingUpload()
+
+    await call(`/avatars/${upload.id}/reject`, token, {
+      method: 'POST',
+      body: JSON.stringify({ reason: '  Not a face  ' }),
+    })
+
+    expect(queue.ofType('account.avatar_rejected')).toEqual([
+      expect.objectContaining({ user: expect.objectContaining({ id: user.id }), data: { reason: 'Not a face' } }),
+    ])
+  })
+
+  it('sends a null reason rather than an empty one', async () => {
+    const { token } = await callerWith(['avatars:review'])
+    const { upload } = await pendingUpload()
+
+    await call(`/avatars/${upload.id}/reject`, token, { method: 'POST', body: JSON.stringify({}) })
+
+    expect(queue.sent[0]?.data).toEqual({ reason: null })
+  })
+
+  it('still answers the decision when the queue is unavailable', async () => {
+    queue.restore()
+    const outage = failNotifications()
+    const { token } = await callerWith(['avatars:review'])
+    const { upload } = await pendingUpload()
+
+    try {
+      const response = await call(`/avatars/${upload.id}/approve`, token, { method: 'POST' })
+      expect(response.status).toBe(200)
+    } finally {
+      outage.restore()
+    }
+  })
+
+  it('publishes nothing for a decision that was refused', async () => {
+    const { token } = await callerWith(['avatars:read'])
+    const { upload } = await pendingUpload()
+
+    await call(`/avatars/${upload.id}/approve`, token, { method: 'POST' })
+
+    expect(queue.sent).toHaveLength(0)
   })
 })

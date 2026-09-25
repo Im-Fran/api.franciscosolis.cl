@@ -1,6 +1,6 @@
 import { SELF, env } from 'cloudflare:test'
 import { and, eq } from 'drizzle-orm'
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { auditLogs, authorizationRequests, ssoSessions } from '@/db/schema'
 import { SSO_COOKIE_NAME } from '@/lib/config'
 import { sha256 } from '@/lib/crypto'
@@ -10,6 +10,7 @@ import { cookieHeader, cookieValue } from '../helpers/context'
 import { bearer, createSsoSession, createUser, db, SEED, signIn, uniqueEmail } from '../helpers/db'
 import { captureEmails, failEmails, magicLinkTokenFrom } from '../helpers/email'
 import { RFC7636 } from '../helpers/pkce'
+import { captureNotifications, failNotifications } from '../helpers/queue'
 
 const mailbox = captureEmails()
 afterEach(() => {
@@ -182,6 +183,9 @@ describe('a second application', () => {
  * The notice the account holder gets. It is the only way an authorization granted from an existing
  * session — no password, no link, no provider — becomes visible to the person it belongs to, so it
  * is asserted through the real flows rather than against the service alone.
+ *
+ * It travels as an event on the notifications queue now, and as an email only when the queue will
+ * not take it; both halves are pinned here, because the fallback is what makes the move safe.
  */
 describe('access notifications', () => {
   const CLIENT = {
@@ -191,18 +195,25 @@ describe('access notifications', () => {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   }
 
-  it('writes to the account after a sign-in, describing where it came from', async () => {
+  let queue: ReturnType<typeof captureNotifications>
+  beforeEach(() => {
+    queue = captureNotifications()
+  })
+  afterEach(() => queue.restore())
+
+  it('publishes a sign-in for the account, describing where it came from', async () => {
     const user = await createUser({ email: uniqueEmail('sso-notify-signin') })
     await signInThroughMagicLink(user.email)
 
-    // The sign-in link itself came first; the notice is what the callback sent.
-    const notice = mailbox.last()
-    expect(notice.to).toEqual([user.email])
-    expect(notice.subject).toBe('New sign-in to franciscosolis.cl')
-    expect(notice.text).toContain('Signed in with: Magic Link')
+    const [event] = queue.ofType('account.sign_in')
+    expect(event?.user).toMatchObject({ id: user.id, email: user.email })
+    expect(event?.data).toMatchObject({ application_name: 'franciscosolis.cl', provider_name: 'Magic Link' })
+    expect(event?.url).toBe('/account/sessions')
+    // Only the magic link itself was emailed; the notice is the consumer's to deliver now.
+    expect(mailbox.sent).toHaveLength(1)
   })
 
-  it('writes to the account when an application is authorized from a session it already had', async () => {
+  it('publishes an authorization granted from a session the browser already had', async () => {
     const user = await createUser({ email: uniqueEmail('sso-notify-continue') })
     const { token } = await createSsoSession({ userId: user.id })
     const handle = await park({}, token)
@@ -210,6 +221,41 @@ describe('access notifications', () => {
     await navigate(`/oauth/authorize/${handle}/continue`, {
       headers: { ...cookieHeader(SSO_COOKIE_NAME, token), ...CLIENT },
     })
+
+    const [event] = queue.ofType('account.authorization')
+    expect(event?.user.id).toBe(user.id)
+    expect(event?.data).toMatchObject({
+      device: 'Chrome on macOS',
+      location: 'Chile',
+      ip_address: '203.0.113.24',
+    })
+    expect(mailbox.sent).toHaveLength(0)
+  })
+
+  it('publishes a prompt=none authorization, which involves no screen at all', async () => {
+    const user = await createUser({ email: uniqueEmail('sso-notify-none') })
+    const { token } = await createSsoSession({ userId: user.id })
+
+    await authorize({ prompt: 'none' }, token)
+
+    expect(queue.ofType('account.authorization')).toHaveLength(1)
+  })
+
+  it('emails the notice directly when the queue is unavailable', async () => {
+    queue.restore()
+    const outage = failNotifications()
+    const user = await createUser({ email: uniqueEmail('sso-notify-fallback') })
+    const { token } = await createSsoSession({ userId: user.id })
+    const handle = await park({}, token)
+
+    try {
+      const response = await navigate(`/oauth/authorize/${handle}/continue`, {
+        headers: { ...cookieHeader(SSO_COOKIE_NAME, token), ...CLIENT },
+      })
+      expect(response.status).toBe(302)
+    } finally {
+      outage.restore()
+    }
 
     const notice = mailbox.last()
     expect(notice.to).toEqual([user.email])
@@ -219,25 +265,19 @@ describe('access notifications', () => {
     expect(notice.text).toContain('IP address: 203.0.113.24')
   })
 
-  it('writes to the account for a prompt=none authorization, which involves no screen at all', async () => {
-    const user = await createUser({ email: uniqueEmail('sso-notify-none') })
-    const { token } = await createSsoSession({ userId: user.id })
-
-    await authorize({ prompt: 'none' }, token)
-
-    expect(mailbox.last().subject).toBe('franciscosolis.cl was authorized on your account')
-  })
-
-  it('does not stop an authorization when the notice cannot be delivered', async () => {
+  it('does not stop an authorization when neither the queue nor the mail will take the notice', async () => {
+    queue.restore()
+    const outage = failNotifications()
+    const broken = failEmails('mailbox full')
     const user = await createUser({ email: uniqueEmail('sso-notify-broken') })
     const { token } = await createSsoSession({ userId: user.id })
     const handle = await park({}, token)
-    const broken = failEmails('mailbox full')
 
     const response = await navigate(`/oauth/authorize/${handle}/continue`, {
       headers: cookieHeader(SSO_COOKIE_NAME, token),
     })
     broken.restore()
+    outage.restore()
 
     expect(response.status).toBe(302)
     expect(location(response).searchParams.get('code')).toBeTruthy()

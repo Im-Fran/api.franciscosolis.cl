@@ -1,0 +1,163 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "notifications",
+  "main": "src/index.ts",
+  "preview_urls": true,
+  "workers_dev": true,
+  "cache": {
+    "enabled": true
+  },
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "placement": {
+    "mode": "smart"
+  },
+  // Same two aliases as every other Worker that imports `@franciscosolis/emails`: `@react-email/render`
+  // statically imports ~1.5 MB of Prettier for an option nothing here uses. Not restated under
+  // `env.dev`, because `alias` is inherited and Wrangler rejects it inside an environment.
+  "alias": {
+    "prettier/standalone": "../../packages/emails/src/prettier-stub.ts",
+    "prettier/plugins/html": "../../packages/emails/src/prettier-stub.ts"
+  },
+  // The digest clock. Hourly rather than "0 12 * * *" because the digest is defined in Santiago's
+  // wall-clock time and Chile moves its clocks twice a year: a UTC cron would send at 09:00 for half
+  // the year and at 08:00 or 10:00 for the other half. Each run asks what hour it is in Santiago and
+  // does nothing unless the answer is `DIGEST.hour`. See `src/services/digest.ts`.
+  "triggers": {
+    "crons": [
+      "0 * * * *"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "franciscosolis_notifications",
+      "database_id": "00000000-0000-4000-8000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // The one way in for the other Workers. They *produce* onto this queue and this Worker consumes
+  // it — rather than each of them holding a service binding to this Worker — because this Worker
+  // binds `AUTH` for its key set, and `auth` is one of the producers: a binding each way would be a
+  // deploy-order cycle with no valid first deploy. A queue is not a Worker, so it breaks the cycle,
+  // and it brings retries with it: a sign-in never waits on, or fails because of, this Worker.
+  "queues": {
+    "consumers": [
+      {
+        "queue": "franciscosolis-notifications",
+        "max_batch_size": 25,
+        "max_batch_timeout": 5,
+        "max_retries": 5
+      }
+    ]
+  },
+  // Immediate emails and the daily/weekly digests. Shared with auth on purpose: the account-access
+  // notice used to come from this address, and the recipient's filters and trust already know it.
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "hola@mail.franciscosolis.cl"
+      ]
+    }
+  ],
+  "services": [
+    {
+      // Only ever asked for `/.well-known/jwks.json`. A binding rather than a public fetch for the
+      // reason `src/lib/jwks.ts` spells out: a subrequest to its own zone skips Workers routing.
+      "binding": "AUTH",
+      "service": "auth"
+    }
+  ],
+  "vars": {
+    // Path the JWKS is read from over the AUTH binding. The host is a placeholder: a service binding
+    // routes by binding, not by DNS.
+    "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
+    // Expected `iss`. Must match `AUTH_ISSUER` in apps/auth/wrangler.jsonc exactly.
+    "AUTH_ISSUER": "https://api.franciscosolis.cl/auth",
+    // Client application ids (`aud`) whose tokens may read an inbox. Only the website: this Worker
+    // has no console, and every row it serves belongs to the token's own `sub`.
+    "NOTIFICATIONS_ALLOWED_AUDIENCES": "franciscosolis-web",
+    // Base every notification link is resolved against, in email and in a push alike. Producers only
+    // ever send a path, so a notification written on dev can never link to production.
+    "SITE_URL": "https://franciscosolis.cl",
+    // `sub` of the VAPID JWT (RFC 8292). Push services use it to reach whoever runs the sender when
+    // something is wrong, so it has to be an inbox somebody reads.
+    "VAPID_SUBJECT": "mailto:hola@franciscosolis.cl",
+    "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+    "MAIL_FROM_NAME": "FranciscoSolis"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.25,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    }
+  },
+  "env": {
+    // The development stack: `notifications-dev`, behind api-dev.franciscosolis.cl/notifications.
+    //
+    // Everything is restated, because a named environment inherits no bindings and no vars. Three of
+    // them are the reason this environment exists at all:
+    //
+    // - the queue is the `-dev` one, so a sign-in on the development stack can never land in
+    //   somebody's real inbox;
+    // - the database is the `_dev` one;
+    // - `VAPID_PRIVATE_KEY` is a secret, and secrets are per environment. A subscription is bound to
+    //   the public key it was created with, so a dev browser subscribed against the dev key can
+    //   never be pushed to with the production one, and the reverse.
+    //
+    // The cron is inherited from the top-level `triggers`, so the development Worker sends its own
+    // digests on the same Santiago clock — which is the thing worth testing before it ships.
+    "dev": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_notifications_dev",
+          "database_id": "00000000-0000-4000-8000-000000000001",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "queues": {
+        "consumers": [
+          {
+            "queue": "franciscosolis-notifications-dev",
+            "max_batch_size": 25,
+            "max_batch_timeout": 5,
+            "max_retries": 5
+          }
+        ]
+      },
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "hola@mail.franciscosolis.cl"
+          ]
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth-dev"
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
+        "NOTIFICATIONS_ALLOWED_AUDIENCES": "franciscosolis-web",
+        "SITE_URL": "https://dev.franciscosolis.cl",
+        "VAPID_SUBJECT": "mailto:hola@franciscosolis.cl",
+        "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "FranciscoSolis (dev)"
+      }
+    }
+  }
+}

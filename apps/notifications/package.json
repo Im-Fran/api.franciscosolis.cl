@@ -1,0 +1,44 @@
+{
+  "name": "notifications",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0 --port 8795 --inspector-port 9236",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "build:dev": "wrangler deploy --dry-run --outdir dist --env dev",
+    "deploy": "wrangler deploy --minify",
+    "deploy:dev": "wrangler deploy --minify --env dev",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "typecheck": "tsc --noEmit -p test/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "vapid:generate": "node scripts/generate-vapid-keys.mjs",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:list": "wrangler d1 migrations list franciscosolis_notifications --remote",
+    "db:migrate:list:dev": "wrangler d1 migrations list franciscosolis_notifications_dev --env dev --remote",
+    "db:migrate:local": "wrangler d1 migrations apply franciscosolis_notifications --local",
+    "db:migrate:local:dev": "wrangler d1 migrations apply franciscosolis_notifications_dev --env dev --local",
+    "db:migrate:remote": "wrangler d1 migrations apply franciscosolis_notifications --remote",
+    "db:migrate:remote:dev": "wrangler d1 migrations apply franciscosolis_notifications_dev --env dev --remote"
+  },
+  "dependencies": {
+    "@franciscosolis/emails": "workspace:*",
+    "@hono/standard-validator": "catalog:",
+    "@valibot/to-json-schema": "catalog:",
+    "drizzle-orm": "catalog:",
+    "hono": "catalog:",
+    "hono-openapi": "catalog:",
+    "valibot": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "drizzle-kit": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "catalog:"
+  }
+}

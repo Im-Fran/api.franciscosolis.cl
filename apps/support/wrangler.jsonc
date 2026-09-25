@@ -56,6 +56,17 @@
       "index_name": "franciscosolis-support-help"
     }
   ],
+  // The bell on the website: a reply or a participant added is also published for
+  // `apps/notifications`, beside the email rather than instead of it. A queue and not a service
+  // binding because that Worker binds `AUTH` and publishing must not wait on it being up.
+  "queues": {
+    "producers": [
+      {
+        "binding": "NOTIFICATIONS_QUEUE",
+        "queue": "franciscosolis-notifications"
+      }
+    ]
+  },
   "services": [
     {
       // Only ever asked for `/.well-known/jwks.json`, and a binding rather than a public fetch for
@@ -174,6 +185,14 @@
           "service": "auth-dev"
         }
       ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS_QUEUE",
+            "queue": "franciscosolis-notifications-dev"
+          }
+        ]
+      },
       "vars": {
         "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
         "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
@@ -213,6 +232,17 @@
           "service": "auth"
         }
       ],
+      // Kept, unlike `ai` and `vectorize`: Miniflare simulates a queue locally with no account and no
+      // token, so declaring it here costs nothing. Tests that assert on what was published replace
+      // it by assignment — see `test/helpers/queue.ts`.
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS_QUEUE",
+            "queue": "franciscosolis-notifications"
+          }
+        ]
+      },
       "vars": {
         "AUTH_JWKS_URL": "https://auth.test/.well-known/jwks.json",
         "AUTH_ISSUER": "https://auth.test",

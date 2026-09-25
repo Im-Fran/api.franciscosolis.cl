@@ -14,6 +14,7 @@ import { emailAddress, optionalEmail, paginationSchema, requiredText } from '@/l
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
 import { sendParticipantAdded } from '@/services/email'
 import { scheduleReplyNotifications } from '@/services/notifications'
+import { notifyParticipantAdded, notifyTicketReply } from '@/services/notify'
 import {
   addMessage,
   buildTimeline,
@@ -331,6 +332,8 @@ app.post(
       // the thing that decides whether somebody gets an email is the route that decided the message
       // was public.
       await scheduleReplyNotifications(db, ticket, agent.email)
+      // The bell on the website, beside the email rather than instead of it. See `services/notify.ts`.
+      await notifyTicketReply(c.env, ticket, { email: agent.email, name: agent.name, userId: agent.id })
     }
 
     await recordAudit(db, {
@@ -467,6 +470,8 @@ app.post(
     // mail a stranger a conversation they were not part of when it happened. Awaited so the 201 is
     // not ahead of the thing it reports.
     await sendParticipantAdded(db, c.env, ticket, body.email)
+    // Only reaches anybody whose address this Worker has seen signed in; see `resolveUserIdByEmail`.
+    await notifyParticipantAdded(db, c.env, ticket, body.email)
 
     await recordEvent(db, {
       ticketId: ticket.id,

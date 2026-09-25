@@ -44,6 +44,12 @@ describe('the test environment', () => {
     expect(env.EMAIL).toBeDefined()
   })
 
+  it('declares the notifications queue, which Miniflare simulates without an account', () => {
+    // Unlike AI and Vectorize, a queue producer has a local simulation, so it stays declared here and
+    // a missing one fails this line rather than the first reply on the development stack.
+    expect(env.NOTIFICATIONS_QUEUE).toBeDefined()
+  })
+
   it('keeps the two audience lists distinct', () => {
     // The whole point of having two is that a website token is not a console token. If somebody
     // "simplifies" them into one value, this is the line that says no.
