@@ -1,4 +1,5 @@
-import type { AccountAccessEvent } from '@franciscosolis/emails'
+import { resolveEmailLocale } from '@franciscosolis/emails'
+import type { AccountAccessEvent, EmailLocale } from '@franciscosolis/emails'
 import type { Env } from '@/env'
 import type { ProviderName } from '@/lib/config'
 import { describeUserAgent } from '@/lib/user-agent'
@@ -24,8 +25,8 @@ import type { User } from '@/services/users'
  * is a language, not a region, and a wrong zone in a security notice is worse than an explicit one —
  * a reader comparing "was I awake then" needs to know which clock they are reading.
  */
-const formatTimestamp = (date: Date) => {
-  const formatted = new Intl.DateTimeFormat('en-GB', {
+const formatTimestamp = (date: Date, locale: EmailLocale = 'en') => {
+  const formatted = new Intl.DateTimeFormat(locale === 'es' ? 'es-CL' : 'en-GB', {
     dateStyle: 'medium',
     timeStyle: 'short',
     timeZone: 'UTC',
@@ -136,6 +137,7 @@ const notifyAccountAccess = async (env: Env, input: AccountAccessNotification) =
     return
   }
 
+  const locale = resolveEmailLocale(input.user.locale)
   try {
     await sendEmail(
       env,
@@ -144,10 +146,11 @@ const notifyAccountAccess = async (env: Env, input: AccountAccessNotification) =
         event: input.event,
         applicationName: input.applicationName,
         providerName,
-        occurredAt: formatTimestamp(input.occurredAt),
+        occurredAt: formatTimestamp(input.occurredAt, locale),
         device,
         location,
         ipAddress: input.ip,
+        locale,
         brandName: env.MAIL_FROM_NAME,
       }),
     )

@@ -79,7 +79,7 @@ describe('digests', () => {
   })
 
   it('sends weekly recipients theirs on Monday only', async () => {
-    await updatePreferences(getDb(env), 'user-1', { email_frequency: 'weekly' })
+    await updatePreferences(getDb(env), 'user-1', { email_frequency: 'weekly', locale: 'es' })
     const id = await notify()
 
     await runDigests(getDb(env), env, WEDNESDAY_9AM)

@@ -69,8 +69,8 @@ describe('notifyAccountAccess', () => {
   const CHROME_ON_MACOS =
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
-  const notify = async (overrides: Record<string, unknown> = {}) => {
-    const user = await createUser({ email: uniqueEmail('notify'), name: 'Ada', locale: 'es' })
+  const notify = async (overrides: Record<string, unknown> = {}, locale: string | null = 'es') => {
+    const user = await createUser({ email: uniqueEmail('notify'), name: 'Ada', locale })
     await notifyAccountAccess(env, {
       event: 'sign_in',
       user,
@@ -154,7 +154,7 @@ describe('notifyAccountAccess', () => {
     afterAll(() => outage.restore())
 
     it('falls back to emailing the notice directly, because a security notice must not be lost', async () => {
-      const user = await notify()
+      const user = await notify({}, null)
       const message = mailbox.last()
 
       expect(message.to).toEqual([user.email])
@@ -167,7 +167,7 @@ describe('notifyAccountAccess', () => {
     })
 
     it('keeps the authorization wording in the fallback', async () => {
-      await notify({ event: 'authorization' })
+      await notify({ event: 'authorization' }, null)
       const message = mailbox.last()
 
       expect(message.subject).toBe('franciscosolis.cl was authorized on your account')
@@ -175,12 +175,21 @@ describe('notifyAccountAccess', () => {
     })
 
     it('says so plainly in the fallback when the request carried nothing to place or identify it', async () => {
-      await notify({ ip: null, userAgent: null, country: null, city: null })
+      await notify({ ip: null, userAgent: null, country: null, city: null }, null)
       const message = mailbox.last()
 
       expect(message.text).toContain('Device: Unknown')
       expect(message.text).toContain('Location: Unknown')
       expect(message.text).toContain('IP address: Unknown')
+    })
+
+    it('writes the fallback in the account language', async () => {
+      await notify()
+      const message = mailbox.last()
+
+      expect(message.subject).toBe('Nuevo inicio de sesión en franciscosolis.cl')
+      expect(message.text).toContain('Dispositivo: Chrome on macOS')
+      expect(message.text).toContain('Ingresó con: Magic Link')
     })
 
     it('swallows a failed fallback too, because the sign-in it reports on has already happened', async () => {

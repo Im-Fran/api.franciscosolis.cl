@@ -144,8 +144,30 @@ describe('ingesting an event', () => {
     expect(await row(event.id)).toMatchObject({ email_status: 'sent' })
   })
 
+  it('writes the security notice in the recipient language too', async () => {
+    await updatePreferences(getDb(env), 'user-1', { email_frequency: 'immediate', locale: 'es' })
+
+    await ingestEvent(getDb(env), env, makeEvent())
+
+    expect(email.sent[0].subject).toBe('Nuevo inicio de sesión en Francisco Solis')
+    expect(email.sent[0].text).toContain('Dispositivo: Chrome on macOS')
+  })
+
+  it('lets an event seed the language of a new recipient, and never overwrite a chosen one', async () => {
+    const language = async () =>
+      (await env.DB.prepare('SELECT locale FROM recipients WHERE user_id = ?').bind('user-1').first<{ locale: string }>())
+        ?.locale
+
+    await ingestEvent(getDb(env), env, makeEvent({ user: { id: 'user-1', locale: 'es-CL' } }))
+    expect(await language()).toBe('es')
+
+    await updatePreferences(getDb(env), 'user-1', { locale: 'en' })
+    await ingestEvent(getDb(env), env, makeEvent({ user: { id: 'user-1', locale: 'es' } }))
+    expect(await language()).toBe('en')
+  })
+
   it('uses the generic template for everything else, in the recipient language', async () => {
-    await updatePreferences(getDb(env), 'user-1', { email_frequency: 'immediate' })
+    await updatePreferences(getDb(env), 'user-1', { email_frequency: 'immediate', locale: 'es' })
     const event = makeEvent({
       type: 'marketplace.review_reply',
       data: { product_name: 'Backups', product_slug: 'backups' },

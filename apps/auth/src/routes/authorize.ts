@@ -426,6 +426,8 @@ const magicLinkBodySchema = v.object({
   email: v.pipe(v.string(), v.trim(), v.email('A valid email address is required')),
   /** Turnstile token from the widget, required wherever this deployment is configured with keys. */
   turnstile_token: v.optional(v.string()),
+  /** Language the sign-in screen is in, so the email arrives in it. Same rule as `POST /magic-link`. */
+  locale: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(20))),
 })
 
 const magicLinkResponseSchema = v.object({
@@ -463,6 +465,7 @@ app.post(
     const parsed = v.safeParse(magicLinkBodySchema, {
       email: payload.email,
       turnstile_token: payload.turnstile_token,
+      locale: typeof payload.locale === 'string' ? payload.locale : undefined,
     })
 
     if (!parsed.success) {
@@ -478,6 +481,7 @@ app.post(
     const result = await requestMagicLink(db, c.env, {
       email: parsed.output.email,
       request: toAuthorizationRequest(record, application),
+      locale: parsed.output.locale ?? null,
       ...context,
     })
 

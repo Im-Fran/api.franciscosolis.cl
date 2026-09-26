@@ -17,9 +17,14 @@ const EMAIL_LOCALES = ['en', 'es'] as const
 
 type EmailLocale = (typeof EMAIL_LOCALES)[number]
 
-/** Falls back to English for anything unrecognised, so a bad locale never blocks a send. */
-const resolveEmailLocale = (value: string | null | undefined): EmailLocale =>
-  (EMAIL_LOCALES as readonly string[]).includes(value ?? '') ? (value as EmailLocale) : 'en'
+/**
+ * Falls back to English for anything unrecognised, so a bad locale never blocks a send. A region or
+ * script subtag is ignored — an account's stored language is often a provider's `es-419` or `es_CL`.
+ */
+const resolveEmailLocale = (value: string | null | undefined): EmailLocale => {
+  const base = (value ?? '').toLowerCase().split(/[-_]/)[0]
+  return (EMAIL_LOCALES as readonly string[]).includes(base) ? (base as EmailLocale) : 'en'
+}
 
 export { EMAIL_LOCALES, resolveEmailLocale }
 export type { EmailLocale }
