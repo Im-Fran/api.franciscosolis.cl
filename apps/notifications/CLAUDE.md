@@ -62,14 +62,13 @@ the bell in its header and the inbox and preferences at `franciscosolis.cl/accou
   data migration. An unknown type at ingest is *retried*, not stored with a fallback: it means a
   producer shipped a type before this Worker learned it, and the queue's retries wait for the deploy.
 - **A producer's language seeds a recipient, it never overwrites one.** Events carry whatever
-  locale their producer happens to hold — a provider's profile locale, the language a ticket was
-  written in — and letting each one rewrite `recipients.locale` is what made a Spanish reader's bell
+  locale their producer happens to hold — a provider's profile locale, the language a checkout was
+  started in — and letting each one rewrite `recipients.locale` is what made a Spanish reader's bell
   flip back to English on the next sign-in. After the row exists the language changes through
   `PUT /me/preferences` alone, and the website calls it with its own language. The account-access
   email is rendered in that language too, date included.
-- **`emailable: false` is the no-duplicates rule.** Receipts, refunds and support mail are still sent
-  by the Worker that owns them — a receipt is a document, a support reply is a thread you can answer
-  from your inbox. For those types this Worker keeps the in-site copy and the push and never emails.
+- **`emailable: false` is the no-duplicates rule.** Receipts and refund notices are still sent by the
+  Worker that owns them — a receipt is a document, and a refund notice is proof the money moved. For those types this Worker keeps the in-site copy and the push and never emails.
   Magic links and invitations never come through here at all.
 - **The account-access notice moved here, its template did not.** `apps/auth` used to email every
   sign-in and authorization itself. It now publishes `account.sign_in` / `account.authorization`, and

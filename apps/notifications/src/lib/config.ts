@@ -8,11 +8,11 @@
 const JWKS_CACHE_TTL = 3600
 
 /**
- * The three things a notification can be about. A category is the unit of preference: somebody can
+ * The two things a notification can be about. A category is the unit of preference: somebody can
  * turn push off for the marketplace and keep it for their account, but not per individual type —
- * ten switches nobody understands are worse than three they do.
+ * ten switches nobody understands are worse than two they do.
  */
-const CATEGORIES = ['account', 'support', 'marketplace'] as const
+const CATEGORIES = ['account', 'marketplace'] as const
 type Category = (typeof CATEGORIES)[number]
 
 /**

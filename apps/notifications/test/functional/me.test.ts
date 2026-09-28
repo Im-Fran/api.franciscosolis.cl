@@ -19,9 +19,9 @@ const seed = async (count: number, userId = 'user-1') => {
   for (let i = 0; i < count; i++) {
     const event = makeEvent({
       user: { id: userId, locale: 'es' },
-      type: 'support.ticket_reply',
-      data: { reference: `FS-${1000 + i}`, subject: 'Ayuda', author_name: 'Fran' },
-      url: `/tickets/FS-${1000 + i}`,
+      type: 'marketplace.purchase_completed',
+      data: { product_name: `Plugin ${1000 + i}`, amount: '$5.000' },
+      url: `/account/purchases/P-${1000 + i}`,
     })
     await ingestEvent(getDb(env), env, event)
     // Distinct arrival seconds, so the order under test is the order written.
@@ -66,14 +66,14 @@ describe('reading notifications', () => {
     const body = await response.json<{ data: Array<Record<string, unknown>>; unread: number; next_cursor: string | null }>()
     expect(body.unread).toBe(2)
     expect(body.next_cursor).toBeNull()
-    expect(body.data.map((item) => item.title)).toEqual(['New reply on FS-1001', 'New reply on FS-1000'])
-    expect(body.data[0]).toMatchObject({ category: 'support', url: '/tickets/FS-1001', read_at: null })
+    expect(body.data.map((item) => item.title)).toEqual(['Purchase confirmed: Plugin 1001', 'Purchase confirmed: Plugin 1000'])
+    expect(body.data[0]).toMatchObject({ category: 'marketplace', url: '/account/purchases/P-1001', read_at: null })
   })
 
   it('falls back to the account language', async () => {
     await seed(1)
     const body = await (await call('/me/notifications')).json<{ data: Array<{ title: string }> }>()
-    expect(body.data[0].title).toBe('Nueva respuesta en FS-1000')
+    expect(body.data[0].title).toBe('Compra confirmada: Plugin 1000')
   })
 
   it('pages with a keyset cursor', async () => {
@@ -87,11 +87,11 @@ describe('reading notifications', () => {
     ).json<{ data: Array<{ title: string }>; next_cursor: string | null }>()
 
     expect([...first.data, ...second.data, ...third.data].map((item) => item.title)).toEqual([
-      'New reply on FS-1004',
-      'New reply on FS-1003',
-      'New reply on FS-1002',
-      'New reply on FS-1001',
-      'New reply on FS-1000',
+      'Purchase confirmed: Plugin 1004',
+      'Purchase confirmed: Plugin 1003',
+      'Purchase confirmed: Plugin 1002',
+      'Purchase confirmed: Plugin 1001',
+      'Purchase confirmed: Plugin 1000',
     ])
     expect(third.next_cursor).toBeNull()
   })
@@ -147,10 +147,10 @@ describe('marking and deleting', () => {
     await seed(2)
     await ingestEvent(getDb(env), env, makeEvent())
 
-    const support = await (
-      await call('/me/notifications/read-all', { method: 'POST', body: JSON.stringify({ category: 'support' }) })
+    const marketplace = await (
+      await call('/me/notifications/read-all', { method: 'POST', body: JSON.stringify({ category: 'marketplace' }) })
     ).json()
-    expect(support).toEqual({ code: 200, data: { updated: 2 } })
+    expect(marketplace).toEqual({ code: 200, data: { updated: 2 } })
     const rest = await (await call('/me/notifications/read-all', { method: 'POST' })).json()
     expect(rest).toEqual({ code: 200, data: { updated: 1 } })
   })
@@ -172,7 +172,6 @@ describe('preferences', () => {
         email_frequency: 'daily',
         categories: {
           account: { push: true, email: true },
-          support: { push: true, email: true },
           marketplace: { push: true, email: true },
         },
         locale: 'en',
@@ -192,7 +191,6 @@ describe('preferences', () => {
       email_frequency: 'weekly',
       categories: {
         account: { push: true, email: true },
-        support: { push: true, email: true },
         marketplace: { push: false, email: true },
       },
       locale: 'es',

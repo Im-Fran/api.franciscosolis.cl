@@ -77,7 +77,7 @@ type RecipientIdentity = {
  *
  * The language is a preference too, so a supplied one only *seeds* a new row and never overwrites an
  * existing one. Producers send whatever they happen to hold — a provider's profile locale, the
- * language a support ticket was written in — and letting each event rewrite the column is what made
+ * language a checkout was started in — and letting each event rewrite the column is what made
  * a Spanish reader's notifications flip back to English with the next sign-in. From then on it
  * changes through `PUT /me/preferences` alone, which the website calls with its own language.
  */

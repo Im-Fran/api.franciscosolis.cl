@@ -14,7 +14,7 @@ describe('GET /', () => {
     expect(await response.json()).toMatchObject({
       code: 200,
       data: {
-        categories: ['account', 'support', 'marketplace'],
+        categories: ['account', 'marketplace'],
         email_frequencies: ['immediate', 'daily', 'weekly', 'never'],
         digest: { timezone: 'America/Santiago', hour: 9, weekly_day: 'monday' },
         push: { vapid_public_key: null },

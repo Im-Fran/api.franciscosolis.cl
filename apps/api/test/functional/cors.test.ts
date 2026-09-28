@@ -124,16 +124,10 @@ describe('CORS preflight', () => {
     await expect(response.text()).resolves.toBe('')
   })
 
-  it('allows the write verbs the auth, cms and support modules need', async () => {
+  it('allows the write verbs the auth, cms and notifications modules need', async () => {
     const response = await preflight('/cms/content/projects', 'POST')
 
     expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PUT,PATCH,DELETE,OPTIONS')
-  })
-
-  it('advertises PUT for the support console assignee endpoint', async () => {
-    const response = await preflight('/support/admin/tickets/1/assignee', 'PUT')
-
-    expect(response.headers.get('Access-Control-Allow-Methods')).toContain('PUT')
   })
 
   it('covers what the notifications module needs without a list of its own', async () => {
@@ -153,11 +147,7 @@ describe('CORS preflight', () => {
   it('allows only the request headers the modules actually read', async () => {
     const response = await preflight('/cms/content/projects', 'POST')
 
-    // `X-Support-Ticket-Token` is the per-ticket secret from an emailed support link, which cannot
-    // ride in `Authorization` because a website session may already be there.
-    expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
-      'Content-Type,Authorization,X-Support-Ticket-Token',
-    )
+    expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type,Authorization')
   })
 
   it('lets the browser cache the preflight for ten minutes', async () => {

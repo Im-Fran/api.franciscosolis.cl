@@ -54,13 +54,4 @@ export { renderSaleReceiptEmail, SaleReceiptEmail } from './templates/sale-recei
 export type { SaleReceiptEmailProps, SaleSource } from './templates/sale-receipt'
 export { renderSaleRefundEmail, SaleRefundEmail } from './templates/sale-refund'
 export type { RefundReason, SaleRefundEmailProps } from './templates/sale-refund'
-export {
-  renderSupportParticipantAddedEmail,
-  SupportParticipantAddedEmail,
-} from './templates/support-participant-added'
-export type { SupportParticipantAddedEmailProps } from './templates/support-participant-added'
-export { renderSupportTicketReceivedEmail, SupportTicketReceivedEmail } from './templates/support-ticket-received'
-export type { SupportTicketReceivedEmailProps } from './templates/support-ticket-received'
-export { renderSupportTicketReplyEmail, SupportTicketReplyEmail } from './templates/support-ticket-reply'
-export type { SupportReplyExcerpt, SupportTicketReplyEmailProps } from './templates/support-ticket-reply'
 export { palette, theme } from './theme'

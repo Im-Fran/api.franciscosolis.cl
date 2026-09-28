@@ -5,8 +5,7 @@ import type { AccessTokenClaims } from '@/lib/jwks'
 
 /**
  * Mints the access tokens this Worker verifies offline, and publishes the matching key over a
- * stand-in for the `AUTH` binding — the only channel `lib/jwks.ts` reads the key set through. Same
- * technique as `apps/support/test/helpers/tokens.ts`.
+ * stand-in for the `AUTH` binding — the only channel `lib/jwks.ts` reads the key set through.
  */
 
 type Jwk = JsonWebKey & { kid: string; alg: string }

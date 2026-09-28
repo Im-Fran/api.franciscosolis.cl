@@ -141,7 +141,7 @@ const handleScheduled: ExportedHandlerScheduledHandler<Env> = async (controller,
 }
 
 /**
- * Three entry points, like `apps/support`, and only `fetch` comes through the gateway: the queue is
+ * Three entry points, and only `fetch` comes through the gateway: the queue is
  * dispatched by Cloudflare Queues and the cron by the scheduler, and neither passes through `apps/api`.
  */
 export default {

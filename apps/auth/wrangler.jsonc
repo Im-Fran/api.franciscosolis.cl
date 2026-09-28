@@ -101,7 +101,7 @@
   // The development stack: `auth-dev`, issuing tokens for api-dev.franciscosolis.cl.
   //
   // A named environment inherits nothing but the top-level inheritable keys, so every binding and
-  // var below is restated rather than merged — the same rule `apps/support`'s `test` environment
+  // var below is restated rather than merged — the same rule `apps/cms`'s `test` environment
   // documents. The parts worth reading twice:
   //
   // - The database and the bucket are the `-dev` copies. Signing in on dev must never touch a real

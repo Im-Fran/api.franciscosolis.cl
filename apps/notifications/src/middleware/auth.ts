@@ -18,7 +18,7 @@ const bearerToken = (header: string | undefined) => {
 /**
  * Turns a verification failure into a message safe to hand back. `hono/jwt` embeds the offending
  * token in several of its error messages, which would echo a live credential into a response body;
- * the class name says everything the caller needs. Same mapping as `apps/support`.
+ * the class name says everything the caller needs.
  */
 const describeTokenError = (error: unknown): string => {
   const name = error instanceof Error ? error.name : ''

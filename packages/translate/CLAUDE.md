@@ -10,8 +10,8 @@ language) into files, commits, or code in this repo.
 ## Purpose
 
 `@franciscosolis/translate` holds the one prompt this monorepo uses to machine-translate a
-field of prose, and the parsing that turns a model's answer back into a string. `apps/cms`,
-`apps/marketplace` and `apps/support` all import it; none of them writes a prompt of its own. It is
+field of prose, and the parsing that turns a model's answer back into a string. `apps/cms` and
+`apps/marketplace` both import it; neither of them writes a prompt of its own. It is
 the second entry under `packages/` and the second non-Worker workspace package.
 
 A consumer supplies a `runner` — a function that hands an input to a model and returns its
@@ -36,10 +36,10 @@ bundles, and its behaviour is covered from inside `workerd` by the consuming sui
 ## Architecture notes (non-obvious)
 
 - **It knows nothing about D1, Hono or `env`, and that is the reason it can be shared.** The
-  three Workers differ in the database the call is metered in (`ai_requests`, per Worker) and
-  the gate in front of it (`requireEditor` in two of them, `support:admin` in the third) —
-  not in a single word of what the model is asked. Adding an `Env` parameter here would make
-  it a fourth copy of each Worker's wiring.
+  two Workers differ in the database the call is metered in (`ai_requests`, per Worker) and
+  the gate in front of it (`requireEditor` in both, with a permission on top in the marketplace)
+  — not in a single word of what the model is asked. Adding an `Env` parameter here would make
+  it a third copy of each Worker's wiring.
 - **Everything fails to `null`; nothing throws.** A translation is an offer, never a step in
   saving a record, so "the model is down", "it timed out", "it answered prose instead of
   JSON" and "the answer is over the field's cap" are one outcome to the person in front of

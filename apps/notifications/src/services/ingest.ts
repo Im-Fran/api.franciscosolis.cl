@@ -12,7 +12,7 @@ import { getRecipient, toPreferences, upsertRecipient } from '@/services/recipie
 /**
  * The queue consumer's work, one event at a time.
  *
- * This is the only way a notification is created. Producers — `auth`, `support`, `marketplace` —
+ * This is the only way a notification is created. Producers — `auth` and `marketplace` —
  * put a `NotificationEvent` on the queue and move on; nothing they do waits on this Worker, and
  * nothing this Worker does can fail a sign-in or a payment.
  *
@@ -50,7 +50,7 @@ type NotificationEvent = v.InferOutput<typeof eventSchema>
  */
 type IngestOutcome = 'created' | 'duplicate' | 'invalid' | 'retry'
 
-/** Strings in `data` are capped, so a producer bug cannot put a ticket body in a push payload. */
+/** Strings in `data` are capped, so a producer bug cannot put a release note in a push payload. */
 const MAX_DATA_STRING = 300
 
 const clampData = (data: Record<string, string | number | boolean | null>): NotificationData =>

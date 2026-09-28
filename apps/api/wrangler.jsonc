@@ -39,10 +39,6 @@
       "service": "marketplace"
     },
     {
-      "binding": "SUPPORT",
-      "service": "support"
-    },
-    {
       "binding": "NOTIFICATIONS",
       "service": "notifications"
     }
@@ -93,10 +89,6 @@
         {
           "binding": "MARKETPLACE",
           "service": "marketplace-dev"
-        },
-        {
-          "binding": "SUPPORT",
-          "service": "support-dev"
         },
         {
           "binding": "NOTIFICATIONS",
