@@ -403,7 +403,7 @@ All configuration lives in `wrangler.jsonc` under `vars`:
 
 The editorial permission, `marketplace:editor`, is a **constant** in `src/lib/config.ts` rather than
 a var — the string is a fact about the code, and a deployment that could rename it could also empty
-it. `apps/support` does the same with `support:agent`.
+it.
 
 Secrets, set with `wrangler secret put` and listed in `.dev.vars.example` for local work:
 

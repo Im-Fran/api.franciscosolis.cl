@@ -15,8 +15,8 @@ import type { Locale } from '@/lib/locales'
  * the editor a button that produced nothing, never a draft. That is why nothing here throws: the
  * failure modes are all the same failure to the person in front of it.
  *
- * The prompt itself is not here. It lives in `@franciscosolis/translate`, shared with `apps/cms`
- * and `apps/support`, because the three Workers differ in the database the call is metered in and
+ * The prompt itself is not here. It lives in `@franciscosolis/translate`, shared with `apps/cms`,
+ * because the two Workers differ in the database the call is metered in and
  * the gate in front of it, not in a single word of what the model is asked.
  */
 

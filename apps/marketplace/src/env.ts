@@ -52,8 +52,8 @@ type Env = {
    *
    * A sale that nobody can produce a receipt for is a support conversation with no evidence in it,
    * and for a cash or transfer sale the receipt is the *only* record the buyer ever gets. It is a
-   * send-only binding — this Worker has no inbound mail and must not grow any; correspondence is
-   * `apps/support`'s job and a ticket is where a reply belongs.
+   * send-only binding — this Worker has no inbound mail and must not grow any; correspondence
+   * happens by email at soporte@franciscosolis.cl, not in a payments service.
    */
   EMAIL: EmailSender
   /**
@@ -74,9 +74,8 @@ type Env = {
   /**
    * Comma-separated client application ids whose tokens identify a *buyer* rather than an editor.
    *
-   * Deliberately a second list rather than an addition to `MARKETPLACE_ALLOWED_AUDIENCES`, for the same
-   * reason `apps/support` keeps two: merging them would leave the email-domain check as the only
-   * thing keeping a website token out of `/admin`. This list is wider — it is the public website —
+   * Deliberately a second list rather than an addition to `MARKETPLACE_ALLOWED_AUDIENCES`, because
+   * merging them would leave the email-domain check as the only thing keeping a website token out of `/admin`. This list is wider — it is the public website —
    * and the routes it opens are a person's own purchases and their own downloads, nothing else.
    */
   MARKETPLACE_ACCOUNT_AUDIENCES: string
