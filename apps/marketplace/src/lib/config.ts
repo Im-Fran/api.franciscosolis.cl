@@ -96,13 +96,12 @@ const ENTITLING_STATUS: PurchaseStatus = 'approved'
  * The permission an access token has to carry to get into `/admin`, on top of the audience and the
  * email domain.
  *
- * `apps/cms` deliberately stops at the domain gate and never reads `permissions`; `apps/support` was
- * the first Worker here that could not, and this is the second. The reason is the same shape of
- * reason: a marketplace has *people* in it — an editor who answers a review is named on the page, a
- * sale recorded by hand carries the address of whoever took the money, and a moderation queue is a
- * roster. "Everyone with a company address" is not a roster.
+ * `apps/cms` deliberately stops at the domain gate and never reads `permissions`; this Worker
+ * cannot, because a marketplace has *people* in it — an editor who answers a review is named on the
+ * page, a sale recorded by hand carries the address of whoever took the money, and a moderation
+ * queue is a roster. "Everyone with a company address" is not a roster.
  *
- * A constant rather than a var, matching `AGENT_PERMISSION` in `apps/support`: the string is a fact
+ * A constant rather than a var: the string is a fact
  * about the code, and a deployment that could rename it could also empty it.
  *
  * The cost, inherited from `lib/jwks.ts`: `permissions` is a snapshot taken when the token was

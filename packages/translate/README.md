@@ -12,14 +12,13 @@
 
 ## 📖 Overview
 
-Three Workers in this monorepo store translations — [`apps/cms`](../../apps/cms/README.md) for the
-landing page's content and its legal documents, [`apps/marketplace`](../../apps/marketplace/README.md) for the
-the marketplace's product pages, release notes and help content, and [`apps/support`](../../apps/support/README.md) for the help centre
-— and all three offer their editors the same thing: a first draft of one field in one other
+Two Workers in this monorepo store translations — [`apps/cms`](../../apps/cms/README.md) for the
+landing page's content and its legal documents, and [`apps/marketplace`](../../apps/marketplace/README.md)
+for the product pages, release notes and wiki — and both offer their editors the same thing: a first draft of one field in one other
 language, produced by Workers AI, returned for review and saved through the ordinary `PATCH` that
 saves every other override.
 
-What differs between the three is the database the call is metered in (`ai_requests`, one table per
+What differs between the two is the database the call is metered in (`ai_requests`, one table per
 Worker) and the gate in front of it. Not one word of what the model is asked. So the prompt lives
 here, once, and each Worker wires it to its own `AI` binding.
 
@@ -35,8 +34,8 @@ so a build step here would only add an artifact to keep in sync.
 
 ## ✨ Features
 
-- **One prompt, three services** — an editor's draft reads the same whether it came from the CMS,
-  an application page or a help article, because there is only one set of instructions to drift.
+- **One prompt, two services** — an editor's draft reads the same whether it came from the CMS
+  or a product page, because there is only one set of instructions to drift.
 - **Everything fails to `null`, nothing throws** — "the model is down", "it timed out", "it answered
   prose instead of JSON" and "the answer is over the field's cap" are one outcome to the person in
   front of it: no draft, write it yourself. A translation is an offer, never a step in saving a
@@ -124,7 +123,7 @@ failure seen while building it: a model that answers the text instead of transla
 "improves" a summary on the way through, one that translates the words inside a Markdown link
 target, and one that wraps its answer in a friendly sentence. Do not tidy them into prose.
 
-A change here changes all three services at once, so cover it from
+A change here changes both services at once, so cover it from
 `apps/cms/test/unit/translate.test.ts`. Tests live in the consuming Workers on purpose: those run
 inside `workerd`, which is the runtime that actually has to execute this code.
 

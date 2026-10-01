@@ -35,11 +35,11 @@ Events arrive on a **Cloudflare Queue**, not over HTTP — see [How events arriv
   and body are written from a catalog in English or Spanish when they are read, emailed or pushed.
 - **Web Push** — VAPID (RFC 8292) and `aes128gcm` payload encryption (RFC 8291), implemented on
   WebCrypto with no dependency. Dead subscriptions are dropped as push services report them.
-- **Preferences** — push and email per category (`account`, `support`, `marketplace`) plus one email
+- **Preferences** — push and email per category (`account`, `marketplace`) plus one email
   frequency. In-site notifications have no switch: they are the record.
 - **Digests** — one email listing what the person has not already read on the site, sent only if
   there is something to list.
-- **No duplicate mail** — receipts, refunds and support replies are still emailed by the Worker that
+- **No duplicate mail** — receipts and refund notices are still emailed by the Worker that
   owns them, so for those this one keeps the in-site copy and the push and never emails them again.
 
 ---
@@ -117,7 +117,7 @@ missing one.
 
 ## 📨 How events arrive
 
-`apps/auth`, `apps/support` and `apps/marketplace` put a `NotificationEvent` on the queue and carry
+`apps/auth` and `apps/marketplace` put a `NotificationEvent` on the queue and carry
 on. This Worker is the queue's consumer:
 
 ```ts
@@ -129,7 +129,6 @@ on. This Worker is the queue's consumer:
 | --- | --- | --- |
 | `account.sign_in`, `account.authorization` | auth | yes — immediate uses the detailed account-access template |
 | `account.avatar_approved`, `account.avatar_rejected` | auth | yes |
-| `support.ticket_reply`, `support.participant_added` | support | no — support emails them itself |
 | `marketplace.purchase_completed`, `marketplace.purchase_refunded` | marketplace | no — the receipt and refund notice |
 | `marketplace.release_published`, `marketplace.review_reply` | marketplace | yes |
 
@@ -171,7 +170,7 @@ was created with, so a dev subscription can never be pushed to from production. 
 orphans every subscription; the website re-subscribes on the next visit.
 
 The Worker must be deployed as `notifications` for the gateway's binding to resolve, and **after**
-`auth`, because it binds it. The queue must exist before `auth`, `support` and `marketplace` deploy,
+`auth`, because it binds it. The queue must exist before `auth` and `marketplace` deploy,
 since they bind it as producers — a queue is not a Worker, so it adds no cycle to the deploy order.
 The cron fires only on the production deployment, never on a preview.
 

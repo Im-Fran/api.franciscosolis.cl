@@ -2,9 +2,9 @@
  * The languages a template can be rendered in.
  *
  * Every template in this package used to be English-only, because every message it sent was
- * transactional plumbing from a service whose own interface is English. Support mail is the first
- * thing here that is *correspondence*: somebody wrote in, in their own language, and answering them
- * in another one is rude in a way a sign-in link never was.
+ * transactional plumbing from a service whose own interface is English. A receipt or a notice is
+ * read by somebody who chose a language on the website, though, and answering them in another one
+ * is rude in a way a sign-in link never was.
  *
  * The copy for each language is a plain object inside the template, not a lookup through an i18n
  * library. That is deliberate and worth defending: this package ships TypeScript source with no

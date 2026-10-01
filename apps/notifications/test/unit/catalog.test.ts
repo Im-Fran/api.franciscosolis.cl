@@ -21,8 +21,6 @@ describe('the notification catalog', () => {
     // These producers keep sending their own mail on purpose; emailing them again would be the
     // duplicate this Worker exists to prevent.
     for (const type of [
-      'support.ticket_reply',
-      'support.participant_added',
       'marketplace.purchase_completed',
       'marketplace.purchase_refunded',
     ] as const) {
@@ -38,12 +36,12 @@ describe('the notification catalog', () => {
   })
 
   it('interpolates the data in the requested language', () => {
-    const data = { reference: 'FS-1042', subject: 'No llega el enlace', author_name: 'Fran' }
-    expect(renderCopy('support.ticket_reply', data, 'es')).toEqual({
-      title: 'Nueva respuesta en FS-1042',
-      body: 'Fran respondió a “No llega el enlace”.',
+    const data = { product_name: 'OpenBattery', amount: '$5.000' }
+    expect(renderCopy('marketplace.purchase_completed', data, 'es')).toEqual({
+      title: 'Compra confirmada: OpenBattery',
+      body: 'Recibimos tu pago de $5.000. Tu comprobante va en camino.',
     })
-    expect(renderCopy('support.ticket_reply', data, 'en').title).toBe('New reply on FS-1042')
+    expect(renderCopy('marketplace.purchase_completed', data, 'en').title).toBe('Purchase confirmed: OpenBattery')
   })
 
   it('reads a missing parameter as a dash rather than "undefined"', () => {

@@ -47,7 +47,7 @@
   "send_email": [
     {
       // The voucher, and the notice that one was refunded. Nothing else: this Worker sends receipts
-      // and does not correspond — a reply belongs on a support ticket, not in a payments service.
+      // and does not correspond — a reply belongs in the soporte@franciscosolis.cl inbox, not in a payments service.
       //
       // Cloudflare rejects a send from any address not listed here, so this is the outer bound of
       // what this Worker can ever send as. There is only one, because unlike the CMS nothing here
@@ -106,7 +106,7 @@
     "MARKETPLACE_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
     // Client ids whose tokens identify a *buyer* rather than an editor: the public website. A second
     // list rather than an addition to the one above, so widening the website's reach can never widen
-    // `/admin`'s — the same split `apps/support` keeps between its console and its requesters.
+    // `/admin`'s.
     "MARKETPLACE_ACCOUNT_AUDIENCES": "franciscosolis-web",
     // Public base URL of this Worker through the gateway. Used to build the download links handed to a
     // browser and the notification URL MercadoPago posts to; neither is derivable from the request,
@@ -117,7 +117,7 @@
     "SITE_BASE_URL": "https://franciscosolis.cl",
     // Address every voucher and refund notice goes out as, and the name the email footer signs off
     // with. `no-reply`, deliberately: a receipt is not a conversation, and an answer to one belongs
-    // on a support ticket where somebody will see it.
+    // at soporte@franciscosolis.cl, where somebody will see it.
     "MAIL_FROM_EMAIL": "no-reply@mail.franciscosolis.cl",
     "MAIL_FROM_NAME": "FranciscoSolis",
     // Which MercadoPago account this Worker takes money against, and therefore which of the two

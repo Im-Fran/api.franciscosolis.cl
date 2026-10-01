@@ -70,15 +70,13 @@ describe('GET /openapi.json', () => {
       '/marketplace/thing',
       '/notifications',
       '/notifications/thing',
-      '/support',
-      '/support/thing',
     ])
   })
 
   it('keeps each module operation attached to the module it came from', async () => {
     const { paths } = await documentFrom(await gateway('/openapi.json'))
 
-    for (const module of ['landing', 'auth', 'cms', 'marketplace', 'support', 'notifications']) {
+    for (const module of ['landing', 'auth', 'cms', 'marketplace', 'notifications']) {
       expect(paths[`/${module}`]?.get?.summary).toBe(`${module} root`)
       expect(paths[`/${module}/thing`]?.get?.summary).toBe(`${module} thing`)
     }
@@ -87,7 +85,7 @@ describe('GET /openapi.json', () => {
   it('collapses each module root onto the bare prefix', async () => {
     const { paths } = await documentFrom(await gateway('/openapi.json'))
 
-    for (const module of ['landing', 'auth', 'cms', 'marketplace', 'support', 'notifications']) {
+    for (const module of ['landing', 'auth', 'cms', 'marketplace', 'notifications']) {
       expect(paths).not.toHaveProperty([`/${module}/`])
     }
   })
@@ -144,10 +142,10 @@ describe('GET /<module>/openapi.json', () => {
   })
 
   it('keeps every module schema, unlike the merged document that collapses them', async () => {
-    const perModule = await Promise.all(['landing', 'auth', 'cms', 'marketplace', 'support', 'notifications'].map(async (module) =>
+    const perModule = await Promise.all(['landing', 'auth', 'cms', 'marketplace', 'notifications'].map(async (module) =>
       Object.keys((await documentFrom(await gateway(`/${module}/openapi.json`))).components.schemas)))
 
-    expect(perModule).toEqual([['landingSchema'], ['authSchema'], ['cmsSchema'], ['marketplaceSchema'], ['supportSchema'], ['notificationsSchema']])
+    expect(perModule).toEqual([['landingSchema'], ['authSchema'], ['cmsSchema'], ['marketplaceSchema'], ['notificationsSchema']])
   })
 })
 
@@ -162,7 +160,7 @@ describe('GET /openapi.json with a module unavailable', () => {
     const { paths } = await documentFrom(response)
     expect(Object.keys(paths).sort()).toEqual([
       '/', '/auth', '/auth/thing', '/cms', '/cms/thing', '/marketplace', '/marketplace/thing', '/notifications',
-      '/notifications/thing', '/support', '/support/thing',
+      '/notifications/thing',
     ])
   })
 
@@ -191,7 +189,7 @@ describe('GET /openapi.json with a module unavailable', () => {
   it('still answers with the gateway own routes when every module is down', async () => {
     const down = () => fetcher(() => Promise.reject(new Error('down')))
     const response = await gatewayWithBindings(
-      { LANDING: down(), AUTH: down(), CMS: down(), MARKETPLACE: down(), SUPPORT: down(), NOTIFICATIONS: down() },
+      { LANDING: down(), AUTH: down(), CMS: down(), MARKETPLACE: down(), NOTIFICATIONS: down() },
       '/openapi.json',
     )
 
@@ -214,13 +212,12 @@ describe('GET /openapi.json with a module unavailable', () => {
         AUTH: recording('auth'),
         CMS: recording('cms'),
         MARKETPLACE: recording('marketplace'),
-        SUPPORT: recording('support'),
         NOTIFICATIONS: recording('notifications'),
       },
       '/openapi.json?ignored=1',
     )
 
     expect(response.status).toBe(200)
-    expect(asked).toEqual(Array(6).fill('/openapi.json'))
+    expect(asked).toEqual(Array(5).fill('/openapi.json'))
   })
 })

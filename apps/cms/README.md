@@ -318,7 +318,7 @@ Only the caller's own mistakes are errors: an unknown `field`, a blank `text`, a
 with no per-Worker spend cap, and that limit is the ceiling on what a loop in a front-end can cost.
 
 The prompt itself lives in [`@franciscosolis/translate`](../../packages/translate/README.md), shared
-with [`apps/pages`](../pages/README.md) and [`apps/support`](../support/README.md).
+with [`apps/marketplace`](../marketplace/README.md).
 
 ---
 

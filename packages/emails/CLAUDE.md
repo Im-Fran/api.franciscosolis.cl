@@ -11,9 +11,9 @@ language) into files, commits, or code in this repo.
 
 `@franciscosolis/emails` holds every email body the monorepo sends, written as
 [react-email](https://react.email) components. `apps/auth` uses it for magic links, invitations and
-account access notices, `apps/cms` for editorial messages, `apps/support` for ticket correspondence,
-and `apps/marketplace` for the two documents that come with a sale: the voucher and the notice that one was
-refunded. It is the first entry under `packages/` and the only non-Worker workspace package.
+account access notices, `apps/cms` for editorial messages, `apps/notifications` for notices and
+digests, and `apps/marketplace` for the two documents that come with a sale: the voucher and the
+notice that one was refunded. It is the first entry under `packages/` and the only non-Worker workspace package.
 
 A consumer imports a `render*Email` function, gets `{ subject, html, text }` and hands
 that to its Cloudflare Email Sending binding. No Worker builds markup itself any more.
@@ -92,7 +92,7 @@ package. That is deliberate on all four counts — see below.
 - **Every template an account holder receives takes a `locale`** (`locale.ts`, `en` / `es`), with its
   copy as a plain object inside the template. `resolveEmailLocale` reads only the base tag, so an
   account's stored `es-CL` or `es-419` resolves to `es`, and anything else to English. The magic link
-  and the account-access notice joined the support and sale templates in taking one; the invitation
+  and the account-access notice joined the sale templates in taking one; the invitation
   is the one left in English, because it goes to an address nobody has a language for yet.
 - **Amounts are formatted here, dates are not** (`money.ts`). `formatMoney` pins
   `maximumFractionDigits` to zero because every amount this monorepo charges is an integer of the
@@ -129,13 +129,6 @@ package. That is deliberate on all four counts — see below.
   what rules out `@media (prefers-color-scheme: dark)` and is why the palette is light-first instead
   of adaptive. It is also why `PLAIN_TEXT_SKIP_CLASS` is a class name — a class attribute costs
   nothing in a mail client and is the one hook html-to-text can select on.
-- **`PLAIN_TEXT_MENTION_CLASS` exists because html-to-text prints an anchor's href after its text.**
-  An `@mention` in a support reply links to `mailto:someone@example.com` under the text
-  `@someone@example.com`; the two are not byte-identical, so the default `hideLinkHrefIfSameAsText`
-  does not fire and the plain-text part read the address twice in a row. The selector in `render.ts`
-  turns the href off for that one class, and it needs a `format` beside its options — html-to-text
-  throws at compile time for a non-tag selector without one. `mentions.ts` holds the pattern itself,
-  duplicated by hand in the website repository, which renders the same convention in the console.
 - **The logo is a hosted PNG, and every property of it is forced.** Gmail strips inline SVG and
   blocks `data:` URIs, so it cannot be embedded; `apps/api` serves it at `/brand/lockup.png` because
   that Worker owns the only public hostname in the repo. It is flattened onto white rather than

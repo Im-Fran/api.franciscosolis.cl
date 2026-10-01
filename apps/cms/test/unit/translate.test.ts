@@ -11,7 +11,7 @@ import {
 /**
  * `@franciscosolis/translate`, the shared prompt behind every machine translation in this monorepo.
  *
- * It is covered from here, and from the `pages` and `support` suites, for the same reason
+ * It is covered from here, and from the `marketplace` suite, for the same reason
  * `@franciscosolis/emails` is: the package ships TypeScript source that each Worker bundles, so the
  * only place it can be exercised the way it actually runs is inside `workerd`.
  */

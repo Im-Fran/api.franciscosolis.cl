@@ -15,11 +15,11 @@ import { bearerToken, describeTokenError } from '@/middleware/auth'
  * the editorial one on purpose, so widening the website's access can never widen `/admin`'s. There is
  * no domain check and there must not be one: the whole point is that anybody can buy.
  *
- * **This Worker cannot ask whether an address has an account**, exactly as `apps/support` cannot: it
- * has no binding into the auth database and must never get one. So the link between a payment and a
- * person is only ever made while a verified token is in hand — which is why buying requires signing
- * in first, and why "buying creates an SSO account" is the magic-link sign-in on the website doing
- * its usual job rather than anything this Worker provisions.
+ * **This Worker cannot ask whether an address has an account**: it has no binding into the auth
+ * database and must never get one. So the link between a payment and a person is only ever made
+ * while a verified token is in hand — which is why buying requires signing in first, and why
+ * "buying creates an SSO account" is the magic-link sign-in on the website doing its usual job
+ * rather than anything this Worker provisions.
  */
 
 /** Everything a buyer-facing handler needs to know about the caller. */

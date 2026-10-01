@@ -10,7 +10,7 @@ language) into files, commits, or code in this repo.
 ## Repo purpose
 
 `marketplace` is the storefront Worker for the `api.franciscosolis.cl` monorepo. Like `landing`,
-`auth`, `cms` and `support` it is not public: the root gateway (`apps/api`) reaches it through the
+`auth`, `cms` and `notifications` it is not public: the root gateway (`apps/api`) reaches it through the
 `MARKETPLACE` service binding and proxies `/marketplace/*` to it, so its public base URL is
 `https://api.franciscosolis.cl/marketplace`. It lives at `apps/marketplace`.
 
@@ -49,7 +49,7 @@ audience list.
   `src/lib/mercadopago.ts` rather than a dependency that assumes Node.
 - **Cloudflare Email Sending** (`EMAIL`) and `@franciscosolis/emails` for one thing only: the voucher,
   and the notice that one was refunded. This Worker has no inbound mail and must not grow any —
-  correspondence is `apps/support`'s job, and a reply belongs on a ticket. Like the CMS it aliases
+  correspondence happens by email at soporte@franciscosolis.cl. Like the CMS it aliases
   `prettier/standalone` and `prettier/plugins/html` out of its bundle, in `wrangler.jsonc` *and* in
   `vitest.config.ts`.
 - **`@franciscosolis/translate`** (workspace package) for the prompt behind `POST /admin/translate`,
@@ -326,7 +326,7 @@ is a 401 for everybody, which is the correct failure and an invisible one.
 - **Four things must hold to get into `/admin`** (`requireEditor`): a valid unexpired signature from
   the auth issuer, an `aud` in `MARKETPLACE_ALLOWED_AUDIENCES`, a *verified* email whose full domain
   label is in `MARKETPLACE_ALLOWED_EMAIL_DOMAINS`, and the `marketplace:editor` permission. This is
-  the second Worker here to check a permission, after `apps/support` and unlike `apps/cms`: a
+  the Worker here that checks a permission, unlike `apps/cms`: a
   marketplace has *people* in it, and "everyone with a company address" is not a roster. The cost is
   staleness — `permissions` is a snapshot, so revoking an editor takes effect within one
   access-token lifetime. The domain check runs every request and is the harder boundary.

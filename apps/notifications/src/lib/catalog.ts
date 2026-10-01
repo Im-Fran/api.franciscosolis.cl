@@ -9,8 +9,8 @@ import { DEFAULT_LOCALE, LOCALES } from '@/lib/config'
  * changed language in between, and it is what keeps a wording fix from being a data migration.
  *
  * `emailable` is the rule that stops the same news arriving twice. Some producers still email on
- * their own, on purpose — a receipt is a document, a support reply is a conversation that can be
- * answered from the inbox — and for those this Worker only keeps the in-site copy and the push.
+ * their own, on purpose — a receipt is a document, a refund notice is proof the money moved — and
+ * for those this Worker only keeps the in-site copy and the push.
  * Everything else is this Worker's to email, immediately or in a digest, as the recipient chose.
  *
  * An unknown type is refused at ingest rather than stored with a generic text: a producer sending a
@@ -72,22 +72,6 @@ const CATALOG = {
     copy: {
       en: { title: 'Your profile picture was not approved', body: '{reason}' },
       es: { title: 'Tu foto de perfil no fue aprobada', body: '{reason}' },
-    },
-  },
-  'support.ticket_reply': {
-    category: 'support',
-    emailable: false,
-    copy: {
-      en: { title: 'New reply on {reference}', body: '{author_name} replied to “{subject}”.' },
-      es: { title: 'Nueva respuesta en {reference}', body: '{author_name} respondió a “{subject}”.' },
-    },
-  },
-  'support.participant_added': {
-    category: 'support',
-    emailable: false,
-    copy: {
-      en: { title: 'You were added to {reference}', body: 'You are now following “{subject}”.' },
-      es: { title: 'Te agregaron a {reference}', body: 'Ahora sigues “{subject}”.' },
     },
   },
   'marketplace.purchase_completed': {
@@ -161,7 +145,7 @@ const channelLabel = (channel: string, locale: Locale) => CHANNEL_LABELS[locale]
 /**
  * Title and body for one notification in one language.
  *
- * Plain text, always. `data` is whatever a producer sent — a ticket subject, a product name, an
+ * Plain text, always. `data` is whatever a producer sent — a product name, a review excerpt, an
  * avatar rejection reason an administrator typed — and none of it is ever treated as markup here:
  * the website renders these as text nodes and the email templates escape them like any other prop.
  */

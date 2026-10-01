@@ -347,7 +347,7 @@ const channelSchema = v.object({ push: v.boolean(), email: v.boolean() })
  */
 const preferencesSchema = v.object({
   email_frequency: v.picklist(EMAIL_FREQUENCIES),
-  categories: v.object({ account: channelSchema, support: channelSchema, marketplace: channelSchema }),
+  categories: v.object({ account: channelSchema, marketplace: channelSchema }),
   locale: v.picklist(LOCALES),
 })
 
@@ -356,7 +356,7 @@ const channelUpdateSchema = v.optional(v.strictObject({ push: v.optional(v.boole
 const preferencesUpdateSchema = v.strictObject({
   email_frequency: v.optional(v.picklist(EMAIL_FREQUENCIES)),
   categories: v.optional(
-    v.strictObject({ account: channelUpdateSchema, support: channelUpdateSchema, marketplace: channelUpdateSchema }),
+    v.strictObject({ account: channelUpdateSchema, marketplace: channelUpdateSchema }),
   ),
   locale: v.optional(v.picklist(LOCALES)),
 })
