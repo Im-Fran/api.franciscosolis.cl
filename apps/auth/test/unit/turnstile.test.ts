@@ -8,22 +8,33 @@ afterEach(restoreFetch)
 
 const configured = testEnv({ TURNSTILE_SITE_KEY: '1x00000000000000000000AA', TURNSTILE_SECRET_KEY: 'secret-half' })
 
+/**
+ * Both halves stated on every case, including the ones that are *about* a half being absent.
+ *
+ * `testEnv` copies the live environment before overriding it, and that environment is the real
+ * `wrangler.jsonc`, which now carries a production site key. A case that said only "and no secret"
+ * was therefore reading the deployment's site key and testing the opposite of what it claims — the
+ * failure that caught it. Spelling out the empty half keeps each case describing itself.
+ */
+const half = (overrides: { site?: string; secret?: string }) =>
+  testEnv({ TURNSTILE_SITE_KEY: overrides.site ?? '', TURNSTILE_SECRET_KEY: overrides.secret ?? '' })
+
 const siteverify = (body: unknown, status = 200) =>
   stubFetch({ [TURNSTILE_VERIFY_ENDPOINT]: () => new Response(JSON.stringify(body), { status }) })
 
 describe('isTurnstileConfigured', () => {
   it('needs both halves of the keypair', () => {
     expect(isTurnstileConfigured(configured)).toBe(true)
-    expect(isTurnstileConfigured(testEnv({ TURNSTILE_SITE_KEY: 'only-the-public-half' }))).toBe(false)
-    expect(isTurnstileConfigured(testEnv({ TURNSTILE_SECRET_KEY: 'only-the-private-half' }))).toBe(false)
-    expect(isTurnstileConfigured(testEnv())).toBe(false)
+    expect(isTurnstileConfigured(half({ site: 'only-the-public-half' }))).toBe(false)
+    expect(isTurnstileConfigured(half({ secret: 'only-the-private-half' }))).toBe(false)
+    expect(isTurnstileConfigured(half({}))).toBe(false)
   })
 })
 
 describe('describeTurnstile', () => {
   it('hands out the public half only, and only where the pair is complete', () => {
     expect(describeTurnstile(configured)).toEqual({ required: true, site_key: '1x00000000000000000000AA' })
-    expect(describeTurnstile(testEnv({ TURNSTILE_SECRET_KEY: 'half' }))).toEqual({ required: false, site_key: null })
+    expect(describeTurnstile(half({ secret: 'the-private-half' }))).toEqual({ required: false, site_key: null })
   })
 })
 
@@ -31,8 +42,8 @@ describe('verifyTurnstile', () => {
   it('does nothing at all on a deployment with no keypair, token or not', async () => {
     const { calls } = siteverify({ success: false })
 
-    await expect(verifyTurnstile(testEnv(), undefined, null)).resolves.toBeUndefined()
-    await expect(verifyTurnstile(testEnv(), 'anything', null)).resolves.toBeUndefined()
+    await expect(verifyTurnstile(half({}), undefined, null)).resolves.toBeUndefined()
+    await expect(verifyTurnstile(half({}), 'anything', null)).resolves.toBeUndefined()
 
     expect(calls).toHaveLength(0)
   })

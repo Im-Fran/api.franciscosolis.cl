@@ -25,5 +25,7 @@ AUTH_LOGIN_URL=http://localhost:5173/apps/auth
 # anything is challenged: the site key is what the sign-in front-end renders, the secret key is what
 # verifies the token here. Leaving them unset is supported and is what a local run normally does —
 # `lib/turnstile.ts` skips the check when either is missing, rather than refusing every sign-in.
+# Overriding the site key here only makes sense with a widget that names localhost; the deployed
+# ones in wrangler.jsonc are registered for franciscosolis.cl and dev.franciscosolis.cl.
 TURNSTILE_SITE_KEY=
 TURNSTILE_SECRET_KEY=
