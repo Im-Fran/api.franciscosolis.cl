@@ -78,13 +78,14 @@
     "AUTH_LOGIN_URL": "https://franciscosolis.cl/apps/auth",
     "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
     "MAIL_FROM_NAME": "FranciscoSolis",
-    // Public half of the Cloudflare Turnstile keypair. It is a var and not a secret because the
-    // sign-in front-end renders it into the widget; the private half is the `TURNSTILE_SECRET_KEY`
-    // secret, set with `wrangler secret put`. An empty value here — or a missing secret — turns the
-    // bot check off rather than failing every sign-in, which is what makes a local Worker and the
-    // test suite work without a keypair. Each environment needs its own: a token is bound to the
-    // hostnames the widget was created for.
-    "TURNSTILE_SITE_KEY": ""
+    // Public half of the Cloudflare Turnstile keypair, for the widget registered against
+    // franciscosolis.cl. It is a var and not a secret because the sign-in front-end renders it into
+    // the widget; the private half is the `TURNSTILE_SECRET_KEY` secret, set with
+    // `wrangler secret put`. Emptying this — or leaving the secret unset — turns the bot check off
+    // rather than failing every sign-in, which is what makes a local Worker and the test suite work
+    // without a keypair. Each environment needs its own: a token is bound to the hostnames the
+    // widget was created for, so the dev key below is not interchangeable with this one.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAAPXedjKoJBZqc7x"
   },
   "observability": {
     "enabled": true,
@@ -158,10 +159,10 @@
         // opened. Magic links in dev point at api-dev and work nowhere else, and somebody has to be
         // able to tell that from the sender line.
         "MAIL_FROM_NAME": "FranciscoSolis (dev)",
-        // The development keypair, whose widget is registered for dev.franciscosolis.cl. Empty
-        // until it is created, which leaves the development stack unchallenged — see the note on
-        // the production var above.
-        "TURNSTILE_SITE_KEY": ""
+        // The development keypair, whose widget is registered for dev.franciscosolis.cl. A
+        // different widget from production's on purpose: a token is only valid for the hostnames
+        // its widget names, so a dev challenge can never be replayed against the real sign-in.
+        "TURNSTILE_SITE_KEY": "0x4AAAAAAFC9QcnPB377ATKw"
       }
     }
   }

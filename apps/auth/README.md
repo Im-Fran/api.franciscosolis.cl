@@ -178,9 +178,10 @@ OAuth client.
 | `TURNSTILE_SECRET_KEY` | secret, optional | Private half, used to verify a widget token against Cloudflare |
 
 Turnstile is off until **both** halves are present, which is what lets a local Worker and the test
-suite sign in without a keypair. Create one widget per environment (its token is bound to the
-hostnames it was created for), put the site key in the `vars` of the matching half of
-`wrangler.jsonc`, and the secret key in that environment's secret store.
+suite sign in without a keypair. Both site keys are already in `wrangler.jsonc` — one widget per
+environment, since a token is only valid for the hostnames its widget names — so what is left per
+deployment is the secret key in that environment's own secret store. Until it is set, the deployment
+carries a site key and still challenges nobody.
 
 In production, set the secrets with Wrangler:
 
