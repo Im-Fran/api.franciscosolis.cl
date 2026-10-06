@@ -442,11 +442,16 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   is what mail clients' colour rewriting breaks worst, and the palette, the `bgcolor`
   attributes and the missing `<style>` block are all defending against a specific client.
   See `packages/emails/CLAUDE.md` before changing any of them.
-- **The email layout reaches back into `apps/api`**: `EmailLayout` renders the brand lockup
-  from `https://api.franciscosolis.cl/brand/lockup.png`, which `apps/api/src/brand.ts` serves.
-  An email cannot carry a logo any other way — Gmail blocks `data:` URIs and strips inline
-  SVG — and the gateway owns the only public hostname in the repo. Renaming that path breaks
-  the logo in every inbox already delivered, so `theme.logo.src` and the route move together.
+- **The email logo lives on the asset CDN, and the gateway keeps the old copy**: `EmailLayout`
+  renders the brand lockup from `https://cdn.franciscosolis.cl/emails/lockup.png` — the
+  `franciscosolis` R2 bucket, which `.github/workflows/cdn.yml` fills from
+  `packages/emails/assets/` on a push to `dev`. An email cannot carry a logo any other way — Gmail
+  blocks `data:` URIs and strips inline SVG. The bucket is shared with the front-end repository,
+  which owns every other prefix in it; this repo owns `emails/` and nothing else, and the upload
+  only ever puts, never deletes. Mail sent before the move points at
+  `https://api.franciscosolis.cl/brand/lockup.png`, which `apps/api/src/brand.ts` still serves:
+  a delivered email cannot be edited, so **do not remove that route** — and never rename a key
+  under `emails/` for the same reason.
 - **`apps/auth` owns an R2 bucket too, and moderation is what the bucket is for**: uploaded avatars
   go into `AVATARS` (`franciscosolis-avatars`) with no public access of their own, and
   `GET /auth/avatars/:id` serves one only once an administrator has approved its row in
