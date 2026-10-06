@@ -82,8 +82,8 @@ describe('branding and legibility', () => {
 
   it('carries the brand lockup from a public URL, with the wordmark as its alt text', () => {
     // A `data:` URI would be blocked by Gmail and inline SVG stripped, so the logo has to be an
-    // ordinary hosted image — served by `apps/api` at this exact path.
-    expect(html).toContain('src="https://api.franciscosolis.cl/brand/lockup.png"')
+    // ordinary hosted image — served from the asset CDN, which `assets/lockup.png` is uploaded to.
+    expect(html).toContain('src="https://cdn.franciscosolis.cl/emails/lockup.png"')
     expect(html).toContain('alt="FranciscoSolis"')
   })
 

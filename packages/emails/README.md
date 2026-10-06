@@ -165,8 +165,8 @@ it.
 ## 🖼️ The logo
 
 `EmailLayout` renders the horizontal lockup from
-`https://api.franciscosolis.cl/brand/lockup.png`, served by [`apps/api`](../../apps/api/README.md)
-from `src/brand.ts`. It has to be a hosted HTTP asset: Gmail strips inline SVG and blocks `data:`
+`https://cdn.franciscosolis.cl/emails/lockup.png` — the asset CDN, the `franciscosolis` R2 bucket.
+It has to be a hosted HTTP asset: Gmail strips inline SVG and blocks `data:`
 URIs, so neither the SVG source nor an embedded copy would reach an inbox.
 
 Two details are deliberate. The PNG is **flattened onto white** rather than transparent — a client
@@ -175,8 +175,14 @@ ink-coloured "Solis" on a dark surface and lose the word. And the `alt` text is 
 recipient with images off still sees the brand name.
 
 The committed source is `assets/lockup.png`, a 400×66 (2×) render of `fs-lockup-horizontal` from the
-brand package, displayed at 200×33. To replace it, re-render the asset and re-encode it into
-`apps/api/src/brand.ts`:
+brand package, displayed at 200×33. [`.github/workflows/cdn.yml`](../../.github/workflows/cdn.yml)
+uploads everything in `assets/` to the CDN under `emails/` on every push to `dev` that changes it,
+with a week of `Cache-Control` — so a replaced logo reaches every cache within a week.
+
+Mail sent before the move points at `https://api.franciscosolis.cl/brand/lockup.png`, which
+[`apps/api`](../../apps/api/README.md) keeps serving from a base64 copy in `src/brand.ts`, because a
+delivered email cannot be edited. To keep those inboxes in step when the logo changes, re-encode it
+there too:
 
 ```bash
 node -e "console.log(require('fs').readFileSync('packages/emails/assets/lockup.png').toString('base64'))"

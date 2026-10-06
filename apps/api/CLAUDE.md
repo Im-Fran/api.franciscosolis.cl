@@ -51,7 +51,8 @@ There is no separate `build` script — Wrangler bundles as part of `dev`/`deplo
   Hono's `cors()`. Kept apart so the matching rule is one testable function rather than a
   condition inside the middleware options.
 - `src/brand.ts` — `registerBrandAssets`, which mounts `GET /brand/lockup.png`, plus the
-  base64 PNG it serves. The only content this gateway owns.
+  base64 PNG it serves. The only content this gateway owns, kept for mail sent before the logo
+  moved to the asset CDN.
 - `src/openapi.ts` — `mergeRemoteSpecs`: fetches each internal module's `/openapi.json`
   over its service binding and merges it under a route prefix.
 - `src/env.ts` — `Env`, derived from the registry as `Record<ServiceBinding, Fetcher>`, so
@@ -110,15 +111,16 @@ There is no separate `build` script — Wrangler bundles as part of `dev`/`deplo
   follow from that entry. `test/unit/services.test.ts` fails if the entry names a binding
   that `wrangler.jsonc` does not declare.
 - **`GET /brand/lockup.png` is the one exception to "no content of its own"**, and it is not
-  cosmetic: every email `apps/auth` and `apps/cms` send points an `<img>` at that exact URL,
-  and this Worker owns the only public hostname in the repo. Gmail blocks `data:` URIs and
+  cosmetic: every email `apps/auth` and `apps/cms` sent before the logo moved to the asset CDN
+  (`https://cdn.franciscosolis.cl/emails/lockup.png`) points an `<img>` at that exact URL, and a
+  delivered email cannot be edited — so the route stays for as long as those inboxes exist. Gmail blocks `data:` URIs and
   strips inline SVG, so an email logo has to be a real HTTP asset. The bytes are inlined in
   `src/brand.ts` rather than configured as Wrangler static assets so the asset ships in the
   same deploy and the same test run as the route serving it. The ETag is derived from the
   bytes (FNV-1a + length) so replacing the asset cannot leave a stale validator behind, and
   `Cache-Control` is a week rather than `immutable` — the URL is fixed, so an `immutable`
   year would mean a corrected logo never reaching an already-cached recipient. Do not rename
-  the path without changing `theme.logo.src` in `packages/emails`.
+  or remove the path; new mail no longer uses it, old mail always will.
 - **Gateway-owned routes other than `GET /` do not reach `/openapi.json`.** hono-openapi only
   emits the routes whose `describeRoute` responses resolve a schema, so the module proxies and
   the brand asset carry their metadata without appearing in the document. They are still
