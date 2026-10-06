@@ -17,6 +17,8 @@ export default defineConfig({
         bindings: {
           // Never a real token: every GitHub call is stubbed in the tests.
           GH_TOKEN: 'test-github-token',
+          // Never a real token either: every Banco Central de Chile call is stubbed too.
+          BCCH_API_TOKEN: 'test-bcch-token',
         },
       },
     }),

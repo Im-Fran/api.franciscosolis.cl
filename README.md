@@ -133,6 +133,9 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   errors into a consistent `{ code, error }` JSON body.
 - **GitHub stats module** — the `landing` Worker exposes `/stats/github`, backed by a
   `GH_TOKEN` secret.
+- **Economic indicators** — the `landing` Worker also exposes `/indicators`: the observed US
+  dollar, the UF and the UTM from the Banco Central de Chile API, backed by a `BCCH_API_TOKEN`
+  secret.
 - **Invitation-only sign-up with roles and permissions** — the `auth` Worker refuses unknown
   addresses without a pending invitation, re-reads roles and session state from D1 on every
   authenticated request so revocation is immediate, and rotates refresh tokens with reuse
@@ -216,6 +219,7 @@ where the provider's test cards work.
 | Variable | Description | Where |
 |----------|-------------|-------|
 | `GH_TOKEN` | GitHub API token used by `apps/landing`'s `/stats/github` route | `apps/landing/.dev.vars` |
+| `BCCH_API_TOKEN` | Banco Central de Chile API token used by `apps/landing`'s `/indicators` routes | `apps/landing/.dev.vars` |
 | `JWT_PRIVATE_KEY` | Ed25519 JWK signing the access tokens issued by `apps/auth` | `apps/auth/.dev.vars` |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth 2.0 client used by `apps/auth` | `apps/auth/.dev.vars` |
 | `MERCADOPAGO_ACCESS_TOKEN` | MercadoPago credential `apps/marketplace` creates preferences and reads payments with | `apps/marketplace/.dev.vars` |
@@ -292,7 +296,7 @@ Notes on the setup, per app:
 | App | What the harness provides |
 |-----|---------------------------|
 | `api` | The `landing`, `auth`, `cms`, `marketplace` and `notifications` Workers are booted as auxiliary Miniflare Workers (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`MARKETPLACE`/`NOTIFICATIONS` are genuine service bindings under test |
-| `landing` | A dummy `GH_TOKEN`; every GitHub call is mocked at the `axios` module |
+| `landing` | Dummy `GH_TOKEN` and `BCCH_API_TOKEN`; every GitHub call is mocked at the `axios` module and every Banco Central de Chile call through a stubbed global `fetch` |
 | `auth` | A live D1 database with `migrations/` applied per test file, plus a fixed test-only Ed25519 signing key |
 | `cms` | A live D1 database with `migrations/` applied per test file; `AUTH_JWKS_URL` points at an unroutable host so a JWKS fetch that escapes its stub fails loudly |
 | `marketplace` | The same as `cms`. Its JWKS-cache tests live in a file of their own, because the cache is per isolate and one warm fetch would make every later stub go unasked |
@@ -420,7 +424,9 @@ pnpm exec wrangler secret put JWT_PRIVATE_KEY --env dev
 pnpm exec wrangler secret put GOOGLE_CLIENT_ID --env dev
 pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET --env dev
 
-cd ../landing && pnpm exec wrangler secret put GH_TOKEN --env dev
+cd ../landing
+pnpm exec wrangler secret put GH_TOKEN --env dev
+pnpm exec wrangler secret put BCCH_API_TOKEN --env dev
 
 cd ../marketplace
 pnpm exec wrangler secret put MERCADOPAGO_ACCESS_TOKEN --env dev   # a TEST credential
