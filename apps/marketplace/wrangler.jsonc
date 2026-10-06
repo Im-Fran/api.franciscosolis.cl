@@ -47,7 +47,7 @@
   "send_email": [
     {
       // The voucher, and the notice that one was refunded. Nothing else: this Worker sends receipts
-      // and does not correspond — a reply belongs on a support ticket, not in a payments service.
+      // and does not correspond — a reply belongs in the soporte@franciscosolis.cl inbox, not in a payments service.
       //
       // Cloudflare rejects a send from any address not listed here, so this is the outer bound of
       // what this Worker can ever send as. There is only one, because unlike the CMS nothing here
@@ -67,6 +67,18 @@
   // binding by opening a remote proxy session against the real account.
   "ai": {
     "binding": "AI"
+  },
+  // Events for `apps/notifications`: a purchase approved or refunded, a release published to the
+  // people who bought the product, a reply to somebody's review. The receipt and the refund notice
+  // are still mailed from here; the event is the bell on the website beside them. A queue and not a
+  // service binding because that Worker binds `AUTH`, and a payment webhook must not wait on it.
+  "queues": {
+    "producers": [
+      {
+        "binding": "NOTIFICATIONS_QUEUE",
+        "queue": "franciscosolis-notifications"
+      }
+    ]
   },
   "services": [
     {
@@ -94,7 +106,7 @@
     "MARKETPLACE_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
     // Client ids whose tokens identify a *buyer* rather than an editor: the public website. A second
     // list rather than an addition to the one above, so widening the website's reach can never widen
-    // `/admin`'s — the same split `apps/support` keeps between its console and its requesters.
+    // `/admin`'s.
     "MARKETPLACE_ACCOUNT_AUDIENCES": "franciscosolis-web",
     // Public base URL of this Worker through the gateway. Used to build the download links handed to a
     // browser and the notification URL MercadoPago posts to; neither is derivable from the request,
@@ -105,7 +117,7 @@
     "SITE_BASE_URL": "https://franciscosolis.cl",
     // Address every voucher and refund notice goes out as, and the name the email footer signs off
     // with. `no-reply`, deliberately: a receipt is not a conversation, and an answer to one belongs
-    // on a support ticket where somebody will see it.
+    // at soporte@franciscosolis.cl, where somebody will see it.
     "MAIL_FROM_EMAIL": "no-reply@mail.franciscosolis.cl",
     "MAIL_FROM_NAME": "FranciscoSolis",
     // Which MercadoPago account this Worker takes money against, and therefore which of the two
@@ -179,6 +191,16 @@
           "service": "auth-dev"
         }
       ],
+      // The development queue. A sandbox purchase published onto the production queue would put a
+      // test payment in a real account's notification list.
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS_QUEUE",
+            "queue": "franciscosolis-notifications-dev"
+          }
+        ]
+      },
       "vars": {
         "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
         "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
@@ -238,6 +260,16 @@
           "service": "auth"
         }
       ],
+      // Kept, unlike `ai`: Miniflare simulates a queue producer locally, with no account behind it.
+      // Tests that assert on what was published replace it by assignment (`test/helpers/queue.ts`).
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS_QUEUE",
+            "queue": "franciscosolis-notifications"
+          }
+        ]
+      },
       // Restated here because a named environment inherits nothing. Unlike the `ai` binding above
       // this one is safe under test: Miniflare implements it locally, writing the message out
       // rather than delivering it, and the suite replaces `env.EMAIL` with a spy where it asserts

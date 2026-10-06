@@ -10,8 +10,8 @@ describe('auth smoke', () => {
   it('applies the schema and the permission seed', async () => {
     const row = await env.DB.prepare('SELECT COUNT(*) AS total FROM permissions').first<{ total: number }>()
 
-    // 0001_seed.sql inserts the eleven baseline permissions, 0007 the two avatar ones and
-    // 0010 the two support ones.
+    // 0001_seed.sql inserts the eleven baseline permissions, 0007 the two avatar ones and 0011 the
+    // two settings ones. 0010 added two support ones that 0012 removed with the ticket system.
     expect(row?.total).toBe(15)
   })
 
@@ -22,7 +22,6 @@ describe('auth smoke', () => {
 
     expect(results.map((row) => row.id)).toEqual([
       'franciscosolis-cms',
-      'franciscosolis-support',
       'franciscosolis-web',
     ])
     // Authenticating with nothing means PKCE is mandatory for all of them — that is the security

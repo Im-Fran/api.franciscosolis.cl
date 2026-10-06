@@ -1,0 +1,12 @@
+# Copy to `.dev.vars` (gitignored) for local development.
+#
+# Point a local notifications Worker at a local auth Worker. The issuer must match the `AUTH_ISSUER`
+# auth itself is running with, or every token is refused for a bad `iss`.
+AUTH_ISSUER=http://localhost:8787/auth
+
+# Where the local front-end serves, so links in locally sent mail and pushes are clickable.
+SITE_URL=http://localhost:5173
+
+# The VAPID key pair, as a P-256 private JWK on one line. Optional: without it push is simply off
+# (`GET /` advertises `vapid_public_key: null`). Generate one with `pnpm run vapid:generate`.
+# VAPID_PRIVATE_KEY={"kty":"EC","crv":"P-256","d":"…","x":"…","y":"…"}

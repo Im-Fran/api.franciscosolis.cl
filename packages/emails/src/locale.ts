@@ -2,9 +2,9 @@
  * The languages a template can be rendered in.
  *
  * Every template in this package used to be English-only, because every message it sent was
- * transactional plumbing from a service whose own interface is English. Support mail is the first
- * thing here that is *correspondence*: somebody wrote in, in their own language, and answering them
- * in another one is rude in a way a sign-in link never was.
+ * transactional plumbing from a service whose own interface is English. A receipt or a notice is
+ * read by somebody who chose a language on the website, though, and answering them in another one
+ * is rude in a way a sign-in link never was.
  *
  * The copy for each language is a plain object inside the template, not a lookup through an i18n
  * library. That is deliberate and worth defending: this package ships TypeScript source with no
@@ -17,9 +17,14 @@ const EMAIL_LOCALES = ['en', 'es'] as const
 
 type EmailLocale = (typeof EMAIL_LOCALES)[number]
 
-/** Falls back to English for anything unrecognised, so a bad locale never blocks a send. */
-const resolveEmailLocale = (value: string | null | undefined): EmailLocale =>
-  (EMAIL_LOCALES as readonly string[]).includes(value ?? '') ? (value as EmailLocale) : 'en'
+/**
+ * Falls back to English for anything unrecognised, so a bad locale never blocks a send. A region or
+ * script subtag is ignored — an account's stored language is often a provider's `es-419` or `es_CL`.
+ */
+const resolveEmailLocale = (value: string | null | undefined): EmailLocale => {
+  const base = (value ?? '').toLowerCase().split(/[-_]/)[0]
+  return (EMAIL_LOCALES as readonly string[]).includes(base) ? (base as EmailLocale) : 'en'
+}
 
 export { EMAIL_LOCALES, resolveEmailLocale }
 export type { EmailLocale }

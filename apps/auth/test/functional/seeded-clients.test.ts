@@ -47,8 +47,6 @@ describe('the client applications the front-end signs in with', () => {
     ['the CMS, in production', SEED.cmsAppId, SEED.cmsSiteRedirectUri],
     ['the CMS, on the Vite dev server', SEED.cmsAppId, SEED.cmsSiteLocalRedirectUri],
     ['the CMS, on its own subdomain', SEED.cmsAppId, SEED.cmsRedirectUri],
-    ['the support console, in production', SEED.supportAppId, SEED.supportRedirectUri],
-    ['the support console, on the Vite dev server', SEED.supportAppId, SEED.supportLocalRedirectUri],
   ])('accepts an authorization request for %s', async (_label, clientId, redirectUri) => {
     const response = await authorize({ client_id: clientId, redirect_uri: redirectUri })
 
@@ -58,7 +56,6 @@ describe('the client applications the front-end signs in with', () => {
   it.each([
     ['the site', SEED.webAppId, SEED.webRedirectUri],
     ['the CMS', SEED.cmsAppId, SEED.cmsSiteRedirectUri],
-    ['the support console', SEED.supportAppId, SEED.supportRedirectUri],
   ])('lets %s use the authorization code grant', async (_label, clientId, redirectUri) => {
     const response = await authorize({ client_id: clientId, redirect_uri: redirectUri, state: 'st' })
 
@@ -71,7 +68,6 @@ describe('the client applications the front-end signs in with', () => {
   it.each([
     ['the site', SEED.webAppId],
     ['the CMS', SEED.cmsAppId],
-    ['the support console', SEED.supportAppId],
   ])('registers the Cloudflare preview origin on %s', async (_label, clientId) => {
     const [row] = await db().select().from(applications).where(eq(applications.id, clientId))
 
@@ -91,37 +87,22 @@ describe('the client applications the front-end signs in with', () => {
     expect(response.status).toBe(400)
   })
 
-  it('gives the support console the permissions apps/support checks for', async () => {
-    const rows = await db()
-      .select({ slug: permissions.slug })
-      .from(rolePermissions)
-      .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
-      .where(eq(rolePermissions.roleId, SEED.supportAgentRoleId))
-
-    // `apps/support` is the first Worker here that enforces a permission rather than stopping at the
-    // email-domain gate, so this row is what makes an account an agent at all.
-    expect(rows.map((row) => row.slug)).toEqual(['support:agent'])
-  })
-
-  it('keeps the administrator role holding the support permissions too', async () => {
-    const rows = await db()
+  it('retires the support console along with its roles and permissions', async () => {
+    // `0010_support_application.sql` registered it and `0012_remove_support_application.sql` took it
+    // back out when the ticket system was replaced by plain email. Nothing checks these permissions
+    // any more, so a row left behind would only be a sign-in target nobody maintains.
+    const [application] = await db().select().from(applications).where(eq(applications.id, 'franciscosolis-support'))
+    const scoped = await db().select().from(roles).where(eq(roles.applicationId, 'franciscosolis-support'))
+    const granted = await db()
       .select({ slug: permissions.slug })
       .from(rolePermissions)
       .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
       .where(eq(rolePermissions.roleId, SEED.adminRoleId))
 
-    // `0001_seed.sql` filled the admin role by selecting from `permissions` at the time it ran, so a
-    // permission added later has to be attached explicitly — otherwise an existing administrator is
-    // locked out of a console they own.
-    expect(rows.map((row) => row.slug)).toEqual(expect.arrayContaining(['support:agent', 'support:admin']))
-  })
-
-  it('scopes the support roles to the support application', async () => {
-    const [row] = await db().select().from(roles).where(eq(roles.id, SEED.supportAgentRoleId))
-
-    // Not a global role: `getUserAuthorization` resolves roles per application, and that is the
-    // whole reason support has a client id of its own rather than reusing the CMS's audience.
-    expect(row?.applicationId).toBe(SEED.supportAppId)
+    expect(application).toBeUndefined()
+    expect(scoped).toEqual([])
+    expect(granted.map((row) => row.slug)).not.toContain('support:agent')
+    expect(granted.map((row) => row.slug)).not.toContain('support:admin')
   })
 
   it('still matches a redirect URI exactly, with no room for a near miss', async () => {

@@ -16,6 +16,7 @@ import { optionalBody, optionalDate, requiredText, releaseTranslations } from '@
 import type { Product } from '@/services/products'
 import { findProductById } from '@/services/products'
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
+import { notifyReleasePublished } from '@/services/notify'
 import { findReleaseById, listReleases, toAdminRelease } from '@/services/releases'
 
 /**
@@ -43,6 +44,28 @@ const requireRelease = async (db: Database, product: Product, id: string) => {
     throw new HTTPException(404, { message: 'Release not found' })
   }
   return release
+}
+
+/**
+ * Tells the people who hold the product that a version went live — the first time it does.
+ *
+ * "The first time" is `published_at`, which is stamped once and kept through later unpublish and
+ * republish cycles for the rating window's sake; the same property makes it the right guard here. A
+ * release taken down for a typo and put back is not news, and a buyer told twice about one version
+ * learns to ignore the bell. Only a published *product* counts: the public routes answer 404 for the
+ * releases of a draft one, so a notification would link to a page that says it does not exist.
+ */
+const announceIfFirstPublication = async (
+  env: AppEnv['Bindings'],
+  db: Database,
+  product: Product,
+  before: { publishedAt: Date | null },
+  after: { status: string; version: string; channel: string },
+) => {
+  if (before.publishedAt !== null || after.status !== 'published' || product.status !== 'published') {
+    return
+  }
+  await notifyReleasePublished(db, env, { product, version: after.version, channel: after.channel })
 }
 
 /**
@@ -168,6 +191,8 @@ app.post(
       metadata: { product: product.slug, version: row.version, status },
     })
 
+    await announceIfFirstPublication(c.env, db, product, { publishedAt: null }, row)
+
     return c.json({ code: 201, data: toAdminRelease(row) }, 201)
   },
 )
@@ -283,6 +308,8 @@ app.patch(
       resourceId: current.id,
       metadata: { product: product.slug, version: updated.version, fields: Object.keys(body), status },
     })
+
+    await announceIfFirstPublication(c.env, db, product, current, updated)
 
     return c.json({ code: 200, data: toAdminRelease(updated) })
   },

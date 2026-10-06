@@ -51,6 +51,7 @@ describe('canReceiveMagicLink', () => {
     await expect(canReceiveMagicLink(db(), user.email, SEED.webAppId)).resolves.toEqual({
       allowed: true,
       userId: user.id,
+      locale: null,
       reason: null,
     })
   })
@@ -61,6 +62,7 @@ describe('canReceiveMagicLink', () => {
     await expect(canReceiveMagicLink(db(), user.email, SEED.webAppId)).resolves.toEqual({
       allowed: false,
       userId: user.id,
+      locale: null,
       reason: 'disabled',
     })
   })
@@ -73,6 +75,7 @@ describe('canReceiveMagicLink', () => {
     await expect(canReceiveMagicLink(db(), uniqueEmail('stranger'), SEED.webAppId)).resolves.toEqual({
       allowed: false,
       userId: null,
+      locale: null,
       reason: 'not_invited',
     })
   })

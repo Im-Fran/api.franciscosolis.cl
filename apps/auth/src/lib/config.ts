@@ -122,6 +122,8 @@ const GUARDED_PERMISSIONS = [
   'audit:read',
   'avatars:read',
   'avatars:review',
+  'settings:read',
+  'settings:write',
 ] as const
 
 /**

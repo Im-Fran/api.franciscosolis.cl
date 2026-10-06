@@ -10,6 +10,8 @@ import { AVATAR_STATUS } from '@/lib/config'
 import { requirePermission } from '@/middleware/auth'
 import { getRequestContext, recordAudit } from '@/services/audit'
 import { approveAvatar, findAvatarById, rejectAvatar, toPublicAvatar } from '@/services/avatars'
+import { publishNotification } from '@/services/notify'
+import { findUserById } from '@/services/users'
 
 const app = new Hono<AppEnv>()
 
@@ -122,6 +124,43 @@ const loadUpload = async (db: ReturnType<typeof getDb>, id: string) => {
   return upload
 }
 
+/**
+ * Tells the owner of an upload what became of it.
+ *
+ * Moderation is the one step of an avatar's life the owner does not drive: they upload, and then
+ * nothing visible happens until somebody else decides. Without this the only way to learn the answer
+ * is to go and look at the profile, and a rejection — which deletes the image — would read as the
+ * upload having silently vanished.
+ *
+ * The owner is re-read rather than taken from the upload row because the event carries an address
+ * and a locale, which the row does not hold. An owner that no longer exists gets nothing, and so
+ * does one whose lookup fails: the decision has been written and audited by the time this runs, and
+ * a notification is a report about it, not part of it. `publishNotification` never throws; the
+ * lookup is the only thing here that can, and it is caught for the same reason.
+ */
+const notifyAvatarDecision = async (
+  env: AppEnv['Bindings'],
+  db: ReturnType<typeof getDb>,
+  ownerId: string,
+  type: 'account.avatar_approved' | 'account.avatar_rejected',
+  data: Record<string, string | null> = {},
+) => {
+  try {
+    const owner = await findUserById(db, ownerId)
+    if (!owner) {
+      return
+    }
+    await publishNotification(env, {
+      type,
+      user: { id: owner.id, email: owner.email, name: owner.name, locale: owner.locale },
+      data,
+      url: '/account',
+    })
+  } catch (error) {
+    console.error('failed to notify the owner of an avatar decision', type, error)
+  }
+}
+
 app.post(
   '/avatars/:id/approve',
   describeRoute({
@@ -158,6 +197,8 @@ app.post(
       metadata: { avatar_id: upload.id, subject_user_id: upload.userId },
     })
 
+    await notifyAvatarDecision(c.env, db, upload.userId, 'account.avatar_approved')
+
     return c.json({ code: 200, data: toPublicAvatar(c.env, approved) })
   },
 )
@@ -188,7 +229,8 @@ app.post(
     const db = getDb(c.env)
     const upload = await loadUpload(db, c.req.param('id'))
 
-    const rejected = await rejectAvatar(db, c.env, upload, actor.user.id, body.reason?.trim() || null)
+    const reason = body.reason?.trim() || null
+    const rejected = await rejectAvatar(db, c.env, upload, actor.user.id, reason)
 
     await recordAudit(db, {
       event: 'avatar.rejected',
@@ -201,6 +243,10 @@ app.post(
         was_published: upload.status === 'approved',
       },
     })
+
+    // The reason is the same text the review screen asked for "so a refusal is something they can
+    // act on" — this is how it reaches them without their having to go and look.
+    await notifyAvatarDecision(c.env, db, upload.userId, 'account.avatar_rejected', { reason })
 
     return c.json({ code: 200, data: toPublicAvatar(c.env, rejected) })
   },

@@ -26,6 +26,7 @@ import { getActorContext, getRequestContext, recordAudit } from '@/services/audi
 import { listDownloadsForProduct } from '@/services/downloads'
 import { findPurchaseById, listPurchases, toAdminPurchase, type Purchase } from '@/services/purchases'
 import { sendRefundNotice } from '@/services/mail'
+import { notifyPurchaseCompleted, notifyPurchaseRefunded } from '@/services/notify'
 import { createManualSale, refundSale, summarizeSales, updateSaleDetails } from '@/services/sales'
 import {
   findVoucherById,
@@ -280,6 +281,15 @@ app.post(
         email: sale.email,
       },
     })
+
+    // The bell, published before the voucher rather than after it: the send below can end this request
+    // in a 502, and the sale it reports on is recorded either way. `notify: false` is the editor
+    // saying "do not tell the buyer" — a gift being prepared, a sale being back-filled — and it is
+    // honoured here too rather than read as being only about email. A sale for an address with no
+    // account yet publishes nothing; see `notifyPurchaseCompleted`.
+    if (body.notify !== false) {
+      await notifyPurchaseCompleted(c.env, { purchase: sale, productName: product.name, locale: body.locale })
+    }
 
     let voucher: Voucher | null = null
     if (body.issue_voucher !== false) {
@@ -537,6 +547,8 @@ app.post(
         // that question must not depend on a mail binding.
         console.error('failed to email a refund notice', sale.id, error)
       }
+      // Beside the email, and gated by the same `notify`. Never throws, like the notice above it.
+      await notifyPurchaseRefunded(c.env, { purchase: refunded, productName: product.name, locale: live?.locale ?? null })
     }
 
     return c.json({ code: 200, data: toAdminPurchase(refunded) })

@@ -189,7 +189,7 @@ Worker; the keys themselves arrive over the `AUTH` service binding. Everything e
   timed-out or unreadable answer is a **200 with `translation: null`**, not an error status, because
   the editor's next step is the same either way. Only the caller's own mistakes — an unknown field, a
   blank text, the same locale twice — are 4xx.
-  The prompt is `@franciscosolis/translate`, shared with `apps/pages` and `apps/support`. What is
+  The prompt is `@franciscosolis/translate`, shared with `apps/marketplace`. What is
   this Worker's own is `src/services/ai.ts`: the meter (`ai_requests`) and the hourly per-editor
   limit read off it. **Workers AI is billed per neuron with no per-Worker spend cap**, so that limit
   is not about CPU — without it the first sign of a loop in the CMS front-end is the invoice, and the

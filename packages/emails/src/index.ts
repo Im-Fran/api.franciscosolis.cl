@@ -42,17 +42,16 @@ export { InvitationEmail, renderInvitationEmail } from './templates/invitation'
 export type { InvitationEmailProps } from './templates/invitation'
 export { MagicLinkEmail, renderMagicLinkEmail } from './templates/magic-link'
 export type { MagicLinkEmailProps } from './templates/magic-link'
+export { NotificationEmail, renderNotificationEmail } from './templates/notification'
+export type { NotificationEmailProps } from './templates/notification'
+export {
+  NotificationDigestEmail,
+  notificationDigestSubject,
+  renderNotificationDigestEmail,
+} from './templates/notification-digest'
+export type { DigestItem, DigestPeriod, NotificationDigestEmailProps } from './templates/notification-digest'
 export { renderSaleReceiptEmail, SaleReceiptEmail } from './templates/sale-receipt'
 export type { SaleReceiptEmailProps, SaleSource } from './templates/sale-receipt'
 export { renderSaleRefundEmail, SaleRefundEmail } from './templates/sale-refund'
 export type { RefundReason, SaleRefundEmailProps } from './templates/sale-refund'
-export {
-  renderSupportParticipantAddedEmail,
-  SupportParticipantAddedEmail,
-} from './templates/support-participant-added'
-export type { SupportParticipantAddedEmailProps } from './templates/support-participant-added'
-export { renderSupportTicketReceivedEmail, SupportTicketReceivedEmail } from './templates/support-ticket-received'
-export type { SupportTicketReceivedEmailProps } from './templates/support-ticket-received'
-export { renderSupportTicketReplyEmail, SupportTicketReplyEmail } from './templates/support-ticket-reply'
-export type { SupportReplyExcerpt, SupportTicketReplyEmailProps } from './templates/support-ticket-reply'
 export { palette, theme } from './theme'

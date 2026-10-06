@@ -141,8 +141,7 @@ const requireEditor = createMiddleware<AppEnv>(async (c, next) => {
  * Nothing uses it today — `marketplace:editor` is the whole roster. It exists because the split it
  * would express is already visible in the routes: editing a product page and refunding a payment
  * are not the same authority, and the day they need separating it should be a middleware on a
- * handful of routes rather than a second gate somebody writes from scratch. Mirrors
- * `requirePermission` in `apps/support`.
+ * handful of routes rather than a second gate somebody writes from scratch.
  */
 const requirePermission = (permission: string) =>
   createMiddleware<AppEnv>(async (c, next) => {

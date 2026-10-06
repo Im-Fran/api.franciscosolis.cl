@@ -26,8 +26,8 @@ together six Cloudflare Workers, all living directly in this repo:
   here, all to the same house standard (a banner, then Overview / Releases / Wiki / Reviews /
   Contact tabs, plus a sidebar), reachable through `apps/api` at `/marketplace/*`. It replaced
   `apps/pages`, which was the same Worker under a smaller name. Public reads, editorial writes gated
-  to `@franciscosolis.cl` accounts carrying `marketplace:editor` — it is the second Worker here with
-  a client application of its own. It is the one Worker that **takes money**: a product can be paid
+  to `@franciscosolis.cl` accounts carrying `marketplace:editor`, under a client application of its
+  own. It is the one Worker that **takes money**: a product can be paid
   for or donated to through MercadoPago Checkout Pro, and its builds live in R2 and are served
   against a signed per-request ticket rather than from a bucket URL, on four release channels
   (`nightly` / `beta` / `rc` / `release`) whose pre-release half a donation product may reserve for
@@ -35,24 +35,34 @@ together six Cloudflare Workers, all living directly in this repo:
   hand for cash or a transfer, vouchers (receipts) and refunds — sends the one kind of mail it has,
   the receipt, and carries the **reviews** the people who obtained a product wrote about it, with
   the rating window a release can restart.
-- `apps/support` — internal Worker with the **support ticket system** and the help centre behind it,
-  reachable through `apps/api` at `/support/*`. A ticket can be opened from the website or by writing
-  to `soporte@franciscosolis.cl`, and answered in either place; the help centre is searched both
-  lexically (FTS5) and semantically (Workers AI + Vectorize). It is the one Worker here with entry
-  points the gateway does not front, and the only one that uses Vectorize.
+- `apps/notifications` — internal Worker with the **notification centre**, reachable through `apps/api`
+  at `/notifications/*`: the in-site list behind the bell on the website, per-category preferences for
+  push and email, Web Push (VAPID) subscriptions, and the daily/weekly email digests. It is the one
+  Worker here that *consumes a queue*: `auth` and `marketplace` publish events onto
+  `franciscosolis-notifications` rather than calling it, and it turns each into a notification row, a
+  push and — when the event is emailable and the account's preferences say so — an email or a digest
+  line. Only tokens minted for the website (`franciscosolis-web`) are accepted, and every row belongs
+  to the token's own `sub`.
+
+**Support is plain email, not a Worker.** There used to be an `apps/support` ticket system with a
+help centre; it was retired, and help is now asked for and answered at `soporte@franciscosolis.cl`,
+a Google Group. Nothing in this repository sits on that path — do not reintroduce a ticket Worker,
+a `support` notification category or a `SUPPORT` binding. `apps/auth` keeps
+`0010_support_application.sql` as history and `0012_remove_support_application.sql` undoes it;
+`apps/notifications`' `0001_drop_support_category.sql` clears the old bell entries.
 
 Alongside them, `packages/` holds the shared code the Workers import:
 
 - `packages/emails` (`@franciscosolis/emails`) — every email body in the monorepo, written as
-  react-email components. Imported by `apps/auth`, `apps/cms`, `apps/marketplace` and `apps/support`; no
-  Worker builds mail markup itself.
+  react-email components. Imported by `apps/auth`, `apps/cms`, `apps/marketplace` and
+  `apps/notifications`; no Worker builds mail markup itself.
 - `packages/translate` (`@franciscosolis/translate`) — the one prompt behind every machine
-  translation here, and the parsing of the model's answer. Imported by `apps/cms`, `apps/marketplace` and
-  `apps/support`; no Worker writes a translation prompt itself.
+  translation here, and the parsing of the model's answer. Imported by `apps/cms` and `apps/marketplace`;
+  no Worker writes a translation prompt itself.
 
 Each app and package keeps its own `CLAUDE.md` and `README.md`. When working on the actual
 implementation of a Worker, read/edit inside `apps/api`, `apps/landing`, `apps/auth`, `apps/cms`,
-`apps/marketplace` or `apps/support` — the root repo only owns workspace-wide wiring (pnpm
+`apps/marketplace` or `apps/notifications` — the root repo only owns workspace-wide wiring (pnpm
 workspace/catalog, root scripts).
 
 ## Stack
@@ -61,13 +71,15 @@ workspace/catalog, root scripts).
   glob'd from `apps/*` and `packages/*` (`pnpm-workspace.yaml`).
 - Every Worker uses Hono + hono-openapi + valibot + Wrangler, all pinned via a
   shared pnpm `catalog` in `pnpm-workspace.yaml` — do not add per-app version pins for
-  those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/marketplace` and
-  `apps/support` additionally use drizzle-orm/drizzle-kit, and those same four pull react +
-  react-email through `@franciscosolis/emails`, all catalogued too. `apps/cms`, `apps/marketplace` and
-  `apps/support` use **Workers AI** through `@franciscosolis/translate`; `apps/support` is the only
-  one with `postal-mime`, and the only one using Vectorize. `apps/marketplace` talks to MercadoPago over
+  those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/marketplace`,
+  and `apps/notifications` additionally use drizzle-orm/drizzle-kit, and those same
+  four pull react + react-email through `@franciscosolis/emails`, all catalogued too. `apps/cms` and `apps/marketplace`
+  use **Workers AI** through `@franciscosolis/translate`. `apps/marketplace` talks to MercadoPago over
   plain `fetch` rather than through an SDK — a handful of functions in `src/lib/mercadopago.ts`
   against a dependency that assumes Node.
+- **Cloudflare Queues** for one thing: notification events. `auth` and `marketplace`
+  declare a `NOTIFICATIONS_QUEUE` producer; `notifications` is the consumer. Web Push is implemented
+  in `apps/notifications` on WebCrypto, without a library that assumes Node.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
   on `dev`/`deploy`.
 - Vitest running inside `workerd` via `@cloudflare/vitest-pool-workers`, also catalogued.
@@ -76,7 +88,8 @@ workspace/catalog, root scripts).
 
 - `pnpm install` — installs for the whole workspace.
 - `pnpm run dev` — runs `dev` in every workspace app in parallel (`api` on :8787,
-  `landing` on :8788, `auth` on :8789, `cms` on :8790, `support` on :8793, `marketplace` on :8794).
+  `landing` on :8788, `auth` on :8789, `cms` on :8790, `marketplace` on :8794,
+  `notifications` on :8795).
 - `pnpm run test` / `pnpm run test:coverage` — runs every app's suite.
 - `pnpm run typecheck` — `tsc --noEmit` over `src/` and `test/` in every app.
 - `pnpm run build` — `wrangler deploy --dry-run` in every app. Not an artifact; it is the
@@ -97,7 +110,7 @@ workspace/catalog, root scripts).
 - `pnpm run cf-typegen` — regenerates Cloudflare binding types (`CloudflareBindings`) in
   every app after a `wrangler.jsonc` change.
 - `pnpm run db:migrate:list` / `db:migrate:remote` / `db:migrate:local` — D1 migrations across
-  every app that owns a database (`auth`, `cms`, `marketplace`, `support`). Production runs happen in CI
+  every app that owns a database (`auth`, `cms`, `marketplace`, `notifications`). Production runs happen in CI
   (see *Deploys and migrations*); these are for local work and for repairing a database that has
   drifted.
 
@@ -127,21 +140,24 @@ Non-obvious things about this harness, learned the hard way — do not re-derive
 - The `@/*` alias must be restated as a Vite `resolve.alias`; Wrangler reads it from
   tsconfig when bundling, but Vite does not.
 - Coverage must use the **istanbul** provider — `workerd` exposes no V8 coverage hooks.
-- `apps/auth`, `apps/cms`, `apps/marketplace` and `apps/support` apply their real `migrations/` directory
+- `apps/auth`, `apps/cms`, `apps/marketplace` and `apps/notifications` apply their real `migrations/` directory
   to each test file's isolated D1 instance (`readD1Migrations` in the config, `applyD1Migrations` in
   `test/setup.ts`), so a migration that no longer applies cleanly fails the test run.
 - `apps/api` boots the internal Workers as auxiliary Miniflare Workers
-  (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`MARKETPLACE`/`SUPPORT` are real service bindings
-  in tests.
-- **`apps/cms`, `apps/marketplace` and `apps/support` run against a named `test` environment in their own
-  `wrangler.jsonc`**, and that is not stylistic. The pool answers an `ai` or `vectorize` binding by
+  (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`MARKETPLACE`/`NOTIFICATIONS` are
+  real service bindings in tests.
+- **The queue producer stays declared under test**, unlike `ai`: Miniflare simulates
+  a queue locally with no account and no token. `auth` and `marketplace` each replace
+  `env.NOTIFICATIONS_QUEUE` by assignment wherever a test asserts on what was published
+  (`test/helpers/queue.ts`), exactly as they replace `EMAIL` — the simulated queue has no consumer in
+  that suite, so nothing sent to it can be read back.
+- **`apps/cms` and `apps/marketplace` run against a named `test` environment in their own
+  `wrangler.jsonc`**, and that is not stylistic. The pool answers an `ai` binding by
   opening a *remote proxy session* against the real Cloudflare account, which needs a
   `CLOUDFLARE_API_TOKEN` CI does not have and bills real neurons for a unit test. Each named
-  environment restates everything except those bindings, and each suite supplies them by assignment
+  environment restates everything except that binding, and each suite supplies them by assignment
   from its own `test/helpers/ai.ts`, with loud defaults so a path that reaches the real service
-  unexpectedly says so instead of returning `undefined`. In `apps/support`, Miniflare also cannot
-  dispatch an email event, so that Worker's `email()` handler is called directly rather than through
-  `SELF`.
+  unexpectedly says so instead of returning `undefined`.
 - `apps/auth` gets a fixed, committed, test-only Ed25519 signing key from its
   `vitest.config.ts`. It signs nothing outside the suite; the production key stays a secret.
 
@@ -157,10 +173,11 @@ should require. When adding an app, add it to the `matrix.app` list.
 ## Environments
 
 Two full stacks, sharing nothing but the code: production (`api`, `landing`, `auth`, `cms`,
-`marketplace`, `support`) and development (the same six with a `-dev` suffix, fronted by
+`marketplace`, `notifications`) and development (the same six with a `-dev` suffix, fronted by
 `api-dev.franciscosolis.cl` and paired with `dev.franciscosolis.cl` in the front-end repository).
-Each stateful Worker has its own `_dev` database, each bucket its own `-dev` copy, and `apps/auth`
-its own signing key — so a dev token is structurally unusable in production and a test payment
+Each stateful Worker has its own `_dev` database, each bucket its own `-dev` copy, the notifications
+queue its own `-dev` queue, `apps/notifications` its own VAPID keypair, and `apps/auth` its own signing
+key — so a dev token is structurally unusable in production and a test payment
 cannot reach a real build.
 
 The suffix is not typed anywhere. Each app declares a named Wrangler environment called `dev`, and
@@ -183,7 +200,7 @@ Four things about this are worth not re-deriving:
   production module without any error to say so — which is the single failure this environment
   exists to make impossible. The same bindings also **dictate the deploy order**, because one is
   resolved at deploy time against a Worker that must already exist: `auth` first, then the modules
-  that bind it (`cms`, `marketplace`, `support`), then `api`. Out of order, a first deploy fails with
+  that bind it (`cms`, `marketplace`, `notifications`), then `api`. Out of order, a first deploy fails with
   "Service binding 'AUTH' references Worker 'auth-dev' which was not found".
 - **Secrets are per environment.** `wrangler secret put --env dev` is a different store, and that
   is deliberate rather than a chore: `apps/marketplace` takes a MercadoPago *test* credential on dev, and
@@ -192,21 +209,31 @@ Four things about this are worth not re-deriving:
   buyer to the sandbox checkout, because a test credential answers a preference with *both* URLs and
   they are two different checkouts. It is also stamped on every purchase, so a test payment can never
   be read as revenue or refunded against the live account. See `apps/marketplace/CLAUDE.md`.
+  `apps/notifications` takes a `VAPID_PRIVATE_KEY` per environment for the same kind of reason: a push
+  subscription is bound to the public key it was made with, so a shared pair would let one stack push
+  to the other's browsers.
+- **Queues are a binding kind too, with the same two rules.** A producer or consumer resolves against
+  a queue by name, so `env.dev` names `franciscosolis-notifications-dev` in all four apps —
+  `scripts/check-environments.mjs` fails a dev producer left on the production queue, which would put
+  a test sign-in in a real account's bell. And a queue must exist before the first deploy of any
+  Worker bound to it, but it is *not* a Worker, so it adds no edge to the deploy order: a producer
+  deployed before its consumer simply leaves messages waiting.
 
 `.github/workflows/deploy-dev.yml` deploys the stack on a push to `dev`, in four stages that follow
 the binding graph above: migrations, `auth-dev`, the four remaining modules in parallel, then
 `api-dev`. Unlike production (below), the migrations there are strictly ordered before the deploy.
-Its token needs `Workers R2 Storage:Edit` on top of `D1:Edit` and `Workers Scripts:Edit` — `auth`
-and `marketplace` each bind a bucket, and a deploy that cannot read one fails with an authentication
-error rather than anything that mentions R2 permissions.
+Its token needs `Workers R2 Storage:Edit` and `Queues:Edit` on top of `D1:Edit` and
+`Workers Scripts:Edit` — `auth` and `marketplace` each bind a bucket, four Workers bind the
+notifications queue, and a deploy that cannot read either fails with an authentication error rather
+than anything that mentions the permission.
 
-Three pieces of setup live outside this repository and are listed in the README: the per-environment
-secrets, the `franciscosolis-support-help-dev` Vectorize index, and the OAuth client applications,
-which are rows in the *dev* auth database and therefore do not exist until they are registered
-(`pnpm run applications -- … --dev --remote`). One piece is deliberately missing: nothing delivers
-mail to `apps/support`'s dev inbox addresses, so the development Worker sends and never receives
-until an Email Routing rule is added. Pointing it at the production inbox instead would make a reply
-to a test email open a real ticket.
+Several pieces of setup live outside this repository and are listed in the README: the
+per-environment secrets (`VAPID_PRIVATE_KEY` for `apps/notifications` among them, from
+`node apps/notifications/scripts/generate-vapid-keys.mjs`), the two notifications queues (`wrangler queues create franciscosolis-notifications` and
+`…-dev`, before the first deploy of any Worker bound to them), the `franciscosolis_notifications`
+and `_dev` D1 databases (whose ids are committed in `apps/notifications/wrangler.jsonc`),
+and the OAuth client applications, which are rows in the *dev* auth database and therefore do not
+exist until they are registered (`pnpm run applications -- … --dev --remote`).
 
 Today `dev` is the default branch and a push to it releases *both* stacks. When the `prd` branch
 arrives, production moves behind it as a dashboard change and nothing here moves with it —
@@ -221,7 +248,8 @@ should duplicate it. The development stack is the half that *can* live in git, a
 with no way to pass `--env dev`.
 
 What that integration does not do is touch D1, so `.github/workflows/migrate.yml` owns that:
-it applies pending migrations for the stateful Workers (`auth`, `cms`, `marketplace`, `support`) on a push to `dev`
+it applies pending migrations for the stateful Workers (`auth`, `cms`, `marketplace`,
+`notifications`) on a push to `dev`
 that touches `apps/*/migrations/**`, one job per database, plus a bare `workflow_dispatch` for a
 manual run. It needs the `CLOUDFLARE_API_TOKEN` (D1:Edit) and `CLOUDFLARE_ACCOUNT_ID` repository
 secrets. Adding another stateful app means adding it to that matrix. The dispatch deliberately takes no
@@ -247,7 +275,8 @@ Three things about it are worth not re-deriving:
   configuration this repo cannot hold or review. The workflow is the version that lives in git.
 
 `pnpm run db:migrate:remote` / `db:migrate:list` / `db:migrate:local` at the root fan out to every
-app that declares them, which is exactly `auth`, `cms`, `marketplace` and `support` — `pnpm run -r` skips
+app that declares them, which is exactly `auth`, `cms`, `marketplace` and `notifications` —
+`pnpm run -r` skips
 the rest, and runs them sequentially rather than in parallel, which is what migrations want.
 
 ## Versioning
@@ -275,7 +304,8 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
 ## Architecture notes (non-obvious)
 
 - **Service binding, not HTTP**: `apps/api` talks to the internal Workers through Cloudflare
-  service bindings (`LANDING`, `AUTH`, `CMS`, `MARKETPLACE` and `SUPPORT` in `apps/api/wrangler.jsonc`),
+  service bindings (`LANDING`, `AUTH`, `CMS`, `MARKETPLACE` and `NOTIFICATIONS` in
+  `apps/api/wrangler.jsonc`),
   not public HTTP calls. These only resolve when each Worker is deployed under the exact name configured
   (the Worker's `name` must match the `service` field of the binding).
 - **`/pages/*` is a deprecated alias of `/marketplace/*`, and it exists for one reason**
@@ -293,14 +323,37 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   components under a prefix (e.g. `/landing/*`). An unreachable module is silently
   skipped rather than breaking the whole document. See `apps/api/src/openapi.ts`.
 - **Four stateful Workers**: `apps/auth` owns the `franciscosolis_auth` D1 database, `apps/cms`
-  owns `franciscosolis_cms`, `apps/marketplace` owns `franciscosolis_marketplace` and `apps/support` owns
-  `franciscosolis_support`; all four use Drizzle and Wrangler-applied migrations.
+  owns `franciscosolis_cms`, `apps/marketplace` owns `franciscosolis_marketplace` and
+  `apps/notifications` owns `franciscosolis_notifications`; all four use
+  Drizzle and Wrangler-applied migrations.
   `auth` issues EdDSA-signed JWTs that any other Worker can verify offline against
   `https://api.franciscosolis.cl/auth/.well-known/jwks.json` — never add a service binding
   back into `auth` just to validate a token. It is also an OpenID Connect provider, so an
   off-the-shelf relying party (Cloudflare Access included) can be pointed at
   `/auth/.well-known/openid-configuration` and needs nothing written for it. `apps/cms` is the reference for how to consume
   them (`src/lib/jwks.ts`).
+- **Notification events travel on a queue, and that is forced, not chosen.** `apps/notifications`
+  binds `AUTH` to read the JWKS, and `auth` is one of the producers: a service binding from `auth`
+  back to `notifications` would be a cycle in which neither Worker's first deploy can resolve the
+  other. A queue is not a Worker, so it breaks the cycle, and it brings two properties worth having
+  anyway — a producer never waits on the consumer, and delivery is retried. The contract is one
+  message shape (`NotificationEvent`, `version: 1`, a producer-minted `id` the consumer deduplicates
+  on, a `user` that is always a known `sub`, flat `data`, a site-relative `url`), declared once in
+  each producer's `src/services/notify.ts` and once in the consumer. Four rules hold in every
+  producer: **publishing never fails the request that caused it** (it is always the tail of something
+  that already happened — a sign-in with a code minted, a payment approved); **nothing is published
+  without an account** (an unlinked manual sale, a buyer whose
+  address this Worker never saw on a token); **a batch is chunked at 100** (`sendBatch`'s limit, for a
+  release announced to every buyer); and **the producer's own mail is untouched**.
+- **Some mail is always sent by its producer, whatever the preferences say**, because it is the thing
+  itself rather than news about it: the magic link and invitations (`auth`), sale receipts and refund
+  notices (`marketplace`). Those events still reach the bell, but the notifications
+  Worker knows them as not emailable, so nobody reads the same thing twice. **The account-access
+  notice is the one that moved**: `auth` publishes `account.sign_in` / `account.authorization` and the
+  notifications Worker emails it per preference (immediately, or in a digest), and `auth` falls back
+  to emailing it directly only when the queue refuses the event — a security notice must never be
+  lost to an outage. When the queue accepts it, `auth` does not also email it; doing both would make
+  "weekly" mean nothing.
 - **A product page is a registry of tabs, not a per-page layout** (`apps/marketplace/src/lib/tabs.ts`):
   a product picks a subset of Overview / Releases / Wiki / Reviews / Contact, in an order, and
   nothing else about its shape is configurable. That is the whole point of the Worker — the moment a
@@ -313,7 +366,7 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   payment, download and traffic tables as the deliberate exception, since a financial record, a
   download and a day's traffic all have to outlive the page they were about. It carries **two
   audience lists** (`MARKETPLACE_ALLOWED_AUDIENCES` for the console, `MARKETPLACE_ACCOUNT_AUDIENCES`
-  for the website), the way `apps/support` does, for somebody buying or reviewing rather than editing.
+  for the website), for somebody buying or reviewing rather than editing.
 - **A release says how finished it is as well as whether it is visible**
   (`apps/marketplace/src/lib/channels.ts`): `nightly` / `beta` / `rc` / `release`, independent of
   `draft`/`published`/`archived`. The channel is part of the version key, so `1.4.0` can exist as an
@@ -363,7 +416,7 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   one `content_entries` table discriminated by `collection`, with collection-specific fields
   validated by `apps/cms/src/lib/collections.ts`. Adding a collection is a registry entry,
   not a migration.
-- **A translation is drafted by Workers AI and written by a person.** All three translating Workers
+- **A translation is drafted by Workers AI and written by a person.** Both translating Workers
   expose `POST /admin/translate`, which takes one field's text and one target locale and answers with
   a draft — and **writes nothing**. The draft is saved, edited or discarded through the ordinary
   PATCH that saves every other override. Four things follow and every one of them is the reason it is
@@ -415,8 +468,17 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   rather than rebuilding a header list, the way `landing` does. See `apps/auth/CLAUDE.md` for why
   the cookie is `SameSite=Lax` and why CORS there still never allows credentials. Because that
   cookie makes the *second* application an "Authorize" rather than a sign-in — no credential, no
-  email — `apps/auth` emails the account holder a notice of every access it grants, sign-in and
-  authorization alike (`apps/auth/src/services/notifications.ts`).
+  email — `apps/auth` tells the account holder about every access it grants, sign-in and
+  authorization alike (`apps/auth/src/services/notifications.ts`): through the notifications queue,
+  and by email directly when the queue will not take it.
+- **Who may create an account is a row in `apps/auth`, not configuration**: sign-up is
+  invitation-only until an administrator turns `registration_open` on through
+  `PATCH /auth/admin/settings` (the console has a checkbox for it), and the two endpoints that start
+  a magic link sign-in sit behind **Cloudflare Turnstile** wherever a keypair is configured — which
+  is what stops an open registration from being a mailing endpoint with an account generator behind
+  it. Both are per environment and per database: dev can be open while production is closed, and a
+  deployment with no Turnstile keypair (a local run, the suite) challenges nobody rather than
+  refusing everybody. See `apps/auth/CLAUDE.md`.
 - **The gateway's CORS allows write verbs because of auth**: `apps/api` used to allow `GET`
   only; sign-in, token exchange and the admin API need `POST`/`PATCH`/`DELETE`. The origin
   allowlist must stay locked down — but `/auth/*` is excluded from it entirely (`ownsCors` in
@@ -429,36 +491,11 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   `https://*.example.com` entry in a client's `allowed_origins` (`apps/auth/src/lib/origins.ts`).
   Both match on a dot boundary — `evilfranciscosolis.workers.dev` is a hostname anyone can take —
   and neither loosens redirect URIs, which stay byte-for-byte exact.
-- **`apps/support` is the one Worker here with entry points the gateway does not front.** `fetch` is
-  proxied at `/support/*` like every other internal Worker, but `email` is dispatched straight to the
-  script by Cloudflare Email Routing and `scheduled` by a cron trigger — neither passes through
-  `apps/api`, and neither can. That is the single documented exception to the service-binding rule
-  above, and it is why the `workers_dev`/routing configuration there must not be "tidied up" on the
-  strength of it: doing so silently removes the inbound half of the product while every test still
-  passes. The Email Routing rules themselves are dashboard configuration this repo cannot hold, in
-  exactly the way Workers Builds is.
-- **`apps/support` is the first Worker here that enforces a permission, and `apps/marketplace` the
-  second.** `apps/cms` deliberately stops at the email-domain gate and never reads `permissions` off
-  a token; the other two cannot.
-  A support system cannot: tickets are *assignable to people*, and that is meaningless without a
-  defined set of people. `apps/auth` resolves roles per client application, so `support:agent` plus a
-  client application of its own is the mechanism that produces one — which is why `apps/support` does
-  **not** reuse the CMS's audience, and why `apps/marketplace` got a client application of its own
-  rather than inheriting the one `apps/pages` borrowed. It also carries two audience lists, one
-  for the console and a wider one for somebody reading their own ticket; merging them would leave the
-  domain and permission checks as the only thing keeping a website token out of `/admin`.
-- **Ticket content is the only unauthenticated free text this monorepo stores**, and the schema has
-  no column for HTML anywhere near it. Not having the column is what makes it structurally impossible
-  for a later change to render it — the same rule `packages/emails/CLAUDE.md` states for
-  `ContentEmail`'s `dangerouslySetInnerHTML`. Inbound mail is converted to text at ingest by
-  `apps/support/src/lib/mime.ts`, and the quoted trail is trimmed there.
 - This repo uses `dev` as its default/main branch — never target `main`/`master`.
 - `apps/landing/.dev.vars` holds the `GH_TOKEN` secret for local dev, and
   `apps/auth/.dev.vars` holds `JWT_PRIVATE_KEY` and the Google OAuth client. Neither must
   ever be committed (both already gitignored). `apps/cms` has no secrets at all — its `.dev.vars` only
-  repoints `AUTH_JWKS_URL`/`AUTH_ISSUER` at a local auth Worker — and `apps/support` has none either:
-  the link that lets somebody read their own ticket without an account is a per-ticket random secret
-  stored as a hash on the row, not a key held by the Worker. `apps/marketplace` is the exception: it
+  repoints `AUTH_JWKS_URL`/`AUTH_ISSUER` at a local auth Worker. `apps/marketplace` is the exception: it
   holds `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` and `DOWNLOAD_SIGNING_KEY`. Use a MercadoPago *test* credential locally — a preference created with one
   answers a `sandbox_init_point`, which is what the Worker hands the browser, so nothing charges a real
   card.

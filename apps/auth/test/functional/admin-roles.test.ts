@@ -195,8 +195,6 @@ describe('GET /admin/permissions', () => {
         'audit:read',
         'avatars:read',
         'avatars:review',
-        'support:agent',
-        'support:admin',
       ]),
     )
   })

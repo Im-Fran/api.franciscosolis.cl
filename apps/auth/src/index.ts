@@ -2,9 +2,12 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { describeRoute, openAPIRouteHandler, resolver } from 'hono-openapi'
 import * as v from 'valibot'
+import { getDb } from '@/db/client'
 import type { AppEnv } from '@/env'
 import { OAuthException } from '@/lib/errors'
+import { describeTurnstile } from '@/lib/turnstile'
 import { describeProviders } from '@/providers'
+import { getSettings } from '@/services/settings'
 
 import { clientCors } from '@/middleware/cors'
 
@@ -63,6 +66,13 @@ const rootResponseSchema = v.object({
   data: v.object({
     message: v.string(),
     issuer: v.string(),
+    /** Whether an uninvited address may create an account here. Public: the sign-in screen reads it. */
+    registration_open: v.boolean(),
+    /** The bot check a sign-in front-end has to render, or `required: false` where none is set up. */
+    turnstile: v.object({
+      required: v.boolean(),
+      site_key: v.nullable(v.string()),
+    }),
     providers: v.array(
       v.object({
         name: v.string(),
@@ -79,7 +89,7 @@ app.get(
   '/',
   describeRoute({
     description:
-      'Status of the auth service and the authentication providers it exposes. `available` is false for a provider whose secrets are not configured on this deployment.',
+      'Status of the auth service and the authentication providers it exposes. `available` is false for a provider whose secrets are not configured on this deployment. `registration_open` says whether an address nobody invited may create an account, and `turnstile` carries the site key a sign-in front-end renders a bot check with — `required: false` means this deployment has no Turnstile keys and challenges nobody.',
     tags: ['General'],
     responses: {
       200: {
@@ -88,15 +98,19 @@ app.get(
       },
     },
   }),
-  (c) =>
-    c.json({
+  async (c) => {
+    const settings = await getSettings(getDb(c.env))
+    return c.json({
       code: 200,
       data: {
         message: 'Hello, Auth!',
         issuer: c.env.AUTH_ISSUER,
+        registration_open: settings.registration_open,
+        turnstile: describeTurnstile(c.env),
         providers: describeProviders(c.env),
       },
-    }),
+    })
+  },
 )
 
 app.route('/', wellKnown)

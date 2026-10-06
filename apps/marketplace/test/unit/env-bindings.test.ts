@@ -42,6 +42,12 @@ describe('the test environment', () => {
     expect(env.RELEASES).toBeDefined()
   })
 
+  it('declares the notifications queue, which Miniflare simulates without an account', () => {
+    // Unlike `ai`, a queue producer has a local simulation, so it stays declared in the `test`
+    // environment and a missing one fails here rather than on the first sale on the development stack.
+    expect(env.NOTIFICATIONS_QUEUE).toBeDefined()
+  })
+
   it('keeps the two audience lists distinct', () => {
     // The point of having two is that a buyer's token is not an editor's. If somebody "simplifies"
     // them into one value, this is the line that says no.

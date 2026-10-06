@@ -115,13 +115,18 @@ const SERVICE_MODULES = [
     deprecated: 'MercadoPago preferences created before the marketplace rename still notify this path',
   },
   {
-    name: 'support',
-    binding: 'SUPPORT',
-    tag: 'Support',
-    description: 'Proxy to the support Worker (tickets, the help centre and the deferred-reply notifications)',
-    // Forwards the whole Request for the same reasons as the CMS, plus one of its own: the public
-    // ticket form is rate limited per client IP, so `CF-Connecting-IP` has to survive the hop or the
-    // limit would count every request in the world as coming from one address.
+    name: 'notifications',
+    binding: 'NOTIFICATIONS',
+    tag: 'Notifications',
+    description:
+      'Proxy to the notifications Worker (the in-site notification list, preferences, Web Push subscriptions and digests)',
+    // Forwards the whole Request for the same reasons as the CMS: the body of a preference update or
+    // a push subscription, and the `Authorization` header the module verifies itself. Its CORS is the
+    // gateway's, not its own — every caller is the website, which is already on the allowlist, and
+    // `PUT /me/preferences` and `DELETE` of a subscription are verbs the allowlist already carries.
+    //
+    // This is the only direction the two are wired in. The producers (`auth` and
+    // `marketplace`) reach this Worker through a queue, not through a binding and not through here.
   },
 ] as const satisfies readonly ServiceModule[]
 

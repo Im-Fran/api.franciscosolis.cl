@@ -8,6 +8,7 @@ import invitations from '@/routes/admin/invitations'
 import me from '@/routes/admin/me'
 import roles from '@/routes/admin/roles'
 import sessions from '@/routes/admin/sessions'
+import settings from '@/routes/admin/settings'
 import users from '@/routes/admin/users'
 
 /**
@@ -32,5 +33,6 @@ app.route('/', invitations)
 app.route('/', applications)
 app.route('/', roles)
 app.route('/', audit)
+app.route('/', settings)
 
 export default app

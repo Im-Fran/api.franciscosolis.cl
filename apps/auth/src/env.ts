@@ -1,4 +1,5 @@
 import type { AuthenticatedActor } from '@/middleware/auth'
+import type { NotificationEvent } from '@/services/notify'
 
 /** One recipient/sender of an email sent through Cloudflare Email Sending. */
 type EmailAddress = {
@@ -36,6 +37,13 @@ type Env = {
    * approved one, so a picture waiting for review is unreachable rather than merely unlinked.
    */
   AVATARS: R2Bucket
+  /**
+   * Producer half of the `franciscosolis-notifications` queue, drained by `apps/notifications`.
+   * The shipped `Queue` type is used as is — unlike `EMAIL`, it describes this binding accurately —
+   * narrowed to the one message shape the contract with that Worker allows. Only
+   * `services/notify.ts` touches it, so nothing else here has to know what a failed send means.
+   */
+  NOTIFICATIONS_QUEUE: Queue<NotificationEvent>
 
   /** Public base URL of this Worker, e.g. `https://api.franciscosolis.cl/auth`. No trailing slash. */
   AUTH_PUBLIC_URL: string
@@ -57,6 +65,15 @@ type Env = {
 
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
+
+  /**
+   * Cloudflare Turnstile site key, the public half. It is a var rather than a secret because the
+   * sign-in front-end renders it into a widget, and it is optional because a deployment without it
+   * simply does not challenge: `lib/turnstile.ts` skips the check when either half is missing.
+   */
+  TURNSTILE_SITE_KEY?: string
+  /** Turnstile secret key, the half that verifies a token against Cloudflare. Secret. */
+  TURNSTILE_SECRET_KEY?: string
 }
 
 /** Values `requireAuth` puts on the Hono context for downstream handlers. */

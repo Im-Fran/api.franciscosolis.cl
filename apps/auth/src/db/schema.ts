@@ -444,6 +444,22 @@ const refreshTokens = sqliteTable('refresh_tokens', {
   index('refresh_tokens_session_id_idx').on(table.sessionId),
 ])
 
+/**
+ * Operational settings, as key/value text rows rather than a column per setting.
+ *
+ * A setting is not schema: it changes while the Worker runs, an administrator writes it, and adding
+ * one must not need a migration against a database a deploy is racing. `src/services/settings.ts`
+ * owns the catalog — the keys that exist, how each value is parsed and what it falls back to — so a
+ * row with an unknown key, or with a value that no longer parses, is ignored rather than believed.
+ */
+const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  /** Always text. The catalog in `services/settings.ts` decides what it means. */
+  value: text('value').notNull(),
+  updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+})
+
 /** Append-only trail of security-relevant events. Never updated, never deleted by the Worker. */
 const auditLogs = sqliteTable('audit_logs', {
   id: text('id').primaryKey(),
@@ -476,6 +492,7 @@ export {
   rolePermissions,
   roles,
   sessions,
+  settings,
   ssoSessions,
   userRoles,
   users,

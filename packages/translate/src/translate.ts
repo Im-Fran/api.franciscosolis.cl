@@ -4,8 +4,8 @@ import { languageName } from './languages'
 /**
  * One machine translation, and the prompt behind it.
  *
- * Three Workers here store translations — the CMS, the standalone app pages and the support help
- * centre — and all three offer the same thing to an editor: a first draft of a field in another
+ * Two Workers here store translations — the CMS and the marketplace's product pages — and both
+ * offer the same thing to an editor: a first draft of a field in another
  * language, produced by Workers AI, saved like any other override and edited afterwards. What
  * differs between them is the database the call is metered in and the gate in front of it, not a
  * single word of the prompt. So the prompt lives here, once.

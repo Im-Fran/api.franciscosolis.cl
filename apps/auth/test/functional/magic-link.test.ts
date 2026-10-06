@@ -65,6 +65,24 @@ describe('POST /magic-link', () => {
     })
   })
 
+  it('writes the email in the language the sign-in was started in', async () => {
+    const user = await createUser({ email: uniqueEmail('mles') })
+
+    await request({ email: user.email, locale: 'es-CL' })
+
+    expect(mailbox.last().subject).toBe('Tu enlace para iniciar sesión en franciscosolis.cl')
+  })
+
+  it('falls back to the account language, then to English', async () => {
+    const spanish = await createUser({ email: uniqueEmail('mlstored'), locale: 'es' })
+    await request({ email: spanish.email, locale: 'fr' })
+    expect(mailbox.last().subject).toBe('Tu enlace para iniciar sesión en franciscosolis.cl')
+
+    const unknown = await createUser({ email: uniqueEmail('mlnone') })
+    await request({ email: unknown.email })
+    expect(mailbox.last().subject).toBe('Your sign-in link for franciscosolis.cl')
+  })
+
   it('answers the same 202 for an address that may not sign in, and sends nothing', async () => {
     const email = uniqueEmail('stranger')
 

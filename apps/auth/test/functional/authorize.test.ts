@@ -355,6 +355,15 @@ describe('POST /oauth/authorize/:handle/magic-link', () => {
     })
   })
 
+  it('writes the email in the language the sign-in screen was in', async () => {
+    const user = await createUser()
+    const { handle } = await park()
+
+    await submit(handle, { email: user.email, locale: 'es' })
+
+    expect(mailbox.last().subject).toMatch(/^Tu enlace para iniciar sesión en /)
+  })
+
   it('never answers HTML, whatever the request asks for', async () => {
     const { handle } = await park()
 

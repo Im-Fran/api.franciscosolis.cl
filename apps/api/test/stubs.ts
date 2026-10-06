@@ -11,7 +11,7 @@
  */
 
 /** Name of the module the gateway strips from the path before forwarding. */
-type ModuleName = 'landing' | 'auth' | 'cms' | 'marketplace' | 'support'
+type ModuleName = 'landing' | 'auth' | 'cms' | 'marketplace' | 'notifications'
 
 const echoWorkerScript = (module: ModuleName) => `
 export default {
@@ -101,7 +101,7 @@ const internalWorkers = [
   stubWorker('auth'),
   stubWorker('cms'),
   stubWorker('marketplace'),
-  stubWorker('support'),
+  stubWorker('notifications'),
 ]
 
 export { internalWorkers, stubWorker }

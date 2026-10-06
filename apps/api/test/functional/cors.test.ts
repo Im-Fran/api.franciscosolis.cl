@@ -124,26 +124,30 @@ describe('CORS preflight', () => {
     await expect(response.text()).resolves.toBe('')
   })
 
-  it('allows the write verbs the auth, cms and support modules need', async () => {
+  it('allows the write verbs the auth, cms and notifications modules need', async () => {
     const response = await preflight('/cms/content/projects', 'POST')
 
     expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET,POST,PUT,PATCH,DELETE,OPTIONS')
   })
 
-  it('advertises PUT for the support console assignee endpoint', async () => {
-    const response = await preflight('/support/admin/tickets/1/assignee', 'PUT')
+  it('covers what the notifications module needs without a list of its own', async () => {
+    // Marking one read is a POST, saving preferences a PUT, dropping a push subscription a DELETE,
+    // and every one carries a bearer token — all already on the gateway's lists, which is why
+    // `notifications` does not own its CORS the way `auth` does.
+    const response = await preflight('/notifications/me/preferences', 'PUT')
 
-    expect(response.headers.get('Access-Control-Allow-Methods')).toContain('PUT')
+    expect(response.status).toBe(204)
+    for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+      expect(response.headers.get('Access-Control-Allow-Methods')).toContain(method)
+    }
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Authorization')
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Content-Type')
   })
 
   it('allows only the request headers the modules actually read', async () => {
     const response = await preflight('/cms/content/projects', 'POST')
 
-    // `X-Support-Ticket-Token` is the per-ticket secret from an emailed support link, which cannot
-    // ride in `Authorization` because a website session may already be there.
-    expect(response.headers.get('Access-Control-Allow-Headers')).toBe(
-      'Content-Type,Authorization,X-Support-Ticket-Token',
-    )
+    expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Content-Type,Authorization')
   })
 
   it('lets the browser cache the preflight for ten minutes', async () => {

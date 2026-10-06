@@ -5,6 +5,7 @@ import type { ProviderName } from '@/lib/config'
 import { generateId } from '@/lib/crypto'
 import { OAuthException } from '@/lib/errors'
 import { acceptInvitation, findPendingInvitation } from '@/services/invitations'
+import { isRegistrationOpen } from '@/services/settings'
 import type { ProviderProfile } from '@/providers/types'
 
 type User = typeof users.$inferSelect
@@ -82,6 +83,8 @@ const getRoleBySlug = async (db: Database, slug: string, applicationId: string |
 type ResolveResult = {
   user: User
   isNewUser: boolean
+  /** How a brand new account came to exist, for the audit trail. Null for a returning user. */
+  signupSource: 'invitation' | 'open_registration' | null
 }
 
 /**
@@ -92,8 +95,11 @@ type ResolveResult = {
  *  2. The email matches an existing user: the identity is linked to it. Only safe because the
  *     caller guarantees the provider verified the address (see the check below); linking on an
  *     unverified email would let anyone claim an account by signing up elsewhere with that address.
- *  3. Nobody matches: this is a sign-up, which requires a pending invitation for the address.
- *     The very first account is seeded straight into the database by `scripts/bootstrap-admin.mjs`.
+ *  3. Nobody matches: this is a sign-up. It requires a pending invitation for the address, unless
+ *     the `registration_open` setting says otherwise — the one switch that widens this path, and
+ *     the reason the endpoints that start a sign-in are behind Turnstile. The very first account is
+ *     seeded straight into the database by `scripts/bootstrap-admin.mjs`, whichever way it is set,
+ *     so the bootstrap never depends on registration being open.
  */
 const resolveUserForProfile = async (
   db: Database,
@@ -125,18 +131,20 @@ const resolveUserForProfile = async (
       .set({ email, profile: JSON.stringify(profile.raw ?? null), lastUsedAt: now, updatedAt: now })
       .where(eq(identities.id, existingIdentity.id))
 
-    return { user: await applyProfileToUser(db, user, profile), isNewUser: false }
+    return { user: await applyProfileToUser(db, user, profile), isNewUser: false, signupSource: null }
   }
 
   const existingUser = await findUserByEmail(db, email)
   if (existingUser) {
     assertUserActive(existingUser)
     await linkIdentity(db, existingUser.id, profile, email)
-    return { user: await applyProfileToUser(db, existingUser, profile), isNewUser: false }
+    return { user: await applyProfileToUser(db, existingUser, profile), isNewUser: false, signupSource: null }
   }
 
+  // An invitation is still the first thing looked for even when registration is open: it may carry
+  // a role, and accepting it is what stops it being handed to somebody else later.
   const invitation = await findPendingInvitation(db, email, applicationId)
-  if (!invitation) {
+  if (!invitation && !(await isRegistrationOpen(db))) {
     throw new OAuthException(403, 'access_denied', 'This email address has not been invited')
   }
 
@@ -161,12 +169,14 @@ const resolveUserForProfile = async (
     await grantRole(db, user.id, role.id)
   }
 
-  if (invitation.roleId) {
-    await grantRole(db, user.id, invitation.roleId, invitation.invitedBy)
+  if (invitation) {
+    if (invitation.roleId) {
+      await grantRole(db, user.id, invitation.roleId, invitation.invitedBy)
+    }
+    await acceptInvitation(db, invitation.id, user.id)
   }
-  await acceptInvitation(db, invitation.id, user.id)
 
-  return { user, isNewUser: true }
+  return { user, isNewUser: true, signupSource: invitation ? 'invitation' : 'open_registration' }
 }
 
 const assertUserActive = (user: User) => {

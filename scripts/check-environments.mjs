@@ -13,8 +13,8 @@
  * So this asserts, for every app that declares a `dev` environment:
  *
  * - it declares the same binding names and the same `vars` keys as the top level, and no extras;
- * - every resource it names is a *different* resource — database, bucket, Vectorize index and
- *   target Worker of every service binding;
+ * - every resource it names is a *different* resource — database, bucket, Vectorize index, queue
+ *   (produced to or consumed from) and target Worker of every service binding;
  * - no var still points at a production host, and the routes it claims are not production's.
  *
  * Run it with `node scripts/check-environments.mjs`; CI runs it as its own job.
@@ -110,6 +110,16 @@ const bindingsOf = (config) => {
   for (const entry of config.vectorize ?? []) bindings.set(`vectorize:${entry.binding}`, entry.index_name)
   for (const entry of config.send_email ?? []) bindings.set(`email:${entry.name}`, entry.name)
   if (config.ai) bindings.set(`ai:${config.ai.binding}`, config.ai.binding)
+  // Queues are the one kind with two halves. A producer has a binding name, like everything above.
+  // A consumer has none — it is keyed by the queue it drains — so it is keyed here by position,
+  // which is enough to say "production consumes a queue and dev consumes a different one" without
+  // pretending the two halves share a name they do not. A dev producer left on the production queue
+  // is the exact failure this script exists for: every sign-in on the development stack would land
+  // in somebody's real notification list.
+  for (const entry of config.queues?.producers ?? []) bindings.set(`queue:${entry.binding}`, entry.queue)
+  for (const [index, entry] of (config.queues?.consumers ?? []).entries()) {
+    bindings.set(`queue-consumer:#${index}`, entry.queue)
+  }
   return bindings
 }
 

@@ -1,4 +1,5 @@
 import { and, count, eq, gt, isNull } from 'drizzle-orm'
+import { EMAIL_LOCALES, resolveEmailLocale } from '@franciscosolis/emails'
 import type { Database } from '@/db/client'
 import { magicLinkTokens } from '@/db/schema'
 import type { Env } from '@/env'
@@ -7,6 +8,7 @@ import { generateId, randomToken, sha256 } from '@/lib/crypto'
 import { OAuthException } from '@/lib/errors'
 import { magicLinkTemplate, sendEmail } from '@/services/email'
 import { findPendingInvitation } from '@/services/invitations'
+import { isRegistrationOpen } from '@/services/settings'
 import { findUserByEmail, normalizeEmail } from '@/services/users'
 import type { AuthorizationRequest, ProviderDescriptor, ProviderProfile } from '@/providers/types'
 
@@ -31,22 +33,46 @@ const countRecentRequests = async (db: Database, email: string) => {
 }
 
 /**
- * Decides whether an address is allowed to receive a link. Sign-up is invitation-only, so an
- * address that matches no user and no pending invitation gets nothing — but the caller still
- * answers 202, so this never becomes an account-enumeration oracle.
+ * Decides whether an address is allowed to receive a link. Sign-up is invitation-only unless the
+ * `registration_open` setting says otherwise, so an address that matches no user and no pending
+ * invitation gets nothing while registration is closed — but the caller still answers 202, so this
+ * never becomes an account-enumeration oracle either way.
  */
 const canReceiveMagicLink = async (db: Database, email: string, applicationId: string) => {
   const user = await findUserByEmail(db, email)
   if (user) {
-    return { allowed: user.status === 'active', userId: user.id, reason: user.status === 'active' ? null : 'disabled' }
+    return {
+      allowed: user.status === 'active',
+      userId: user.id,
+      locale: user.locale,
+      reason: user.status === 'active' ? null : 'disabled',
+    }
   }
   const invitation = await findPendingInvitation(db, email, applicationId)
-  return { allowed: invitation !== null, userId: null, reason: invitation ? null : 'not_invited' }
+  if (invitation) {
+    return { allowed: true, userId: null, locale: null, reason: null }
+  }
+  // Registration being open is what makes a link to an unknown address a sign-up rather than mail
+  // sent to somebody who cannot use it. `resolveUserForProfile` re-reads the setting when the link
+  // is clicked, so closing registration in between refuses the sign-up rather than honouring it.
+  const open = await isRegistrationOpen(db)
+  return { allowed: open, userId: null, locale: null, reason: open ? null : 'not_invited' }
 }
+
+/** The first of the given languages an email can be written in, by base tag (`es-CL` is `es`). */
+const pickLocale = (...candidates: (string | null | undefined)[]) =>
+  candidates
+    .map((value) => value?.toLowerCase().split(/[-_]/)[0])
+    .find((value) => (EMAIL_LOCALES as readonly (string | undefined)[]).includes(value)) ?? null
 
 type RequestMagicLinkInput = {
   email: string
   request: AuthorizationRequest
+  /**
+   * The language the sign-in screen was showing. It wins over the account's stored one: it is what
+   * the person reading the email chose a moment ago, and an unknown address has no stored one.
+   */
+  locale?: string | null
   ip: string | null
   userAgent: string | null
 }
@@ -106,6 +132,7 @@ const requestMagicLink = async (
       url: url.toString(),
       applicationName: input.request.application.name,
       expiresInMinutes: Math.round(TTL.magicLink / 60),
+      locale: resolveEmailLocale(pickLocale(input.locale, eligibility.locale)),
       brandName: env.MAIL_FROM_NAME,
     }),
   )
