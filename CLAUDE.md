@@ -13,7 +13,8 @@ Single pnpm monorepo for the public REST API behind **franciscosolis.cl**. It wi
 together six Cloudflare Workers, all living directly in this repo:
 
 - `apps/api` — public gateway Worker, deployed to `api.franciscosolis.cl`.
-- `apps/landing` — internal Worker with the landing page's GitHub stats, only reachable
+- `apps/landing` — internal Worker with the landing page's GitHub stats and Chilean economic
+  indicators (observed dollar, UF, UTM from the Banco Central de Chile API), only reachable
   from `apps/api` via a Cloudflare service binding, never public directly.
 - `apps/auth` — internal Worker with centralized authentication: a full OAuth 2.0 + OpenID
   Connect provider (authorization code + PKCE, rotatable client secrets, magic link and Google
@@ -497,7 +498,7 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   Both match on a dot boundary — `evilfranciscosolis.workers.dev` is a hostname anyone can take —
   and neither loosens redirect URIs, which stay byte-for-byte exact.
 - This repo uses `dev` as its default/main branch — never target `main`/`master`.
-- `apps/landing/.dev.vars` holds the `GH_TOKEN` secret for local dev, and
+- `apps/landing/.dev.vars` holds the `GH_TOKEN` and `BCCH_API_TOKEN` secrets for local dev, and
   `apps/auth/.dev.vars` holds `JWT_PRIVATE_KEY` and the Google OAuth client. Neither must
   ever be committed (both already gitignored). `apps/cms` has no secrets at all — its `.dev.vars` only
   repoints `AUTH_JWKS_URL`/`AUTH_ISSUER` at a local auth Worker. `apps/marketplace` is the exception: it

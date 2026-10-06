@@ -6,6 +6,7 @@ import * as v from 'valibot'
 
 /* Routes */
 import stats from '@/stats'
+import indicators from '@/indicators'
 
 const app = new Hono<{Bindings: Env}>()
 
@@ -51,6 +52,7 @@ app.get(
 )
 
 app.route('/stats', stats)
+app.route('/indicators', indicators)
 
 app.get(
   '/openapi.json',
@@ -59,7 +61,7 @@ app.get(
       info: {
         title: 'FranciscoSolis - Landing API',
         version: '1.0.0',
-        description: 'Internal API behind the franciscosolis.cl landing site: GitHub stats and site metadata.',
+        description: 'Internal API behind the franciscosolis.cl landing site: GitHub stats, Chilean economic indicators and site metadata.',
       },
     },
   })
