@@ -88,8 +88,8 @@ app.get(
 // One `ALL /<module>/*` proxy per entry in the service registry (`src/services.ts`).
 registerServiceProxies(app)
 
-// `GET /brand/lockup.png`. The only bytes this gateway owns, and it owns them because the emails
-// the other Workers send need the logo at a public URL (see `src/brand.ts`).
+// `GET /brand/lockup.png`. The only bytes this gateway owns, kept because the emails sent before
+// the logo moved to the asset CDN still point here (see `src/brand.ts`).
 registerBrandAssets(app)
 
 app.get('/openapi.json', async (c) => {

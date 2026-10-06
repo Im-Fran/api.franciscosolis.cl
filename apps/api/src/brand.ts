@@ -5,19 +5,19 @@ import type { Env } from '@/env'
 /**
  * The FranciscoSolis horizontal lockup, base64-encoded, so the gateway can serve it.
  *
- * It lives here — in a proxy that otherwise owns no content of its own — because the templates in
- * `@franciscosolis/emails` need the logo at an absolute, permanently reachable URL, and this Worker
- * is the only thing in the repository with a public hostname. An email cannot carry the logo any
- * other way: Gmail blocks `data:` URIs outright and strips inline SVG, so it has to be a real HTTP
- * asset.
+ * New mail no longer points here: `@franciscosolis/emails` renders the logo from the asset CDN
+ * (`https://cdn.franciscosolis.cl/emails/lockup.png`). It lives on in this proxy — which otherwise
+ * owns no content of its own — because every email sent before that move points an `<img>` at
+ * `/brand/lockup.png`, and a delivered email cannot be edited. Removing the route would break the
+ * logo in all of them.
  *
  * The bytes are inlined rather than configured as Wrangler static assets on purpose. 5 KB costs
  * nothing in a bundle, and keeping them here means the asset ships in the same deploy as the route
  * that serves it and is covered by the same test run, with no second deploy target to keep in sync.
  *
  * Source of truth is `packages/emails/assets/lockup.png` — a 400×66 (2×) render of
- * `fs-lockup-horizontal` from the brand package, flattened onto white. Regenerating it means
- * re-encoding here too; `packages/emails/README.md` has the one-liner.
+ * `fs-lockup-horizontal` from the brand package, flattened onto white — the same file the CDN
+ * serves. Regenerating it means re-encoding here too; `packages/emails/README.md` has the one-liner.
  */
 const LOCKUP_PNG_BASE64 = [
   'iVBORw0KGgoAAAANSUhEUgAAAZAAAABCCAMAAABO4HBuAAABR1BMVEX///8gICB2VZ1rSJV3Vp11VJwdHR3+/v/+/f79/P12UZJ9TIdzVJh1U5',

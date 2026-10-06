@@ -41,8 +41,10 @@ package. That is deliberate on all four counts — see below.
 - `src/money.ts` — `formatMoney`, the one place an amount is turned into a string.
 - `src/templates/` — one file per email. Also the directory the preview server reads.
 - `src/prettier-stub.ts` — not a template; see the bundle note below.
-- `assets/lockup.png` — the logo the layout points at. The bytes that actually get served live in
-  `apps/api/src/brand.ts`; this is the source they were encoded from.
+- `assets/lockup.png` — the logo the layout points at. `.github/workflows/cdn.yml` uploads
+  `assets/` to the asset CDN under `emails/`, so this file *is* what gets served at
+  `https://cdn.franciscosolis.cl/emails/lockup.png`. `apps/api/src/brand.ts` keeps a base64 copy
+  for the mail sent before the move.
 
 ## Architecture notes (non-obvious)
 
@@ -130,12 +132,15 @@ package. That is deliberate on all four counts — see below.
   of adaptive. It is also why `PLAIN_TEXT_SKIP_CLASS` is a class name — a class attribute costs
   nothing in a mail client and is the one hook html-to-text can select on.
 - **The logo is a hosted PNG, and every property of it is forced.** Gmail strips inline SVG and
-  blocks `data:` URIs, so it cannot be embedded; `apps/api` serves it at `/brand/lockup.png` because
-  that Worker owns the only public hostname in the repo. It is flattened onto white rather than
+  blocks `data:` URIs, so it cannot be embedded; it is served from the asset CDN
+  (`https://cdn.franciscosolis.cl/emails/lockup.png`, the `franciscosolis` R2 bucket). It used to
+  be `apps/api`'s `/brand/lockup.png`, and that route stays: a delivered email cannot be edited, so
+  removing it would break the logo in every inbox from before the move. It is flattened onto white rather than
   transparent because a client that darkens the card does not darken image pixels — a transparent
   lockup loses the ink-coloured "Solis". Its `alt` is the wordmark, but that does *not* reach the
   plain-text part (`toPlainText` skips images), which is why the footer also names the brand in
-  words. Changing the asset means re-encoding `apps/api/src/brand.ts`; see `README.md`.
+  words. Changing the asset means replacing `assets/lockup.png` (the workflow uploads it on the push
+  to `dev`) and, to keep old inboxes in step, re-encoding `apps/api/src/brand.ts`; see `README.md`.
 - **The footer identifies the company, and that is a legal requirement rather than a design
   choice.** It used to end on the brand's positioning tagline, which told a recipient nothing about
   who had written to them. What is there now — razón social, RUT, domicilio, a contact address and

@@ -11,7 +11,7 @@ type EmailLayoutProps = {
   heading: string
   /** Name the footer signs off with. The apps pass their `MAIL_FROM_NAME`. */
   brandName?: string
-  /** Overrides the hosted lockup. Only useful to a preview or a test that cannot reach the API. */
+  /** Overrides the hosted lockup. Only useful to a preview or a test that cannot reach the CDN. */
   logoSrc?: string
   children: ReactNode
 }

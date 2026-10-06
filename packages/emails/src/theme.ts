@@ -87,7 +87,10 @@ const theme = {
    */
   gradient: `linear-gradient(45deg, ${palette.periwinkle500} 0%, ${palette.plum500} 100%)`,
   /**
-   * The horizontal lockup, served by `apps/api` from `/brand/lockup.png`.
+   * The horizontal lockup, served from the asset CDN (the `franciscosolis` R2 bucket behind
+   * cdn.franciscosolis.cl) under the `emails/` prefix this package owns. `.github/workflows/cdn.yml`
+   * uploads `assets/` there. Mail sent before the move points at `apps/api`'s `/brand/lockup.png`,
+   * which stays up for those inboxes.
    *
    * It is a hosted PNG rather than the SVG source or a `data:` URI because Gmail strips inline SVG
    * and blocks `data:` images outright, and it has the white plate baked in rather than an alpha
@@ -99,7 +102,7 @@ const theme = {
    * the footer names the brand in words as well.
    */
   logo: {
-    src: 'https://api.franciscosolis.cl/brand/lockup.png',
+    src: 'https://cdn.franciscosolis.cl/emails/lockup.png',
     alt: 'FranciscoSolis',
     /** Served at 2× (400×66) for retina; the brand floor for this lockup is 24 px tall. */
     width: 200,
