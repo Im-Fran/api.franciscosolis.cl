@@ -1,5 +1,6 @@
 import { SELF } from 'cloudflare:test'
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SERIES, bcchSeries, stubBcch } from '../helpers/bcentral'
 import {
   axiosGet,
   axiosPost,
@@ -41,6 +42,10 @@ beforeAll(async () => {
 
 beforeEach(resetAxios)
 
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 const jsonSchemaFor = (path: string): Record<string, any> => {
   const schema = document.paths[path].get.responses['200'].content?.['application/json'].schema
   if (!schema) throw new Error(`${path} has no documented JSON 200 schema`)
@@ -78,6 +83,8 @@ describe('GET /openapi.json', () => {
   it('documents every route the Worker serves, and nothing it does not', () => {
     expect(Object.keys(document.paths).sort()).toEqual([
       '/',
+      '/indicators',
+      '/indicators/{indicator}',
       '/stats/github',
       '/stats/github/commits',
       '/stats/github/profile',
@@ -110,10 +117,28 @@ describe('GET /openapi.json', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('groups the routes under the General and GitHub tags', () => {
+  it('groups the routes under the General, GitHub and Indicators tags', () => {
     expect(document.paths['/'].get.tags).toEqual(['General'])
     for (const path of ['/stats/github', '/stats/github/commits', '/stats/github/profile', '/stats/github/stars']) {
       expect(document.paths[path].get.tags, path).toEqual(['GitHub'])
+    }
+    for (const path of ['/indicators', '/indicators/{indicator}']) {
+      expect(document.paths[path].get.tags, path).toEqual(['Indicators'])
+    }
+  })
+
+  it('documents the indicator history range as optional query parameters', () => {
+    const parameters = (document.paths['/indicators/{indicator}'].get as any).parameters
+
+    expect(parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ in: 'query', name: 'from' }),
+        expect.objectContaining({ in: 'query', name: 'to' }),
+        expect.objectContaining({ in: 'path', name: 'indicator', required: true }),
+      ]),
+    )
+    for (const parameter of parameters.filter((p: { in: string }) => p.in === 'query')) {
+      expect(parameter.required, parameter.name).toBeFalsy()
     }
   })
 })
@@ -144,6 +169,41 @@ describe('the generated response schemas', () => {
     })
     expect(data.properties.location).toEqual({
       anyOf: [{ type: 'string' }, { type: 'null' }],
+    })
+  })
+
+  it('pins the latest-value shape shared by every indicator', () => {
+    const data = jsonSchemaFor('/indicators').properties.data
+
+    expect(data.required).toEqual(['dollar', 'uf', 'utm'])
+    for (const key of ['dollar', 'uf', 'utm']) {
+      expect(data.properties[key], key).toEqual({
+        type: 'object',
+        properties: {
+          key: { enum: ['dollar', 'uf', 'utm'], type: 'string' },
+          name: { type: 'string' },
+          series: { type: 'string' },
+          frequency: { enum: ['daily', 'monthly'], type: 'string' },
+          unit: { const: 'CLP' },
+          date: { type: 'string' },
+          value: { type: 'number' },
+        },
+        required: ['key', 'name', 'series', 'frequency', 'unit', 'date', 'value'],
+      })
+    }
+  })
+
+  it('pins the indicator history as an array of dated numbers', () => {
+    const data = jsonSchemaFor('/indicators/{indicator}').properties.data
+
+    expect(data.required).toEqual(['key', 'name', 'series', 'frequency', 'unit', 'from', 'to', 'observations'])
+    expect(data.properties.observations).toEqual({
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { date: { type: 'string' }, value: { type: 'number' } },
+        required: ['date', 'value'],
+      },
     })
   })
 
@@ -225,6 +285,42 @@ describe('spec and runtime agreement', () => {
     for (const [field, value] of Object.entries(body.data.repos)) {
       expect(typeof value, `repos.${field}`).toBe('number')
     }
+  })
+
+  it('serves an indicators payload that matches its own documented schema', async () => {
+    stubBcch({
+      [SERIES.dollar]: bcchSeries(SERIES.dollar, [['2026-10-05', 929.87]]),
+      [SERIES.uf]: bcchSeries(SERIES.uf, [['2026-10-06', 39490.12]]),
+      [SERIES.utm]: bcchSeries(SERIES.utm, [['2026-10-01', 69611]]),
+    })
+    const schema = jsonSchemaFor('/indicators')
+
+    const body = await readJson<{ code: number; data: Record<string, Record<string, unknown>> }>(
+      await SELF.fetch(`${BASE}/indicators`),
+    )
+
+    expectEnvelopeMatchesSchema(body, schema)
+    expect(Object.keys(body.data).sort()).toEqual([...schema.properties.data.required].sort())
+    for (const [key, indicator] of Object.entries(body.data)) {
+      const declared = schema.properties.data.properties[key]
+      expect(Object.keys(indicator).sort(), key).toEqual([...declared.required].sort())
+      expect(declared.properties.key.enum, key).toContain(indicator.key)
+      expect(declared.properties.frequency.enum, key).toContain(indicator.frequency)
+      expect(typeof indicator.value, key).toBe('number')
+    }
+  })
+
+  it('serves an indicator history that matches its own documented schema', async () => {
+    stubBcch({ [SERIES.uf]: bcchSeries(SERIES.uf, [['2026-10-05', 39485.65], ['2026-10-06', null]]) })
+    const schema = jsonSchemaFor('/indicators/{indicator}')
+
+    const body = await readJson<{ code: number; data: Record<string, any> }>(
+      await SELF.fetch(`${BASE}/indicators/uf?from=2026-10-01&to=2026-10-06`),
+    )
+
+    expectEnvelopeMatchesSchema(body, schema)
+    expect(Object.keys(body.data).sort()).toEqual([...schema.properties.data.required].sort())
+    expect(body.data.observations).toEqual([{ date: '2026-10-05', value: 39485.65 }])
   })
 
   it('serves a profile location that matches the nullable branch of its schema', async () => {
