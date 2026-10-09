@@ -99,8 +99,10 @@ package. That is deliberate on all four counts — see below.
 - **Amounts are formatted here, dates are not** (`money.ts`). `formatMoney` pins
   `maximumFractionDigits` to zero because every amount this monorepo charges is an integer of the
   currency's major unit — CLP has no minor unit, and `$1.990,00` on a peso receipt is the kind of thing
-  somebody writes in asking about. An unrecognised currency falls back to `<code> <amount>` rather than
-  throwing: an exception while rendering a receipt loses the whole message. Dates are deliberately
+  somebody writes in asking about. The one figure that takes decimals is a general donation's
+  *pledge* — what the donor chose in their own currency before it was converted to pesos — and the
+  caller passes that currency's own `fractionDigits` for it; a charge never does. An unrecognised
+  currency falls back to `<code> <amount>` rather than throwing: an exception while rendering a receipt loses the whole message. Dates are deliberately
   *not* done here — a template takes an already-formatted string, because the sending Worker is the
   only thing that knows the recipient's language and the timezone the business runs in.
 - **The sale templates say what they are for, and the refund one is not sent for a chargeback.** A

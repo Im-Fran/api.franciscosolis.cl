@@ -6,6 +6,7 @@ import type { AppEnv } from '@/env'
 import { CATEGORIES, CATEGORY_KEYS } from '@/lib/categories'
 import { CHANNELS, DEFAULT_FEED_CHANNEL, RELEASE_CHANNELS } from '@/lib/channels'
 import { COMPATIBILITY_KIND_INFO, COMPATIBILITY_KINDS } from '@/lib/compatibility'
+import { DONATION_CURRENCY_CODES } from '@/lib/donations'
 import { TRANSLATION } from '@/lib/config'
 import { LINK_KINDS } from '@/lib/links'
 import { DEFAULT_LOCALE, LOCALES } from '@/lib/locales'
@@ -15,6 +16,7 @@ import { TAB_KEYS, TABS } from '@/lib/tabs'
 /* Routes */
 import admin from '@/routes/admin'
 import products from '@/routes/products'
+import donations from '@/routes/donations'
 import downloads from '@/routes/downloads'
 import payments from '@/routes/payments'
 import reviews from '@/routes/reviews'
@@ -68,6 +70,7 @@ const rootResponseSchema = v.object({
     pricing_modes: v.array(v.string()),
     currency: v.string(),
     minimum_amount: v.number(),
+    donation_currencies: v.array(v.string()),
     translation: v.object({
       /** Whether machine-translation drafts are offered. False would mean the editor hides the button. */
       ai: v.boolean(),
@@ -114,6 +117,9 @@ app.get(
         pricing_modes: [...PRICING_MODES],
         currency: CURRENCY,
         minimum_amount: AMOUNT_LIMITS.min,
+        // What the donation link (`/donations`) accepts. That route carries the rates as well; this is
+        // the closed list on its own, beside the other vocabularies.
+        donation_currencies: [...DONATION_CURRENCY_CODES],
         // Advertised for the same reason as the locale list: the editor's translation modal only
         // offers to draft a field with Workers AI when the service it is talking to says it can,
         // and only up to the length that service will actually accept.
@@ -127,6 +133,7 @@ app.get(
 
 app.route('/', products)
 app.route('/', store)
+app.route('/', donations)
 app.route('/', downloads)
 app.route('/', payments)
 app.route('/', reviews)
@@ -141,7 +148,7 @@ app.get(
         title: 'FranciscoSolis - Marketplace API',
         version: '1.0.0',
         description:
-          'The marketplace behind franciscosolis.cl: one product page per thing built here, all to the same house standard — a banner, a tab bar and the content behind it. Reads of published products are public and take an optional `?locale`; everything under /admin needs an access token minted for the marketplace console, carrying an allowed email domain and the `marketplace:editor` permission. A product can be paid for or donated to through MercadoPago, its builds are published on four release channels and served against a per-request ticket rather than from a bucket URL, and the people who obtained it can review it — see the Store, Downloads and Reviews tags.',
+          'The marketplace behind franciscosolis.cl: one product page per thing built here, all to the same house standard — a banner, a tab bar and the content behind it. Reads of published products are public and take an optional `?locale`; everything under /admin needs an access token minted for the marketplace console, carrying an allowed email domain and the `marketplace:editor` permission. A product can be paid for or donated to through MercadoPago, its builds are published on four release channels and served against a per-request ticket rather than from a bucket URL, and the people who obtained it can review it — see the Store, Downloads and Reviews tags. Support for the projects in general, in any amount and currency, goes through the donation link — see the Donations tag.',
       },
       components: {
         securitySchemes: {

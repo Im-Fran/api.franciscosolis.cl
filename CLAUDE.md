@@ -35,7 +35,9 @@ together six Cloudflare Workers, all living directly in this repo:
   supporters. It runs the back office around those payments — per-product sales, sales recorded by
   hand for cash or a transfer, vouchers (receipts) and refunds — sends the one kind of mail it has,
   the receipt, and carries the **reviews** the people who obtained a product wrote about it, with
-  the rating window a release can restart.
+  the rating window a release can restart. It also holds the **donation link** (`/marketplace/donations`):
+  support for the projects in general, in any amount and in the donor's own currency, converted to
+  and settled in Chilean pesos, and filed in the back office under the `general` scope.
 - `apps/notifications` — internal Worker with the **notification centre**, reachable through `apps/api`
   at `/notifications/*`: the in-site list behind the bell on the website, per-category preferences for
   push and email, Web Push (VAPID) subscriptions, and the daily/weekly email digests. It is the one

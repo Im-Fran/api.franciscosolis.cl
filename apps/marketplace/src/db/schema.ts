@@ -538,6 +538,17 @@ const purchases = sqliteTable('purchases', {
   createdBy: text('created_by'),
   /** Free-form JSON. Must never carry a card detail, a provider token or an access token. */
   metadata: text('metadata'),
+  /**
+   * What the donor chose to give, when that was not the pesos charged: a general donation named in
+   * dollars or euros (`src/lib/donations.ts`). An integer of `pledgedCurrency`'s *minor* unit — 1050
+   * with `USD` is ten dollars and fifty cents — so nothing here holds a float.
+   *
+   * `amount`/`currency` stay what was charged, because that is what MercadoPago settled and what a
+   * refund gives back; this is the donor's own figure, kept so the receipt can say both. Null on every
+   * product sale, which is priced in pesos to begin with.
+   */
+  pledgedAmount: integer('pledged_amount'),
+  pledgedCurrency: text('pledged_currency'),
   ...timestamps,
 }, (table) => [
   uniqueIndex('purchases_external_reference_unique').on(table.externalReference),
@@ -584,6 +595,9 @@ const saleVouchers = sqliteTable('sale_vouchers', {
   currency: text('currency').notNull().default('CLP'),
   /** How the money arrived, copied from the sale. The receipt prints it. */
   source: text('source').notNull().default('mercadopago'),
+  /** The donor's own figure, copied from the sale — see `purchases.pledgedAmount`. The receipt prints it. */
+  pledgedAmount: integer('pledged_amount'),
+  pledgedCurrency: text('pledged_currency'),
   /** `issued` | `void`. */
   status: text('status').notNull().default('issued'),
   /** Language the voucher was rendered in, so a re-send reads the same as the original. */
