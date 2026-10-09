@@ -4,9 +4,10 @@ import type { Database } from '@/db/client'
 import { saleVouchers } from '@/db/schema'
 import type { Env } from '@/env'
 import { isUniqueViolation } from '@/lib/errors'
+import { DONATION_CURRENCIES, isDonationCurrency, sitePathFor } from '@/lib/donations'
 import { formatVoucherNumber, parseSaleSource, voucherNumberPrefix, type VoucherStatus } from '@/lib/sales'
 import { formatMailDate, sendMail } from '@/services/mail'
-import type { Purchase } from '@/services/purchases'
+import { describePledge, type Purchase } from '@/services/purchases'
 
 /**
  * The voucher: the receipt for a sale, as a row and as an email.
@@ -140,6 +141,8 @@ const issueVoucher = async (db: Database, input: IssueVoucherInput): Promise<Vou
       amount: input.purchase.amount,
       currency: input.purchase.currency,
       source: input.purchase.source,
+      pledgedAmount: input.purchase.pledgedAmount,
+      pledgedCurrency: input.purchase.pledgedCurrency,
       status: 'issued' as VoucherStatus,
       locale: resolveEmailLocale(input.locale),
       issuedBy: input.issuedBy,
@@ -170,6 +173,21 @@ const issueVoucher = async (db: Database, input: IssueVoucherInput): Promise<Vou
 }
 
 /**
+ * The donor's own figure as the receipt prints it, with the decimals its currency is written in.
+ *
+ * Only when it differs from what was charged: a peso donation's pledge is the charge itself, and a
+ * receipt saying "you chose $5.000, you were charged $5.000" is a line of noise.
+ */
+const pledgeForReceipt = (voucher: Voucher) => {
+  const pledge = describePledge(voucher)
+  if (!pledge || pledge.currency === voucher.currency) {
+    return null
+  }
+  const fractionDigits = isDonationCurrency(pledge.currency) ? DONATION_CURRENCIES[pledge.currency].minor_units : 2
+  return { ...pledge, fractionDigits }
+}
+
+/**
  * Emails a voucher and records that it went out.
  *
  * The count is bumped only after the send resolves. A voucher that says it was sent three times
@@ -195,12 +213,13 @@ const sendVoucher = async (
     kind: voucher.kind === 'donation' ? 'donation' : 'purchase',
     amount: voucher.amount,
     currency: voucher.currency,
+    pledged: pledgeForReceipt(voucher),
     source: parseSaleSource(voucher.source),
     // Formatted here rather than in the template: the package renders markup and does no date work,
     // and this is the one place that knows the recipient's language and the issue date together.
     issuedAt: formatMailDate(voucher.issuedAt, locale),
     reference: voucher.number,
-    url: `${env.SITE_BASE_URL.replace(/\/+$/, '')}/product/${voucher.productSlug}`,
+    url: `${env.SITE_BASE_URL.replace(/\/+$/, '')}${sitePathFor(voucher.productId, voucher.productSlug)}`,
     locale,
     brandName: env.MAIL_FROM_NAME,
   })
@@ -310,6 +329,7 @@ const toPublicVoucher = (voucher: Voucher) => ({
   kind: voucher.kind,
   amount: voucher.amount,
   currency: voucher.currency,
+  pledged: describePledge(voucher),
   source: voucher.source,
   status: voucher.status,
   locale: voucher.locale,
