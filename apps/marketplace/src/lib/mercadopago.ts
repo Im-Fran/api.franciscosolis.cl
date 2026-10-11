@@ -138,6 +138,23 @@ type CreatePreferenceInput = {
   metadata?: Record<string, unknown>
 }
 
+/**
+ * The provider refused a request, with the status it answered.
+ *
+ * A class rather than a bare `Error` so a route can tell "MercadoPago said no to *this*" (a 4xx — an
+ * amount below what it will charge, say) from "MercadoPago could not be reached" (anything else),
+ * and answer the first as the caller's problem rather than as an outage.
+ */
+class MercadoPagoError extends Error {
+  readonly status: number
+
+  constructor(status: number) {
+    super(`MercadoPago answered ${status}`)
+    this.name = 'MercadoPagoError'
+    this.status = status
+  }
+}
+
 const request = async <T>(env: Env, path: string, init: RequestInit = {}): Promise<T> => {
   if (!env.MERCADOPAGO_ACCESS_TOKEN) {
     throw new Error('MERCADOPAGO_ACCESS_TOKEN is not configured, so no payment can be taken')
@@ -158,7 +175,7 @@ const request = async <T>(env: Env, path: string, init: RequestInit = {}): Promi
     // and the request carries the buyer's address. The status is what a route needs to react.
     const detail = await response.text().catch(() => '')
     console.error('mercadopago request failed', path, response.status, detail.slice(0, 500))
-    throw new Error(`MercadoPago answered ${response.status}`)
+    throw new MercadoPagoError(response.status)
   }
 
   return (await response.json()) as T
@@ -427,6 +444,7 @@ export {
   getPayment,
   mapOrderStatus,
   mapPaymentStatus,
+  MercadoPagoError,
   orderPaymentIds,
   refundPayment,
   resolveEnvironment,

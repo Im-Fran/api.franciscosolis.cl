@@ -20,6 +20,7 @@ import {
   VOUCHER_STATUSES,
   WITHDRAWAL_DAYS,
 } from '@/lib/sales'
+import { GENERAL_FUND, isGeneralFund } from '@/lib/donations'
 import { dateInput } from '@/lib/validation'
 import { findProductById, type Product } from '@/services/products'
 import { getActorContext, getRequestContext, recordAudit } from '@/services/audit'
@@ -59,8 +60,22 @@ import {
  */
 const app = new Hono<AppEnv>()
 
-/** Resolves the product in the URL, or 404s. Every route below starts here. */
-const requireProduct = async (db: Database, id: string): Promise<Product> => {
+/** What every route below needs to know about the product it is scoped to, and nothing more. */
+type SaleScope = Pick<Product, 'id' | 'slug' | 'name'>
+
+/**
+ * Resolves the product in the URL, or 404s. Every route below starts here.
+ *
+ * `general` resolves too, to the scope the donation link files its sales under
+ * (`src/lib/donations.ts`). It has no product row and needs none: these routes only ever read a
+ * product's id, slug and name, so the listing, the totals, a refund, a receipt and a donation taken
+ * in cash all work for it unchanged — which is the whole reason it is addressed as a product here
+ * rather than given a second copy of this file.
+ */
+const requireProduct = async (db: Database, id: string): Promise<SaleScope> => {
+  if (isGeneralFund(id)) {
+    return GENERAL_FUND
+  }
   const product = await findProductById(db, id)
   if (!product) {
     throw new HTTPException(404, { message: 'Product not found' })
@@ -93,7 +108,7 @@ const requireVoucher = async (db: Database, productId: string, voucherId: string
 }
 
 /** The name a voucher prints. Falls back to the slug for a product deleted since the sale. */
-const productNameFor = (product: Product | null, purchase: Purchase): string =>
+const productNameFor = (product: SaleScope | null, purchase: Purchase): string =>
   product?.name ?? purchase.productSlug
 
 const emailInput = v.pipe(v.string(), v.trim(), v.email(), v.maxLength(320))
@@ -252,7 +267,9 @@ app.post(
       productId: product.id,
       productSlug: product.slug,
       productName: product.name,
-      kind: body.kind ?? 'purchase',
+      // Money given to the work in general is a donation whatever the form said: there is nothing
+      // there to purchase, and a `purchase` would put the statutory withdrawal line on its receipt.
+      kind: isGeneralFund(product.id) ? 'donation' : (body.kind ?? 'purchase'),
       source: body.source,
       email: body.email,
       userId: body.user_id,

@@ -83,6 +83,7 @@ describe('GET /openapi.json', () => {
   it('documents every route the Worker serves, and nothing it does not', () => {
     expect(Object.keys(document.paths).sort()).toEqual([
       '/',
+      '/exchange-rates',
       '/indicators',
       '/indicators/{indicator}',
       '/stats/github',

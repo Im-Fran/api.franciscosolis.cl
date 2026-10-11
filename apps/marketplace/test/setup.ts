@@ -1,6 +1,7 @@
 import { applyD1Migrations, env } from 'cloudflare:test'
 import { beforeAll, beforeEach } from 'vitest'
 import { resetAiBinding } from './helpers/ai'
+import { resetLandingBinding } from './helpers/landing'
 
 /**
  * Each test file gets its own isolated D1 instance, so the schema has to be created once per file
@@ -18,4 +19,5 @@ beforeAll(async () => {
  */
 beforeEach(() => {
   resetAiBinding()
+  resetLandingBinding()
 })

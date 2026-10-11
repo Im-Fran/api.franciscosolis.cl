@@ -15,6 +15,7 @@ import sales from '@/routes/admin/sales'
 import translate from '@/routes/admin/translate'
 import analytics from '@/routes/admin/analytics'
 import compatibility from '@/routes/admin/compatibility'
+import donations from '@/routes/admin/donations'
 import releases from '@/routes/admin/releases'
 import reviews from '@/routes/admin/reviews'
 import wiki from '@/routes/admin/wiki'
@@ -128,5 +129,6 @@ app.route('/', files)
 app.route('/', purchases)
 app.route('/', sales)
 app.route('/', translate)
+app.route('/', donations)
 
 export default app

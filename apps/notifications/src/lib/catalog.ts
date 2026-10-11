@@ -27,6 +27,15 @@ type CatalogEntry = {
   category: Category
   emailable: boolean
   copy: Record<Locale, Copy>
+  /**
+   * Wording for a donation, chosen when the producer sends `data.kind: 'donation'`.
+   *
+   * A variant rather than a type of its own because it is the same event — money approved, money
+   * returned — and a separate type would be a second preference, a second category entry and a
+   * second thing every consumer has to learn. A row without `kind` (anything published before the
+   * field existed) keeps reading as a purchase, exactly as it did.
+   */
+  donation?: Record<Locale, Copy>
 }
 
 const CATALOG = {
@@ -81,6 +90,10 @@ const CATALOG = {
       en: { title: 'Purchase confirmed: {product_name}', body: 'Payment of {amount} received. Your receipt is on its way.' },
       es: { title: 'Compra confirmada: {product_name}', body: 'Recibimos tu pago de {amount}. Tu comprobante va en camino.' },
     },
+    donation: {
+      en: { title: 'Thank you for your donation to {product_name}', body: 'Your donation of {amount} arrived. Your receipt is on its way.' },
+      es: { title: 'Gracias por tu donación a {product_name}', body: 'Recibimos tu donación de {amount}. Tu comprobante va en camino.' },
+    },
   },
   'marketplace.purchase_refunded': {
     category: 'marketplace',
@@ -88,6 +101,10 @@ const CATALOG = {
     copy: {
       en: { title: 'Refund issued: {product_name}', body: '{amount} was refunded.' },
       es: { title: 'Reembolso emitido: {product_name}', body: 'Se reembolsaron {amount}.' },
+    },
+    donation: {
+      en: { title: 'Donation refunded: {product_name}', body: 'Your donation of {amount} was refunded.' },
+      es: { title: 'Donación reembolsada: {product_name}', body: 'Se te devolvió tu donación de {amount}.' },
     },
   },
   'marketplace.release_published': {
@@ -150,7 +167,8 @@ const channelLabel = (channel: string, locale: Locale) => CHANNEL_LABELS[locale]
  * the website renders these as text nodes and the email templates escape them like any other prop.
  */
 const renderCopy = (type: NotificationType, rawData: NotificationData, locale: Locale): Copy => {
-  const copy = CATALOG[type].copy[locale]
+  const entry: CatalogEntry = CATALOG[type]
+  const copy = (rawData.kind === 'donation' ? entry.donation?.[locale] : undefined) ?? entry.copy[locale]
   const data = typeof rawData.channel === 'string' ? { ...rawData, channel: channelLabel(rawData.channel, locale) } : rawData
   const title = interpolate(copy.title, data)
   let body = interpolate(copy.body, data)

@@ -12,12 +12,14 @@ language) into files, commits, or code in this repo.
 `landing` is the internal Cloudflare Worker behind the **franciscosolis.cl** landing
 page. It is not exposed to the public internet directly: the root gateway Worker
 (`apps/api` in the `api.franciscosolis.cl` monorepo) reaches it through a Cloudflare
-**service binding** and proxies `/landing/*` to it. It lives at `apps/landing` inside
-that monorepo.
+**service binding** and proxies `/landing/*` to it. `apps/marketplace` binds it too, as `LANDING`,
+for one thing: the exchange rates that price a donation named in another currency. It lives at
+`apps/landing` inside that monorepo.
 
 It does two things: fetching live GitHub stats (commits, stars, profile) for the `Im-Fran`
 account via the GitHub REST/GraphQL APIs, and serving Chilean economic indicators (observed
-US dollar, UF, UTM) from the Banco Central de Chile API. Both are exposed as JSON.
+US dollar, UF, UTM) and exchange rates into Chilean pesos from the Banco Central de Chile API.
+All of it is exposed as JSON.
 
 ## Stack
 
@@ -54,6 +56,8 @@ No separate `build` script — Wrangler bundles as part of `dev`/`deploy`.
 - `src/indicators/` — the economic indicators: `registry.ts` (the three series and their
   frequencies), `bcentral.ts` (the Banco Central de Chile client), `dates.ts` (Santiago-day
   date helpers), `index.ts` (`GET /indicators` and `GET /indicators/:indicator`).
+- `src/exchange-rates/` — `registry.ts` (each currency and its bank series) and `index.ts`
+  (`GET /exchange-rates`), reusing the indicators' client and date helpers.
 - `src/env.ts` — `Env` type declaring bindings/secrets (`GH_TOKEN`, `BCCH_API_TOKEN`).
 
 ## Architecture notes (non-obvious)
@@ -91,10 +95,18 @@ No separate `build` script — Wrangler bundles as part of `dev`/`deploy`.
   route deliberately lets `to` go past today, which is how a caller asks for upcoming UF values. Late in the evening
   in Chile the UTC date is already tomorrow, which is why `dates.ts` formats with
   `America/Santiago` rather than slicing an ISO timestamp.
+- **Exchange rates are a second registry** (`src/exchange-rates/registry.ts`): pesos per one unit of
+  each currency, the observed dollar for `USD` and the bank's nominal exchange rate
+  (`F072.CLP.<code>.N.O.D`, BDE table "Tipo de cambio nominal") for the rest. The list is the one
+  `apps/marketplace` lets a donation be named in, so a currency is added here first. Each currency is
+  its own series and request: one the bank cannot answer for is listed under `missing` rather than
+  failing the others, and the requests go out in batches of four a second because the bank allows
+  five per second per user — which only costs anything on a cold edge cache.
 - **The indicator client uses `fetch`, not axios**, because it passes `cf.cacheTtl` so the edge
   reuses an upstream answer for an hour; tests stub it with `vi.stubGlobal('fetch', …)`
   (`test/helpers/bcentral.ts`). The `/indicators` responses also carry
   `Cache-Control: public, max-age=1800`; errors carry none.
 - **No public route in production**: this Worker only needs to be deployed under the
-  exact name `landing` (see `wrangler.jsonc`, `name: "landing"`) for the parent `api`
-  Worker's `LANDING` service binding to resolve; it doesn't need a custom domain.
+  exact name `landing` (see `wrangler.jsonc`, `name: "landing"`) for the `LANDING` service
+  bindings of `apps/api` and `apps/marketplace` to resolve; it doesn't need a custom domain. Both
+  resolve it at deploy time, which is why it deploys before either of them.

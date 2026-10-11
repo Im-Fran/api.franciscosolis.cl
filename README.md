@@ -369,7 +369,8 @@ pnpm run db:migrate:remote:dev
 ```
 
 Deploying by hand follows the service bindings, because one is resolved at deploy time against a
-Worker that must already exist — `auth` first, then the modules that bind it, then the gateway:
+Worker that must already exist — `auth` and `landing` first, then the modules that bind them
+(`marketplace` binds both), then the gateway:
 
 ```bash
 cd apps/auth    && pnpm run deploy:dev

@@ -17,12 +17,13 @@ name: Deploy (development)
 #     migrate.yml explains at length — but here both halves are ours, so the schema is always
 #     ahead of the code that reads it. That is worth having somewhere: a migration that breaks on
 #     a real database breaks here first, in an environment nobody is reading.
-#  2. `auth` deploys `auth-dev` on its own, ahead of the rest. `cms`, `marketplace` and
-#     `notifications` each bind it as a service, and a service binding is resolved at deploy time
-#     against a Worker that must already exist — so on a first deploy all three fail with "Service
-#     binding 'AUTH' references Worker 'auth-dev' which was not found" if they run as its peers.
-#     (They did, once.)
-#  3. `modules` deploys the four that are left, in parallel: none of them binds another.
+#  2. `foundations` deploys `auth-dev` and `landing-dev`, ahead of the rest. `cms`, `marketplace` and
+#     `notifications` each bind `auth` as a service, and `marketplace` also binds `landing` for the
+#     Banco Central de Chile's exchange rates. A service binding is resolved at deploy time against a
+#     Worker that must already exist — so on a first deploy they fail with "Service binding 'AUTH'
+#     references Worker 'auth-dev' which was not found" if they run as its peers. (They did, once.)
+#     Neither of these two binds anything, so they run side by side.
+#  3. `modules` deploys the three that are left, in parallel: none of them binds another.
 #  4. `gateway` deploys `api-dev` last, for the same reason as stage 2 — it binds all five.
 #
 # The notifications queue is the one edge in this graph that is not a service binding, and it does
@@ -115,14 +116,20 @@ jobs:
       - name: Apply migrations
         run: pnpm --filter ${{ matrix.app }} run db:migrate:remote:dev
 
-  # `auth-dev` on its own, and ahead of the rest: three of the modules below bind it as a service,
-  # and a service binding has to name a Worker that already exists at deploy time. It is the same
-  # constraint that puts the gateway last, one level further down.
-  auth:
-    name: deploy auth-dev
+  # `auth-dev` and `landing-dev`, ahead of the rest: every module below binds `auth`, and
+  # `marketplace` binds `landing` too, and a service binding has to name a Worker that already exists
+  # at deploy time. It is the same constraint that puts the gateway last, one level further down.
+  # Neither binds another Worker, so they need nothing from each other.
+  foundations:
+    name: deploy ${{ matrix.app }}-dev
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: migrate
+
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [auth, landing]
 
     steps:
       - name: Checkout
@@ -141,22 +148,21 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Deploy
-        run: pnpm --filter auth run deploy:dev
+        run: pnpm --filter ${{ matrix.app }} run deploy:dev
 
   # The rest of the internal Workers. None is publicly routed: each answers only through the
   # gateway's service binding, plus — for `notifications` — its queue and an hourly cron for the
   # digests.
-  # `landing` binds nothing and only waits here for the sake of one ordering rule instead of two.
   modules:
     name: deploy ${{ matrix.app }}-dev
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: auth
+    needs: foundations
 
     strategy:
       fail-fast: false
       matrix:
-        app: [landing, cms, marketplace, notifications]
+        app: [cms, marketplace, notifications]
 
     steps:
       - name: Checkout

@@ -19,7 +19,19 @@ type SaleReceiptEmailProps = {
   kind: 'purchase' | 'donation'
   amount: number
   currency: string
+  /**
+   * What the donor chose to give, when it was named in another currency than the one charged — a
+   * general donation in dollars, settled in pesos. Printed beside the charge, never instead of it:
+   * the charge is what the bank statement shows, the pledge is what the donor remembers typing.
+   */
+  pledged?: { amount: number; currency: string; fractionDigits: number } | null
   source: SaleSource
+  /**
+   * A donation to the work in general, which entitles to nothing: the receipt says so, so nobody
+   * reads a thank-you as a promise. Not set for a product's own donation, which can unlock its
+   * pre-release builds.
+   */
+  voluntary?: boolean
   /** When the sale was settled, already formatted by the sender — this template does no date work. */
   issuedAt: string
   /** Our own reference for the payment. What support looks a sale up by. */
@@ -38,13 +50,14 @@ const copy = {
     heading: { purchase: 'Thanks for your purchase', donation: 'Thanks for your support' },
     intro: {
       purchase: (name: string) => `This is your receipt for ${name}. Keep it — it is what a support conversation about this payment starts from.`,
-      donation: (name: string) => `This is your receipt for the payment you made towards ${name}. Thank you — it is what keeps it being worked on.`,
+      donation: (name: string) => `This is your receipt for the payment you made towards ${name}. Thank you — it is what keeps the work going.`,
     },
     action: { purchase: 'Go to your download', donation: 'Open the page' },
     labels: {
       number: 'Receipt',
       product: 'Product',
       amount: 'Amount',
+      pledged: 'You chose',
       source: 'Paid with',
       date: 'Date',
       reference: 'Reference',
@@ -58,6 +71,8 @@ const copy = {
       other: 'Recorded manually',
     },
     gift: 'Nothing was charged for this one: it was given to you, and it entitles you to the downloads exactly as a paid one does.',
+    voluntary: 'This donation is entirely voluntary: nothing is received in return for it.',
+    converted: 'Payments are taken in Chilean pesos, so the amount you chose was converted at that day\'s exchange rate. Your bank may show a slightly different figure in your own currency.',
     withdrawal:
       'Under Chilean consumer law you may withdraw from this purchase within 10 days of this receipt. Reply to this email and we will refund it.',
   },
@@ -66,13 +81,14 @@ const copy = {
     heading: { purchase: 'Gracias por tu compra', donation: 'Gracias por tu aporte' },
     intro: {
       purchase: (name: string) => `Este es tu comprobante de ${name}. Guárdalo: es con lo que empieza cualquier conversación de soporte sobre este pago.`,
-      donation: (name: string) => `Este es el comprobante del aporte que hiciste a ${name}. Gracias: es lo que permite seguir trabajando en él.`,
+      donation: (name: string) => `Este es el comprobante del aporte que hiciste a ${name}. Gracias: es lo que permite seguir trabajando.`,
     },
     action: { purchase: 'Ir a tu descarga', donation: 'Abrir la página' },
     labels: {
       number: 'Comprobante',
       product: 'Producto',
       amount: 'Monto',
+      pledged: 'Elegiste',
       source: 'Pagado con',
       date: 'Fecha',
       reference: 'Referencia',
@@ -86,6 +102,8 @@ const copy = {
       other: 'Registrado manualmente',
     },
     gift: 'Por este no se cobró nada: te fue regalado, y te habilita las descargas igual que uno pagado.',
+    voluntary: 'Esta donación es totalmente voluntaria: no se recibe nada a cambio.',
+    converted: 'Los pagos se cobran en pesos chilenos, así que el monto que elegiste se convirtió al tipo de cambio de ese día. Tu banco puede mostrar una cifra algo distinta en tu propia moneda.',
     withdrawal:
       'Según la ley del consumidor chilena puedes retractarte de esta compra dentro de 10 días desde este comprobante. Responde este correo y te devolvemos el dinero.',
   },
@@ -109,7 +127,9 @@ const SaleReceiptEmail = ({
   kind,
   amount,
   currency,
+  pledged,
   source,
+  voluntary,
   issuedAt,
   reference,
   url,
@@ -129,6 +149,9 @@ const SaleReceiptEmail = ({
           { label: t.labels.number, value: voucherNumber, mono: true },
           { label: t.labels.product, value: productName },
           { label: t.labels.amount, value: formatMoney(amount, currency, locale) },
+          ...(pledged
+            ? [{ label: t.labels.pledged, value: formatMoney(pledged.amount, pledged.currency, locale, pledged.fractionDigits) }]
+            : []),
           { label: t.labels.source, value: t.sources[source] },
           { label: t.labels.date, value: issuedAt },
           { label: t.labels.reference, value: reference, mono: true },
@@ -137,6 +160,8 @@ const SaleReceiptEmail = ({
       />
 
       {source === 'gift' ? <Paragraph tone="muted">{t.gift}</Paragraph> : null}
+      {pledged ? <Paragraph tone="muted">{t.converted}</Paragraph> : null}
+      {voluntary ? <Paragraph tone="muted">{t.voluntary}</Paragraph> : null}
       {url ? <ActionLink href={url} label={t.action[kind]} /> : null}
       {kind === 'purchase' && source !== 'gift' ? <Paragraph tone="muted">{t.withdrawal}</Paragraph> : null}
     </EmailLayout>

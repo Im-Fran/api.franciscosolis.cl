@@ -52,6 +52,9 @@ export default defineConfig({
         // all, and answers loudly rather than silently if a test forgets to stub.
         serviceBindings: {
           AUTH: () => new Response('the AUTH service binding was not stubbed', { status: 503 }),
+          // Same reason: `test/helpers/landing.ts` replaces `env.LANDING` per test, and this only lets
+          // the runtime start with the binding declared.
+          LANDING: () => new Response('the LANDING service binding was not stubbed', { status: 503 }),
         },
       },
     }),

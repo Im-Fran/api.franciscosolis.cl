@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, lte, or, type SQL } from 'drizzle-orm'
 import type { Database } from '@/db/client'
 import { purchases } from '@/db/schema'
 import { ENTITLING_STATUS, type PurchaseStatus } from '@/lib/config'
+import { fromMinorUnits, isDonationCurrency } from '@/lib/donations'
 import { CURRENCY } from '@/lib/pricing'
 import {
   describeWithdrawal,
@@ -12,6 +13,30 @@ import {
 } from '@/lib/sales'
 
 type Purchase = typeof purchases.$inferSelect
+
+/**
+ * What the donor chose to give, in their own currency's major unit, or null on a sale that was named
+ * in the pesos it was charged in. `amount` is what was charged; this is what they typed.
+ *
+ * Checked rather than trusted, for the window in which the deploy has landed and the migration that
+ * adds these columns has not: SQLite reads a double-quoted unknown column as a string literal, so the
+ * row arrives with `pledgedAmount: "pledged_amount"`. That has to read as "no pledge", not as `NaN`.
+ */
+const describePledge = (row: { pledgedAmount: number | null; pledgedCurrency: string | null }) =>
+  Number.isSafeInteger(row.pledgedAmount) && row.pledgedCurrency && isDonationCurrency(row.pledgedCurrency)
+    ? { amount: fromMinorUnits(row.pledgedAmount as number, row.pledgedCurrency), currency: row.pledgedCurrency }
+    : null
+
+/**
+ * What the donor wrote with a general donation, or null.
+ *
+ * The literal column name is refused for the same reason `describePledge` checks its input: until the
+ * migration adding `donor_message` lands, SQLite answers the unknown column with its own name.
+ */
+const donorMessageOf = (purchase: Pick<Purchase, 'donorMessage'>): string | null =>
+  typeof purchase.donorMessage === 'string' && purchase.donorMessage !== '' && purchase.donorMessage !== 'donor_message'
+    ? purchase.donorMessage
+    : null
 
 /**
  * One payment as its own buyer reads it back.
@@ -30,6 +55,10 @@ const toPublicPurchase = (purchase: Purchase) => ({
   active: purchase.status === ENTITLING_STATUS,
   amount: purchase.amount,
   currency: purchase.currency,
+  /** The donor's own figure for a donation named in another currency. Null otherwise. */
+  pledged: describePledge(purchase),
+  /** What the donor wrote with a general donation. Their own words, so they may read them back. */
+  message: donorMessageOf(purchase),
   provider: purchase.provider,
   /** How the money arrived. A buyer's own receipt should say "cash" when it was cash. */
   source: purchase.source,
@@ -84,6 +113,10 @@ type CreatePurchaseInput = {
    * recorded as live by a service that guessed.
    */
   environment: PaymentEnvironment
+  /** What the donor chose, for a donation named in a currency other than the one charged. */
+  pledge?: { amount: number; currency: string } | null
+  /** What the donor wrote with a general donation, when the donation link takes messages. */
+  donorMessage?: string | null
   metadata?: Record<string, unknown>
 }
 
@@ -124,6 +157,9 @@ const createPendingPurchase = async (db: Database, input: CreatePurchaseInput): 
     note: null,
     createdBy: null,
     metadata: input.metadata ? JSON.stringify(input.metadata) : null,
+    pledgedAmount: input.pledge?.amount ?? null,
+    pledgedCurrency: input.pledge?.currency ?? null,
+    donorMessage: input.donorMessage ?? null,
     createdAt: now,
     updatedAt: now,
   }
@@ -358,6 +394,8 @@ export {
   purchaseClauses,
   attachPreference,
   createPendingPurchase,
+  describePledge,
+  donorMessageOf,
   findActivePurchase,
   findPurchaseByAnyPaymentId,
   findPurchaseById,

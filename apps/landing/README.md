@@ -39,6 +39,12 @@ from the actual response shape.
   (`dollar`, `uf` or `utm`) answers its observations over an optional `?from=&to=` range
   (`YYYY-MM-DD`; 30 days back by default for daily series, a year for the UTM). Backed by a
   `BCCH_API_TOKEN` secret, cached at the edge for an hour and by clients for half an hour.
+- **Exchange rates into pesos** — `GET /exchange-rates` answers what one unit of each supported
+  currency (USD, EUR, GBP, CAD, AUD, CHF, JPY, BRL, MXN, ARS, PEN, COP, UYU) is worth in Chilean
+  pesos today: the observed dollar for USD and the Banco Central de Chile's nominal exchange rate for
+  the rest. `?currencies=USD,EUR` narrows it, and a currency the bank published nothing for is listed
+  under `missing` rather than failing the request. `apps/marketplace` reads it over a `LANDING`
+  service binding to price donations named in another currency.
 - **Health check** — `GET /` returns a simple `{ code, data: { message } }` payload to
   confirm the Worker is up.
 - **Auto-generated OpenAPI spec** — every route is described with `describeRoute` and a
@@ -99,7 +105,7 @@ Then edit `.dev.vars` and fill in:
 | Variable | Description |
 |----------|-------------|
 | `GH_TOKEN` | GitHub token used to call the REST and GraphQL APIs for `Im-Fran`'s stats |
-| `BCCH_API_TOKEN` | Banco Central de Chile API token used by the `/indicators` routes |
+| `BCCH_API_TOKEN` | Banco Central de Chile API token used by the `/indicators` and `/exchange-rates` routes |
 
 ### Run in development
 

@@ -538,6 +538,23 @@ const purchases = sqliteTable('purchases', {
   createdBy: text('created_by'),
   /** Free-form JSON. Must never carry a card detail, a provider token or an access token. */
   metadata: text('metadata'),
+  /**
+   * What the donor chose to give, when that was not the pesos charged: a general donation named in
+   * dollars or euros (`src/lib/donations.ts`). An integer of `pledgedCurrency`'s *minor* unit — 1050
+   * with `USD` is ten dollars and fifty cents — so nothing here holds a float.
+   *
+   * `amount`/`currency` stay what was charged, because that is what MercadoPago settled and what a
+   * refund gives back; this is the donor's own figure, kept so the receipt can say both. Null on every
+   * product sale, which is priced in pesos to begin with.
+   */
+  pledgedAmount: integer('pledged_amount'),
+  pledgedCurrency: text('pledged_currency'),
+  /**
+   * What the donor wrote to go with a general donation, when the donation link has messages turned
+   * on (`donations_messages_enabled`). Free text from the public, read only in the back office and by
+   * the donor themself — never rendered as markup and never shown to anybody else.
+   */
+  donorMessage: text('donor_message'),
   ...timestamps,
 }, (table) => [
   uniqueIndex('purchases_external_reference_unique').on(table.externalReference),
@@ -584,6 +601,9 @@ const saleVouchers = sqliteTable('sale_vouchers', {
   currency: text('currency').notNull().default('CLP'),
   /** How the money arrived, copied from the sale. The receipt prints it. */
   source: text('source').notNull().default('mercadopago'),
+  /** The donor's own figure, copied from the sale — see `purchases.pledgedAmount`. The receipt prints it. */
+  pledgedAmount: integer('pledged_amount'),
+  pledgedCurrency: text('pledged_currency'),
   /** `issued` | `void`. */
   status: text('status').notNull().default('issued'),
   /** Language the voucher was rendered in, so a re-send reads the same as the original. */
@@ -723,6 +743,21 @@ const aiRequests = sqliteTable('ai_requests', {
   index('ai_requests_kind_created_idx').on(table.kind, table.createdAt),
 ])
 
+/**
+ * Operational settings, as key/value text rows rather than a column per setting — the same shape as
+ * `apps/auth`'s, and for the same reason: adding a setting must not be a migration against a database
+ * a deploy is racing. `src/services/donation-settings.ts` owns the catalog, the types and the defaults;
+ * a key it does not list means nothing here.
+ */
+const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  /** Always text. The catalog decides what it means. */
+  value: text('value').notNull(),
+  /** Email of the editor who last changed it, for the same reason every editorial row carries one. */
+  updatedBy: text('updated_by'),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+})
+
 export {
   aiRequests,
   auditLogs,
@@ -738,4 +773,5 @@ export {
   productWikiPages,
   purchases,
   saleVouchers,
+  settings,
 }

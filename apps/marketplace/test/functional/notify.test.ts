@@ -92,7 +92,8 @@ describe('marketplace.purchase_completed', () => {
       version: 1,
       type: 'marketplace.purchase_completed',
       user: { id: 'buyer-7', email: 'buyer@example.com', locale: 'es' },
-      data: { product_name: 'OpenBattery', product_slug: 'openbattery' },
+      // `kind` is how the notifications Worker tells a donation's wording from a purchase's.
+      data: { product_name: 'OpenBattery', product_slug: 'openbattery', kind: 'purchase' },
       url: '/account/purchases',
     })
     // `es-CL` groups thousands with a dot; the exact currency sign is the runtime's business.

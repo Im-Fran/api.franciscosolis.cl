@@ -44,6 +44,21 @@ describe('the notification catalog', () => {
     expect(renderCopy('marketplace.purchase_completed', data, 'en').title).toBe('Purchase confirmed: OpenBattery')
   })
 
+  it('words a donation as a donation, and a row without a kind as the purchase it always was', () => {
+    const donation = { product_name: 'FranciscoSolis', amount: '$9.786', kind: 'donation' }
+    expect(renderCopy('marketplace.purchase_completed', donation, 'es')).toEqual({
+      title: 'Gracias por tu donación a FranciscoSolis',
+      body: 'Recibimos tu donación de $9.786. Tu comprobante va en camino.',
+    })
+    expect(renderCopy('marketplace.purchase_completed', donation, 'en').title).toBe(
+      'Thank you for your donation to FranciscoSolis',
+    )
+    expect(renderCopy('marketplace.purchase_refunded', donation, 'es').title).toBe('Donación reembolsada: FranciscoSolis')
+
+    const purchase = { product_name: 'OpenBattery', amount: '$5.000', kind: 'purchase' }
+    expect(renderCopy('marketplace.purchase_completed', purchase, 'es').title).toBe('Compra confirmada: OpenBattery')
+  })
+
   it('reads a missing parameter as a dash rather than "undefined"', () => {
     const copy = renderCopy('account.sign_in', { application_name: 'Web', provider_name: 'Google', device: null }, 'en')
     expect(copy.body).toContain('from — · —')

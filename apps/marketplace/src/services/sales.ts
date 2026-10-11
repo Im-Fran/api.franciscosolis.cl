@@ -107,6 +107,10 @@ const createManualSale = async (db: Database, input: CreateManualSaleInput): Pro
     note: input.note?.trim() || null,
     createdBy: input.createdBy,
     metadata: JSON.stringify({ product_name: input.productName, recorded: 'manual' }),
+    // Recorded in the pesos that changed hands, so there is no second figure to keep.
+    pledgedAmount: null,
+    pledgedCurrency: null,
+    donorMessage: null,
     createdAt: occurred,
     updatedAt: now,
   }

@@ -146,6 +146,9 @@ const notifyPurchaseCompleted = async (
     data: {
       product_name: input.productName,
       product_slug: purchase.productSlug,
+      // `purchase` or `donation`: the notifications Worker words a donation as one rather than as a
+      // purchase. An event published before this field existed reads as a purchase, as it always did.
+      kind: purchase.kind,
       amount: formatAmount(purchase.amount, purchase.currency, input.locale),
     },
     url: '/account/purchases',
@@ -168,6 +171,7 @@ const notifyPurchaseRefunded = async (
     data: {
       product_name: input.productName,
       product_slug: purchase.productSlug,
+      kind: purchase.kind,
       amount: formatAmount(purchase.refundedAmount ?? purchase.amount, purchase.currency, input.locale),
     },
     url: '/account/purchases',
