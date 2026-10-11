@@ -28,6 +28,17 @@ const describePledge = (row: { pledgedAmount: number | null; pledgedCurrency: st
     : null
 
 /**
+ * What the donor wrote with a general donation, or null.
+ *
+ * The literal column name is refused for the same reason `describePledge` checks its input: until the
+ * migration adding `donor_message` lands, SQLite answers the unknown column with its own name.
+ */
+const donorMessageOf = (purchase: Pick<Purchase, 'donorMessage'>): string | null =>
+  typeof purchase.donorMessage === 'string' && purchase.donorMessage !== '' && purchase.donorMessage !== 'donor_message'
+    ? purchase.donorMessage
+    : null
+
+/**
  * One payment as its own buyer reads it back.
  *
  * `preference_id` and the provider's ids are in here on purpose: they are what somebody quotes at
@@ -46,6 +57,8 @@ const toPublicPurchase = (purchase: Purchase) => ({
   currency: purchase.currency,
   /** The donor's own figure for a donation named in another currency. Null otherwise. */
   pledged: describePledge(purchase),
+  /** What the donor wrote with a general donation. Their own words, so they may read them back. */
+  message: donorMessageOf(purchase),
   provider: purchase.provider,
   /** How the money arrived. A buyer's own receipt should say "cash" when it was cash. */
   source: purchase.source,
@@ -102,6 +115,8 @@ type CreatePurchaseInput = {
   environment: PaymentEnvironment
   /** What the donor chose, for a donation named in a currency other than the one charged. */
   pledge?: { amount: number; currency: string } | null
+  /** What the donor wrote with a general donation, when the donation link takes messages. */
+  donorMessage?: string | null
   metadata?: Record<string, unknown>
 }
 
@@ -144,6 +159,7 @@ const createPendingPurchase = async (db: Database, input: CreatePurchaseInput): 
     metadata: input.metadata ? JSON.stringify(input.metadata) : null,
     pledgedAmount: input.pledge?.amount ?? null,
     pledgedCurrency: input.pledge?.currency ?? null,
+    donorMessage: input.donorMessage ?? null,
     createdAt: now,
     updatedAt: now,
   }
@@ -379,6 +395,7 @@ export {
   attachPreference,
   createPendingPurchase,
   describePledge,
+  donorMessageOf,
   findActivePurchase,
   findPurchaseByAnyPaymentId,
   findPurchaseById,

@@ -549,6 +549,12 @@ const purchases = sqliteTable('purchases', {
    */
   pledgedAmount: integer('pledged_amount'),
   pledgedCurrency: text('pledged_currency'),
+  /**
+   * What the donor wrote to go with a general donation, when the donation link has messages turned
+   * on (`donations_messages_enabled`). Free text from the public, read only in the back office and by
+   * the donor themself — never rendered as markup and never shown to anybody else.
+   */
+  donorMessage: text('donor_message'),
   ...timestamps,
 }, (table) => [
   uniqueIndex('purchases_external_reference_unique').on(table.externalReference),
@@ -737,6 +743,21 @@ const aiRequests = sqliteTable('ai_requests', {
   index('ai_requests_kind_created_idx').on(table.kind, table.createdAt),
 ])
 
+/**
+ * Operational settings, as key/value text rows rather than a column per setting — the same shape as
+ * `apps/auth`'s, and for the same reason: adding a setting must not be a migration against a database
+ * a deploy is racing. `src/services/donation-settings.ts` owns the catalog, the types and the defaults;
+ * a key it does not list means nothing here.
+ */
+const settings = sqliteTable('settings', {
+  key: text('key').primaryKey(),
+  /** Always text. The catalog decides what it means. */
+  value: text('value').notNull(),
+  /** Email of the editor who last changed it, for the same reason every editorial row carries one. */
+  updatedBy: text('updated_by'),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+})
+
 export {
   aiRequests,
   auditLogs,
@@ -752,4 +773,5 @@ export {
   productWikiPages,
   purchases,
   saleVouchers,
+  settings,
 }

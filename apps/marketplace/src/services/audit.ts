@@ -53,6 +53,8 @@ type AuditEvent =
   | 'voucher.issued'
   | 'voucher.sent'
   | 'voucher.voided'
+  /** The donation link was opened or closed, or its bounds or message switch changed. */
+  | 'donations.settings_updated'
 
 type AuditInput = {
   event: AuditEvent

@@ -13,9 +13,10 @@ Single pnpm monorepo for the public REST API behind **franciscosolis.cl**. It wi
 together six Cloudflare Workers, all living directly in this repo:
 
 - `apps/api` — public gateway Worker, deployed to `api.franciscosolis.cl`.
-- `apps/landing` — internal Worker with the landing page's GitHub stats and Chilean economic
-  indicators (observed dollar, UF, UTM from the Banco Central de Chile API), only reachable
-  from `apps/api` via a Cloudflare service binding, never public directly.
+- `apps/landing` — internal Worker with the landing page's GitHub stats, Chilean economic
+  indicators (observed dollar, UF, UTM) and exchange rates into pesos, all from the Banco Central de
+  Chile API, reachable only through Cloudflare service bindings — from `apps/api`, and from
+  `apps/marketplace` for the exchange rates — never public directly.
 - `apps/auth` — internal Worker with centralized authentication: a full OAuth 2.0 + OpenID
   Connect provider (authorization code + PKCE, rotatable client secrets, magic link and Google
   providers, D1-backed users/roles/permissions), also reachable only through `apps/api`, at
@@ -36,8 +37,10 @@ together six Cloudflare Workers, all living directly in this repo:
   hand for cash or a transfer, vouchers (receipts) and refunds — sends the one kind of mail it has,
   the receipt, and carries the **reviews** the people who obtained a product wrote about it, with
   the rating window a release can restart. It also holds the **donation link** (`/marketplace/donations`):
-  support for the projects in general, in any amount and in the donor's own currency, converted to
-  and settled in Chilean pesos, and filed in the back office under the `general` scope.
+  support for the projects in general, in the donor's own currency, converted to and settled in
+  Chilean pesos at the Banco Central de Chile's rate (read from `apps/landing` over a `LANDING`
+  service binding), with its own switches in the back office — open or closed, a minimum, an optional
+  maximum, and whether a donor may leave a message — and its takings filed under the `general` scope.
 - `apps/notifications` — internal Worker with the **notification centre**, reachable through `apps/api`
   at `/notifications/*`: the in-site list behind the bell on the website, per-category preferences for
   push and email, Web Push (VAPID) subscriptions, and the daily/weekly email digests. It is the one
@@ -202,8 +205,9 @@ Four things about this are worth not re-deriving:
   `auth-dev` and so on. Leaving one as `landing` would wire the development gateway into a
   production module without any error to say so — which is the single failure this environment
   exists to make impossible. The same bindings also **dictate the deploy order**, because one is
-  resolved at deploy time against a Worker that must already exist: `auth` first, then the modules
-  that bind it (`cms`, `marketplace`, `notifications`), then `api`. Out of order, a first deploy fails with
+  resolved at deploy time against a Worker that must already exist: `auth` and `landing` first, then
+  the modules that bind them (`cms`, `marketplace`, `notifications` bind `auth`; `marketplace` also
+  binds `landing` for the Banco Central de Chile's exchange rates), then `api`. Out of order, a first deploy fails with
   "Service binding 'AUTH' references Worker 'auth-dev' which was not found".
 - **Secrets are per environment.** `wrangler secret put --env dev` is a different store, and that
   is deliberate rather than a chore: `apps/marketplace` takes a MercadoPago *test* credential on dev, and
@@ -223,8 +227,8 @@ Four things about this are worth not re-deriving:
   deployed before its consumer simply leaves messages waiting.
 
 `.github/workflows/deploy-dev.yml` deploys the stack on a push to `dev`, in four stages that follow
-the binding graph above: migrations, `auth-dev`, the four remaining modules in parallel, then
-`api-dev`. Unlike production (below), the migrations there are strictly ordered before the deploy.
+the binding graph above: migrations, `auth-dev` and `landing-dev`, the three remaining modules in
+parallel, then `api-dev`. Unlike production (below), the migrations there are strictly ordered before the deploy.
 Its token needs `Workers R2 Storage:Edit` and `Queues:Edit` on top of `D1:Edit` and
 `Workers Scripts:Edit` — `auth` and `marketplace` each bind a bucket, four Workers bind the
 notifications queue, and a deploy that cannot read either fails with an authentication error rather

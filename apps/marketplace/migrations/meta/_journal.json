@@ -15,6 +15,13 @@
       "when": 1791508832505,
       "tag": "0001_donation_pledges",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791740295924,
+      "tag": "0002_donation_settings",
+      "breakpoints": true
     }
   ]
 }

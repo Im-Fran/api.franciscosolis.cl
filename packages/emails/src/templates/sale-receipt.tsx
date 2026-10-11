@@ -26,6 +26,12 @@ type SaleReceiptEmailProps = {
    */
   pledged?: { amount: number; currency: string; fractionDigits: number } | null
   source: SaleSource
+  /**
+   * A donation to the work in general, which entitles to nothing: the receipt says so, so nobody
+   * reads a thank-you as a promise. Not set for a product's own donation, which can unlock its
+   * pre-release builds.
+   */
+  voluntary?: boolean
   /** When the sale was settled, already formatted by the sender — this template does no date work. */
   issuedAt: string
   /** Our own reference for the payment. What support looks a sale up by. */
@@ -65,6 +71,7 @@ const copy = {
       other: 'Recorded manually',
     },
     gift: 'Nothing was charged for this one: it was given to you, and it entitles you to the downloads exactly as a paid one does.',
+    voluntary: 'This donation is entirely voluntary: nothing is received in return for it.',
     converted: 'Payments are taken in Chilean pesos, so the amount you chose was converted at that day\'s exchange rate. Your bank may show a slightly different figure in your own currency.',
     withdrawal:
       'Under Chilean consumer law you may withdraw from this purchase within 10 days of this receipt. Reply to this email and we will refund it.',
@@ -95,6 +102,7 @@ const copy = {
       other: 'Registrado manualmente',
     },
     gift: 'Por este no se cobró nada: te fue regalado, y te habilita las descargas igual que uno pagado.',
+    voluntary: 'Esta donación es totalmente voluntaria: no se recibe nada a cambio.',
     converted: 'Los pagos se cobran en pesos chilenos, así que el monto que elegiste se convirtió al tipo de cambio de ese día. Tu banco puede mostrar una cifra algo distinta en tu propia moneda.',
     withdrawal:
       'Según la ley del consumidor chilena puedes retractarte de esta compra dentro de 10 días desde este comprobante. Responde este correo y te devolvemos el dinero.',
@@ -121,6 +129,7 @@ const SaleReceiptEmail = ({
   currency,
   pledged,
   source,
+  voluntary,
   issuedAt,
   reference,
   url,
@@ -152,6 +161,7 @@ const SaleReceiptEmail = ({
 
       {source === 'gift' ? <Paragraph tone="muted">{t.gift}</Paragraph> : null}
       {pledged ? <Paragraph tone="muted">{t.converted}</Paragraph> : null}
+      {voluntary ? <Paragraph tone="muted">{t.voluntary}</Paragraph> : null}
       {url ? <ActionLink href={url} label={t.action[kind]} /> : null}
       {kind === 'purchase' && source !== 'gift' ? <Paragraph tone="muted">{t.withdrawal}</Paragraph> : null}
     </EmailLayout>

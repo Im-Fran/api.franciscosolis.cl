@@ -50,6 +50,8 @@ const clearDatabase = async () => {
     env.DB.prepare('DELETE FROM product_daily_stats'),
     env.DB.prepare('DELETE FROM sale_vouchers'),
     env.DB.prepare('DELETE FROM ai_requests'),
+    // The donation link's switches. Cleared so every test starts from the catalog defaults.
+    env.DB.prepare('DELETE FROM settings'),
   ])
 }
 

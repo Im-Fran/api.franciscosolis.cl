@@ -4,7 +4,7 @@ import type { Database } from '@/db/client'
 import { saleVouchers } from '@/db/schema'
 import type { Env } from '@/env'
 import { isUniqueViolation } from '@/lib/errors'
-import { DONATION_CURRENCIES, isDonationCurrency, sitePathFor } from '@/lib/donations'
+import { DONATION_CURRENCIES, isDonationCurrency, isGeneralFund, sitePathFor } from '@/lib/donations'
 import { formatVoucherNumber, parseSaleSource, voucherNumberPrefix, type VoucherStatus } from '@/lib/sales'
 import { formatMailDate, sendMail } from '@/services/mail'
 import { describePledge, type Purchase } from '@/services/purchases'
@@ -215,6 +215,7 @@ const sendVoucher = async (
     currency: voucher.currency,
     pledged: pledgeForReceipt(voucher),
     source: parseSaleSource(voucher.source),
+    voluntary: isGeneralFund(voucher.productId),
     // Formatted here rather than in the template: the package renders markup and does no date work,
     // and this is the one place that knows the recipient's language and the issue date together.
     issuedAt: formatMailDate(voucher.issuedAt, locale),

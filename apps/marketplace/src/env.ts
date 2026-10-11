@@ -43,6 +43,13 @@ type Env = {
   DB: D1Database
   /** Service binding to the auth Worker. Used for one thing only: reading its published JWKS. */
   AUTH: Fetcher
+  /**
+   * Service binding to the landing Worker. Used for one thing only: the Banco Central de Chile's
+   * exchange rates into pesos (`GET /exchange-rates`), which price a donation named in another
+   * currency. A binding for the same reason `AUTH` is one — a subrequest to our own zone never
+   * reaches a Worker — and it is what makes the landing Worker deploy before this one.
+   */
+  LANDING: Fetcher
   /** Workers AI. Used for one thing only: drafting a translation of a prose field. */
   AI: AiBinding
   /** R2 bucket `franciscosolis-app-releases`: the downloadable builds. No public access of its own. */

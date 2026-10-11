@@ -87,6 +87,14 @@
       // Workers routing and is sent to the zone's origin, which `api.franciscosolis.cl` has none of.
       "binding": "AUTH",
       "service": "auth"
+    },
+    {
+      // The Banco Central de Chile's exchange rates into pesos, which price a general donation named
+      // in another currency (`src/services/exchange.ts`). The landing Worker already holds the bank's
+      // token and client; this binding reads `GET /exchange-rates` from it and nothing else. It also
+      // means `landing` must be deployed before this Worker.
+      "binding": "LANDING",
+      "service": "landing"
     }
   ],
   "vars": {
@@ -189,6 +197,10 @@
         {
           "binding": "AUTH",
           "service": "auth-dev"
+        },
+        {
+          "binding": "LANDING",
+          "service": "landing-dev"
         }
       ],
       // The development queue. A sandbox purchase published onto the production queue would put a
@@ -258,6 +270,11 @@
         {
           "binding": "AUTH",
           "service": "auth"
+        },
+        {
+          // Replaced by assignment in the suite (`test/helpers/landing.ts`), exactly like `AUTH`.
+          "binding": "LANDING",
+          "service": "landing"
         }
       ],
       // Kept, unlike `ai`: Miniflare simulates a queue producer locally, with no account behind it.

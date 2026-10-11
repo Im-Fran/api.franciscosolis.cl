@@ -80,12 +80,14 @@ domain gate at all — the whole point is that anybody can buy, and anybody who 
 - **Downloads that can be asked a question** — the bucket has no public access, `object_key` is never
   serialized, and the only way to the bytes is a signed, five-minute ticket whose `nbf` *is* the
   cooldown.
-- **A donation link for the work in general** — `POST /donations/checkout` takes any amount above zero,
-  in the donor's own currency (pesos, dollars, euros and the rest of `GET /donations`), with no
-  minimum and no maximum of ours. It settles in pesos — this MercadoPago account only charges CLP — so
-  a foreign amount is converted at the day's rate before the checkout opens, and the row keeps both
-  what was chosen and what was charged. It is filed under the `general` scope rather than a product,
-  so the webhook, the receipt and the whole back office handle it unchanged.
+- **A donation link for the work in general** — `POST /donations/checkout` takes a voluntary donation
+  that entitles to nothing, in the donor's own currency (pesos, dollars, euros and the rest of
+  `GET /donations`). It settles in pesos — this MercadoPago account only charges CLP — so a foreign
+  amount is converted at the Banco Central de Chile's rate (read from `apps/landing` over the `LANDING`
+  binding) before the checkout opens, and the row keeps both what was chosen and what was charged. The
+  back office sets whether the link is open, a minimum, an optional maximum (both in pesos, against
+  the converted charge) and whether a donor may leave a message. It is filed under the `general` scope
+  rather than a product, so the webhook, the receipt and the whole back office handle it unchanged.
 - **A webhook that believes nothing** — signature, then a read of the resource back from MercadoPago
   with our own credential, then an idempotency key. With no secret configured it refuses everything.
 - **Bilingual by override** — the row is `en` and a `translations` column holds the rest. Public reads
@@ -171,7 +173,7 @@ Unauthenticated, only ever `published` rows, and each takes an optional `?locale
 | `GET` | `/products/:slug/reviews` | **The Reviews tab** — see the contract below |
 | `GET` | `/products/:slug/pricing` | What the product costs — the same answer for everybody |
 | `POST` | `/products/:slug/views` | Counts one view. `204` whether or not it was deduplicated |
-| `GET` | `/donations` | What the donation link accepts: each currency, its decimals and its rate to CLP today |
+| `GET` | `/donations` | What the donation link accepts: open or not, its bounds, messages, and each currency with its Banco Central de Chile rate to CLP |
 
 ### Store and reviews (Bearer token from the **website**)
 
@@ -184,7 +186,7 @@ list — never the editorial one.
 | `POST` | `/products/:slug/files/:fileId/download` | optional | Mints a download link, with the cooldown baked in |
 | `GET` | `/downloads/:ticket` | — | The bytes. `425` until the cooldown elapses, `410` once expired |
 | `POST` | `/products/:slug/checkout` | required | Opens a MercadoPago payment and answers where to send the browser |
-| `POST` | `/donations/checkout` | required | Opens a donation to the projects in general, in any amount and listed currency, charged in CLP |
+| `POST` | `/donations/checkout` | required | Opens a donation to the projects in general, in any listed currency, charged in CLP, with an optional message |
 | `GET` | `/products/:slug/reviews/me` | optional | The caller's own review, and whether they may write one |
 | `PUT` | `/products/:slug/reviews` | required | Writes or replaces the caller's review |
 | `DELETE` | `/products/:slug/reviews` | required | Withdraws it |
@@ -216,6 +218,7 @@ list — never the editorial one.
 | `GET` | `/admin/products/:id/analytics` | Views and downloads per day |
 | `GET` | `/admin/purchases` | Everything that ever came in, across every product |
 | … | `/admin/products/:id/sales`, `…/vouchers` | The back office. `:id` may be `general`: the donation link's sales |
+| `GET` `PATCH` | `/admin/donations/settings` | The donation link's switches: open, minimum, maximum, messages |
 | `POST` | `/admin/translate` | One field, one locale, a draft. Writes nothing |
 
 ---

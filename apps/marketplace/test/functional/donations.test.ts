@@ -2,52 +2,52 @@ import { env, SELF } from 'cloudflare:test'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EmailSender } from '@/env'
 import { clearExchangeRateCache } from '@/services/exchange'
-import { clearDatabase, seedProduct, seedPurchase } from '../helpers/db'
+import { clearDatabase, readAuditLog, seedProduct, seedPurchase } from '../helpers/db'
+import { exchangeRates, stubLanding } from '../helpers/landing'
 import { asBuyer, asEditor } from '../helpers/tokens'
 
 /**
  * The donation link: support for the work in general, in any amount and any listed currency, settled
  * in pesos.
  *
- * Both outside services are stubbed at `fetch`, by URL, so a test fails when the Worker asks the
- * wrong one — and so the suite can never create a real preference or depend on today's rates.
+ * MercadoPago is stubbed at `fetch` and the Banco Central de Chile's rates at the `LANDING` binding,
+ * so the suite can never create a real preference or depend on today's rates.
  */
 const call = (path: string, init: RequestInit = {}) => SELF.fetch(`https://marketplace.test${path}`, init)
 
-/** What the rate source answers, quoted against the dollar like the real one. */
-const RATES = {
-  result: 'success',
-  time_last_update_unix: Math.floor(Date.now() / 1000) - 3600,
-  rates: { USD: 1, CLP: 950, EUR: 0.95, JPY: 150, ARS: 1500 },
-}
+/** Pesos per unit, as the Banco Central de Chile would quote them through the landing Worker. */
+const RATES = { USD: 950, EUR: 1000, JPY: 6.18, ARS: 0.64 }
 
 type Captured = { url: string; body: Record<string, unknown> }
 
+/** The `LANDING` spy of the last `stubServices`, so a test can assert the rates were never asked for. */
+let landing: ReturnType<typeof stubLanding>
+
 const stubServices = (
-  options: { rates?: Response | (() => Response); preference?: Response | (() => Response) } = {},
+  options: { rates?: () => Response; preference?: () => Response } = {},
 ) => {
   const calls: Captured[] = []
-  const answer = (value: Response | (() => Response) | undefined, fallback: () => Response) =>
-    value === undefined ? fallback() : typeof value === 'function' ? value() : value.clone()
+  landing = stubLanding(options.rates ?? (() => Response.json(exchangeRates(RATES))))
 
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       calls.push({ url, body: init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {} })
-      if (url.startsWith('https://open.er-api.com/')) {
-        return answer(options.rates, () => Response.json(RATES))
-      }
       if (url.includes('/checkout/preferences')) {
-        return answer(options.preference, () =>
-          Response.json({ id: 'pref-donation', init_point: 'https://mp.test/live', sandbox_init_point: 'https://mp.test/sandbox' }),
-        )
+        return options.preference
+          ? options.preference()
+          : Response.json({ id: 'pref-donation', init_point: 'https://mp.test/live', sandbox_init_point: 'https://mp.test/sandbox' })
       }
       return new Response('unexpected call', { status: 404 })
     }),
   )
   return calls
 }
+
+/** Changes the donation link's settings the way the console does. */
+const configure = async (changes: Record<string, unknown>) =>
+  call('/admin/donations/settings', { method: 'PATCH', headers: await asEditor(), body: JSON.stringify(changes) })
 
 const donate = async (body: Record<string, unknown>, headers?: Record<string, string>) => {
   const response = await call('/donations/checkout', {
@@ -84,20 +84,39 @@ afterEach(() => {
 })
 
 describe('GET /donations', () => {
-  it('lists every accepted currency with what one unit is worth in pesos', async () => {
+  it('lists every accepted currency with its Banco Central de Chile rate, and the defaults', async () => {
     stubServices()
 
     const response = await call('/donations')
     const { data } = (await response.json()) as {
-      data: { settlement_currency: string; currencies: { code: string; minor_units: number; clp_per_unit: number | null }[] }
+      data: {
+        enabled: boolean
+        settlement_currency: string
+        minimum_amount: number | null
+        maximum_amount: number | null
+        messages_enabled: boolean
+        rate_source: string
+        currencies: { code: string; minor_units: number; clp_per_unit: number | null; rate_date: string | null }[]
+      }
     }
 
     expect(response.status).toBe(200)
     expect(response.headers.get('Cache-Control')).toContain('public')
-    expect(data.settlement_currency).toBe('CLP')
-    expect(data.currencies.find((entry) => entry.code === 'CLP')).toMatchObject({ minor_units: 0, clp_per_unit: 1 })
+    // The link as it shipped: open, no bounds, no messages.
+    expect(data).toMatchObject({
+      enabled: true,
+      settlement_currency: 'CLP',
+      minimum_amount: null,
+      maximum_amount: null,
+      messages_enabled: false,
+      rate_source: 'Banco Central de Chile',
+    })
+    expect(data.currencies.find((entry) => entry.code === 'CLP')).toMatchObject({ minor_units: 0, clp_per_unit: 1, rate_date: null })
     expect(data.currencies.find((entry) => entry.code === 'USD')).toMatchObject({ minor_units: 2, clp_per_unit: 950 })
-    expect(data.currencies.find((entry) => entry.code === 'EUR')?.clp_per_unit).toBeCloseTo(1000, 6)
+    expect(data.currencies.find((entry) => entry.code === 'USD')?.rate_date).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(data.currencies.find((entry) => entry.code === 'EUR')?.clp_per_unit).toBe(1000)
+    // Every non-peso currency is asked for in one request to the landing Worker.
+    expect(String(landing.mock.calls[0]?.[0])).toContain('/exchange-rates?currencies=USD,EUR')
     // A currency the source did not quote is listed without a rate rather than dropped or invented.
     expect(data.currencies.find((entry) => entry.code === 'GBP')?.clp_per_unit).toBeNull()
   })
@@ -106,18 +125,16 @@ describe('GET /donations', () => {
     stubServices({ rates: () => new Response('down', { status: 503 }) })
 
     const response = await call('/donations')
-    const { data } = (await response.json()) as {
-      data: { currencies: { code: string; clp_per_unit: number | null }[]; rates_updated_at: string | null }
-    }
+    const { data } = (await response.json()) as { data: { currencies: { code: string; clp_per_unit: number | null }[] } }
 
     expect(response.status).toBe(200)
-    expect(data.rates_updated_at).toBeNull()
     expect(data.currencies.find((entry) => entry.code === 'CLP')?.clp_per_unit).toBe(1)
     expect(data.currencies.find((entry) => entry.code === 'USD')?.clp_per_unit).toBeNull()
   })
 
-  it('refuses rates the source stopped updating days ago', async () => {
-    stubServices({ rates: () => Response.json({ ...RATES, time_last_update_unix: Math.floor(Date.now() / 1000) - 10 * 86_400 }) })
+  it('refuses rates the bank stopped publishing days ago', async () => {
+    const stale = new Date(Date.now() - 20 * 86_400_000).toISOString().slice(0, 10)
+    stubServices({ rates: () => Response.json(exchangeRates(RATES, stale)) })
 
     const { data } = (await (await call('/donations')).json()) as { data: { currencies: { code: string; clp_per_unit: number | null }[] } }
     expect(data.currencies.find((entry) => entry.code === 'USD')?.clp_per_unit).toBeNull()
@@ -153,7 +170,7 @@ describe('POST /donations/checkout', () => {
     })
 
     // A peso donation never asks for a rate, so it keeps working whatever the rate source is doing.
-    expect(calls.some((captured) => captured.url.startsWith('https://open.er-api.com/'))).toBe(false)
+    expect(landing).not.toHaveBeenCalled()
     const item = (calls[0]?.body.items as Record<string, unknown>[])[0]
     expect(item).toMatchObject({ currency_id: 'CLP', unit_price: 1 })
   })
@@ -182,7 +199,11 @@ describe('POST /donations/checkout', () => {
 
     const row = await purchaseRow()
     expect(row).toMatchObject({ amount: 9975, currency: 'CLP', pledged_amount: 1050, pledged_currency: 'USD' })
-    expect(JSON.parse(row?.metadata ?? '{}')).toMatchObject({ scope: 'general', exchange_rate: 950 })
+    expect(JSON.parse(row?.metadata ?? '{}')).toMatchObject({
+      scope: 'general',
+      exchange_rate: 950,
+      rate_source: 'Banco Central de Chile',
+    })
 
     // MercadoPago is only ever asked to charge pesos: this account cannot settle anything else.
     const preference = calls.find((captured) => captured.url.includes('/checkout/preferences'))
@@ -329,6 +350,8 @@ describe('the general fund in the back office', () => {
     expect(message.text).toMatch(/CLP\s9,975/)
     expect(message.html).toContain('https://site.test/donate')
     expect(message.html).not.toContain('/product/general')
+    // A general donation entitles to nothing, and its receipt says so.
+    expect(message.text).toContain('nothing is received in return')
   })
 
   it('does not list the general fund\'s sales through a real product', async () => {
@@ -339,5 +362,159 @@ describe('the general fund in the back office', () => {
     const { data } = (await response.json()) as { data: unknown[] }
 
     expect(data).toEqual([])
+  })
+})
+
+describe('the donation settings', () => {
+  type Settings = {
+    enabled: boolean
+    minimum_amount: number | null
+    maximum_enabled: boolean
+    maximum_amount: number | null
+    messages_enabled: boolean
+    updated_by: string | null
+  }
+  const read = async (response: Response) => ((await response.json()) as { data: Settings; error?: string })
+
+  it('starts as the link shipped: open, no bounds, no messages', async () => {
+    const response = await call('/admin/donations/settings', { headers: await asEditor() })
+
+    expect(response.status).toBe(200)
+    expect((await read(response)).data).toMatchObject({
+      enabled: true,
+      minimum_amount: null,
+      maximum_enabled: false,
+      maximum_amount: null,
+      messages_enabled: false,
+      updated_by: null,
+    })
+  })
+
+  it('is the console\'s alone', async () => {
+    expect((await call('/admin/donations/settings')).status).toBe(401)
+    const asDonor = await call('/admin/donations/settings', {
+      method: 'PATCH',
+      headers: await asBuyer(),
+      body: JSON.stringify({ enabled: false }),
+    })
+    expect(asDonor.status).toBe(401)
+  })
+
+  it('changes only what was sent, records who did it, and lands on the public options', async () => {
+    stubServices()
+
+    const response = await configure({ minimum_amount: 1_000, maximum_enabled: true, maximum_amount: 500_000, messages_enabled: true })
+
+    expect(response.status).toBe(200)
+    expect((await read(response)).data).toMatchObject({
+      enabled: true,
+      minimum_amount: 1_000,
+      maximum_enabled: true,
+      maximum_amount: 500_000,
+      messages_enabled: true,
+      updated_by: 'fran@franciscosolis.cl',
+    })
+    expect((await readAuditLog()).map((entry) => entry.event)).toContain('donations.settings_updated')
+
+    const options = (await (await call('/donations')).json()) as { data: Record<string, unknown> }
+    expect(options.data).toMatchObject({ minimum_amount: 1_000, maximum_amount: 500_000, messages_enabled: true })
+  })
+
+  it('keeps the maximum while it is switched off, and the public options say there is none', async () => {
+    stubServices()
+    await configure({ maximum_enabled: true, maximum_amount: 50_000 })
+
+    const response = await configure({ maximum_enabled: false })
+
+    expect((await read(response)).data).toMatchObject({ maximum_enabled: false, maximum_amount: 50_000 })
+    const options = (await (await call('/donations')).json()) as { data: Record<string, unknown> }
+    expect(options.data.maximum_amount).toBeNull()
+  })
+
+  it('refuses settings that contradict each other', async () => {
+    const noAmount = await configure({ maximum_enabled: true })
+    expect(noAmount.status).toBe(422)
+
+    await configure({ maximum_enabled: true, maximum_amount: 10_000 })
+    const inverted = await configure({ minimum_amount: 20_000 })
+    expect(inverted.status).toBe(422)
+
+    const fraction = await configure({ minimum_amount: 10.5 })
+    expect(fraction.status).toBe(400)
+  })
+
+  it('closes the link when it is switched off', async () => {
+    stubServices()
+    await configure({ enabled: false })
+
+    const options = (await (await call('/donations')).json()) as { data: { enabled: boolean } }
+    expect(options.data.enabled).toBe(false)
+
+    const { response, json } = await donate({ amount: 5_000 })
+    expect(response.status).toBe(403)
+    expect(json.error).toContain('not being accepted')
+    expect(await purchaseRow()).toBeNull()
+  })
+
+  it('holds the converted charge to the minimum and the maximum', async () => {
+    stubServices()
+    await configure({ minimum_amount: 2_000, maximum_enabled: true, maximum_amount: 100_000 })
+
+    const below = await donate({ amount: 1_999 })
+    expect(below.response.status).toBe(422)
+    expect(below.json.error).toContain('2.000')
+
+    // Two dollars is 1.900 pesos at 950: under the floor, even though "2" is a number above it.
+    const dollarsBelow = await donate({ amount: 2, currency: 'USD' })
+    expect(dollarsBelow.response.status).toBe(422)
+
+    const above = await donate({ amount: 200, currency: 'USD' })
+    expect(above.response.status).toBe(422)
+    expect(above.json.error).toContain('100.000')
+
+    const within = await donate({ amount: 10, currency: 'USD' })
+    expect(within.response.status).toBe(201)
+    expect(within.json.data).toMatchObject({ amount: 9_500 })
+  })
+
+  it('refuses a message while messages are off', async () => {
+    stubServices()
+
+    const { response, json } = await donate({ amount: 5_000, message: 'Gracias por el plugin' })
+
+    expect(response.status).toBe(422)
+    expect(json.error).toContain('Messages')
+    expect(await purchaseRow()).toBeNull()
+  })
+
+  it('keeps the donor\'s message for the back office and for the donor, and nobody else', async () => {
+    stubServices()
+    await configure({ messages_enabled: true })
+
+    const { response, json } = await donate({ amount: 5_000, message: '  Gracias por el plugin  ' })
+    expect(response.status).toBe(201)
+    const id = String(json.data?.purchase_id)
+
+    const sales = (await (await call('/admin/products/general/sales', { headers: await asEditor() })).json()) as {
+      data: { id: string; message: string | null }[]
+    }
+    expect(sales.data.find((sale) => sale.id === id)?.message).toBe('Gracias por el plugin')
+
+    const own = (await (await call(`/me/purchases/${id}`, { headers: await asBuyer() })).json()) as {
+      data: { message: string | null }
+    }
+    expect(own.data.message).toBe('Gracias por el plugin')
+
+    const someoneElse = await call(`/me/purchases/${id}`, { headers: await asBuyer({ sub: 'buyer-2', email: 'other@example.com' }) })
+    expect(someoneElse.status).toBe(404)
+  })
+
+  it('refuses a message longer than the limit', async () => {
+    stubServices()
+    await configure({ messages_enabled: true })
+
+    const { response } = await donate({ amount: 5_000, message: 'x'.repeat(501) })
+
+    expect(response.status).toBe(400)
   })
 })
