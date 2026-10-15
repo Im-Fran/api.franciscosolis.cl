@@ -14,7 +14,7 @@
  *
  * - it declares the same binding names and the same `vars` keys as the top level, and no extras;
  * - every resource it names is a *different* resource — database, bucket, Vectorize index, queue
- *   (produced to or consumed from) and target Worker of every service binding;
+ *   (produced to or consumed from), rate-limit namespace and target Worker of every service binding;
  * - no var still points at a production host, and the routes it claims are not production's.
  *
  * Run it with `node scripts/check-environments.mjs`; CI runs it as its own job.
@@ -37,7 +37,7 @@ import { join } from 'node:path'
 const INHERITED_ONLY_KEYS = ['alias']
 
 /** Hosts that belong to production. A dev environment naming one of them is the bug this catches. */
-const PRODUCTION_HOSTS = ['api.franciscosolis.cl', 'https://franciscosolis.cl']
+const PRODUCTION_HOSTS = ['api.franciscosolis.cl', 'ingest.franciscosolis.cl', 'https://franciscosolis.cl']
 
 /**
  * Strips `//` and comments from JSONC.
@@ -120,6 +120,9 @@ const bindingsOf = (config) => {
   for (const [index, entry] of (config.queues?.consumers ?? []).entries()) {
     bindings.set(`queue-consumer:#${index}`, entry.queue)
   }
+  // A rate limiter's counters live in its namespace. Two environments on the same namespace id
+  // would share them — a load test on dev spending production's enrollment budget, or the reverse.
+  for (const entry of config.ratelimits ?? []) bindings.set(`ratelimit:${entry.name}`, entry.namespace_id)
   return bindings
 }
 
