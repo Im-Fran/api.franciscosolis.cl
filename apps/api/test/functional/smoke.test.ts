@@ -15,7 +15,7 @@ describe('gateway smoke', () => {
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       status: 200,
-      data: { message: '¡Hello, API!', modules: ['landing', 'auth', 'cms', 'marketplace', 'notifications'] },
+      data: { message: '¡Hello, API!', modules: ['landing', 'auth', 'cms', 'marketplace', 'notifications', 'custom-apps'] },
     })
   })
 
@@ -28,6 +28,7 @@ describe('gateway smoke', () => {
     // what keeps a MercadoPago preference created before the rename from notifying a 404.
     ['marketplace', '/pages/payments/mercadopago/webhook', '/payments/mercadopago/webhook'],
     ['notifications', '/notifications/me/notifications', '/me/notifications'],
+    ['custom-apps', '/custom-apps/v1/companies', '/v1/companies'],
   ])('forwards to the %s binding with the prefix stripped', async (module, requested, forwarded) => {
     const response = await SELF.fetch(`https://api.test${requested}`)
     const echoed = await response.json<EchoedRequest>()
