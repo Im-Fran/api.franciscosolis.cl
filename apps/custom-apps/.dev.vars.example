@@ -1,0 +1,10 @@
+# Copy to `.dev.vars` (gitignored) for local development. This Worker holds no secrets.
+#
+# Trust tokens minted by a local auth Worker. The issuer must match the `AUTH_ISSUER` auth itself is
+# running with, or every token is refused for a bad `iss`.
+AUTH_ISSUER=http://localhost:8787/auth
+
+# The ingest surface is chosen by hostname, so locally it needs a host of its own: `127.0.0.1` for
+# the client apps, `localhost` (or the gateway on :8787) for the panel. A device under test then
+# enrolls at http://127.0.0.1:8796/custom-apps/v1/<appId>/enroll.
+INGEST_PUBLIC_URL=http://127.0.0.1:8796/custom-apps/v1
