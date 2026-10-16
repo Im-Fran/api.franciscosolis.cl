@@ -3,11 +3,14 @@ import { describeRoute } from 'hono-openapi'
 import * as v from 'valibot'
 import type { AppEnv } from '@/env'
 import { requireAdmin } from '@/middleware/admin'
+import alerts from '@/panel/routes/alerts'
 import apps from '@/panel/routes/apps'
 import companies from '@/panel/routes/companies'
 import contacts from '@/panel/routes/contacts'
+import diagnostics from '@/panel/routes/diagnostics'
 import installations from '@/panel/routes/installations'
 import overview from '@/panel/routes/overview'
+import remote from '@/panel/routes/remote'
 import { dataSchema, jsonContent, panelErrors } from '@/panel/shared'
 
 /**
@@ -59,5 +62,8 @@ app.route('/', companies)
 app.route('/', contacts)
 app.route('/', apps)
 app.route('/', installations)
+app.route('/', remote)
+app.route('/', diagnostics)
+app.route('/', alerts)
 
 export { app as panel }

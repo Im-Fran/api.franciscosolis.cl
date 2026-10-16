@@ -4,20 +4,32 @@ import { describeRoute, openAPIRouteHandler, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import type { AppEnv, Env } from '@/env'
 import {
+  ALERT_KINDS,
+  ALERT_STATUSES,
   APP_KINDS,
   APP_MODULES,
   APP_STATES,
   CHANNELS,
+  COMMAND_STATUSES,
+  COMMAND_TYPES,
   CONTACT_ROLES,
+  CRASH_STATUSES,
+  GRACE_MAX_DAYS,
   HEARTBEAT,
+  LOG_LEVELS,
+  MESSAGE_DISPLAYS,
+  MESSAGE_SEVERITIES,
   PLATFORMS,
   PRESENCE_MODES,
   ROLLUP,
+  SCREENSHOTS,
+  TARGET_SCOPES,
   TELEMETRY,
 } from '@/lib/config'
 import { ingest } from '@/ingest/index'
 import { panel } from '@/panel/index'
-import { runScheduled } from '@/services/rollup'
+import { runScheduled } from '@/services/maintenance'
+import { InstallationSocket } from '@/services/socket'
 import { consumeTelemetry } from '@/services/telemetry'
 
 /**
@@ -81,6 +93,17 @@ const rootResponseSchema = v.object({
     presence_modes: v.array(v.string()),
     modules: v.array(v.string()),
     contact_roles: v.array(v.string()),
+    log_levels: v.array(v.string()),
+    command_types: v.array(v.string()),
+    command_statuses: v.array(v.string()),
+    target_scopes: v.array(v.string()),
+    message_severities: v.array(v.string()),
+    message_displays: v.array(v.string()),
+    crash_statuses: v.array(v.string()),
+    alert_kinds: v.array(v.string()),
+    alert_statuses: v.array(v.string()),
+    grace_max_days: v.number(),
+    screenshot_max_bytes: v.number(),
     heartbeat_interval: v.object({ min: v.number(), max: v.number(), default: v.number() }),
     offline_after_intervals: v.number(),
     retention: v.object({ raw_days: v.number() }),
@@ -109,6 +132,17 @@ panelApp.get(
         presence_modes: [...PRESENCE_MODES],
         modules: [...APP_MODULES],
         contact_roles: [...CONTACT_ROLES],
+        log_levels: [...LOG_LEVELS],
+        command_types: [...COMMAND_TYPES],
+        command_statuses: [...COMMAND_STATUSES],
+        target_scopes: [...TARGET_SCOPES],
+        message_severities: [...MESSAGE_SEVERITIES],
+        message_displays: [...MESSAGE_DISPLAYS],
+        crash_statuses: [...CRASH_STATUSES],
+        alert_kinds: [...ALERT_KINDS],
+        alert_statuses: [...ALERT_STATUSES],
+        grace_max_days: GRACE_MAX_DAYS,
+        screenshot_max_bytes: SCREENSHOTS.maxBytes,
         heartbeat_interval: { min: HEARTBEAT.min, max: HEARTBEAT.max, default: HEARTBEAT.default },
         offline_after_intervals: HEARTBEAT.offlineAfterIntervals,
         retention: { raw_days: TELEMETRY.rawRetentionDays },
@@ -128,7 +162,7 @@ panelApp.get(
         title: 'FranciscoSolis - Custom Apps API',
         version: '1.0.0',
         description:
-          'The panel behind the bespoke apps built for clients: companies and contacts, apps and their keys, installations and their telemetry. Everything under /v1 needs an access token minted for the `franciscosolis-custom-apps` application, carrying `custom-apps:admin`. The client apps themselves use a separate ingest API, documented per app at <ingest>/<appId>/openapi.json.',
+          'The panel behind the bespoke apps built for clients: companies and contacts, apps and their keys, installations and their telemetry, and their remote operation — commands and screenshots, flags and remote config, in-app messages, logs, crashes and alerts. Everything under /v1 needs an access token minted for the `franciscosolis-custom-apps` application, carrying `custom-apps:admin`. The client apps themselves use a separate ingest API, documented per app at <ingest>/<appId>/openapi.json.',
       },
       components: {
         securitySchemes: {
@@ -191,4 +225,4 @@ export default {
   scheduled: handleScheduled,
 } satisfies ExportedHandler<Env>
 
-export { ingestApp, panelApp }
+export { ingestApp, InstallationSocket, panelApp }

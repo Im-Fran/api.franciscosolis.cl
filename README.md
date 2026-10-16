@@ -118,7 +118,9 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   for clients running after they ship: a small CRM (companies with a validated RUT, contacts with
   roles), the apps and their public keys, every installation (a POS, a kiosk, a browser), presence,
   telemetry kept 30 days raw and summarised daily forever, a usage heatmap to plan maintenance on,
-  and a kill switch every installation obeys. The panel API sits behind the gateway at
+  and a kill switch every installation obeys — plus their remote operation: socket presence, remote
+  commands and screenshots, feature flags and a versioned remote config, in-app messages, remote logs,
+  grouped crash reports, and alerts sent through the notification centre. The panel API sits behind the gateway at
   `/custom-apps/*`, for one account holding `custom-apps:admin`; the client apps report to
   `ingest.franciscosolis.cl/custom-apps/v1/<appId>`, a route of its own straight to the Worker, which
   tells the two apart by hostname. Enrollment is auto-approved for anybody holding an app's public
@@ -171,7 +173,8 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 | Validation | [valibot](https://valibot.dev) via `@hono/standard-validator` |
 | Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth`, `apps/cms`, `apps/marketplace`, `apps/notifications`, `apps/custom-apps`) |
 | Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`apps/auth`, `apps/cms`, `apps/marketplace`, `apps/notifications`) |
-| Events | [Cloudflare Queues](https://developers.cloudflare.com/queues/) — `auth` and `marketplace` produce, `notifications` consumes; `custom-apps` both ends of its telemetry queue |
+| Events | [Cloudflare Queues](https://developers.cloudflare.com/queues/) — `auth`, `marketplace` and `custom-apps` produce, `notifications` consumes; `custom-apps` both ends of its telemetry queue |
+| Sockets | [Durable Objects](https://developers.cloudflare.com/durable-objects/) with WebSocket Hibernation — `custom-apps`' socket presence |
 | Push | Web Push with VAPID (`apps/notifications`) |
 | Email templates | [react-email](https://react.email) in the shared `@franciscosolis/emails` package |
 | Machine translation | [Workers AI](https://developers.cloudflare.com/workers-ai/) behind the shared `@franciscosolis/translate` package (`apps/cms`, `apps/marketplace`) |
@@ -316,7 +319,7 @@ Notes on the setup, per app:
 | `marketplace` | The same as `cms`. Its JWKS-cache tests live in a file of their own, because the cache is per isolate and one warm fetch would make every later stub go unasked |
 | `custom-apps` | A live D1 database with `migrations/` applied per test file, Miniflare's real rate limiters, and the telemetry queue replaced by a capture the tests hand to the consumer explicitly |
 
-The two producers (`auth`, `marketplace`) keep `NOTIFICATIONS_QUEUE` declared under
+The three producers (`auth`, `marketplace`, `custom-apps`) keep `NOTIFICATIONS_QUEUE` declared under
 test — Miniflare simulates a queue producer with no account behind it — and replace it by assignment
 wherever a test asserts on what was published (`test/helpers/queue.ts` in each), the same way the
 suites replace `EMAIL`.
@@ -370,7 +373,7 @@ There are two full stacks of these Workers on the account, and they share nothin
 | Modules | `landing`, `auth`, `cms`, `marketplace`, `notifications`, `custom-apps` | `landing-dev`, `auth-dev`, `cms-dev`, `marketplace-dev`, `notifications-dev`, `custom-apps-dev` |
 | Front-end | `franciscosolis` → `franciscosolis.cl` | `franciscosolis-dev` → `dev.franciscosolis.cl` |
 | Databases | `franciscosolis_auth`, `_cms`, `_marketplace`, `_notifications`, `_custom_apps` | the same five with a `_dev` suffix |
-| Buckets | `franciscosolis-avatars`, `franciscosolis-app-releases` | the same two with a `-dev` suffix |
+| Buckets | `franciscosolis-avatars`, `franciscosolis-app-releases`, `franciscosolis-custom-apps-screenshots` | the same three with a `-dev` suffix |
 | Queues | `franciscosolis-notifications`, `franciscosolis-custom-apps-telemetry` | the same two with a `-dev` suffix |
 | Deployed by | Cloudflare's Git integration (dashboard) | `.github/workflows/deploy-dev.yml` |
 
@@ -397,10 +400,10 @@ cd ../custom-apps && pnpm run deploy:dev
 cd ../api       && pnpm run deploy:dev
 ```
 
-The notifications queue does not change that order. `auth` and `marketplace` produce to
-it and `notifications` consumes it, but each half resolves against the *queue*, not against the
+The notifications queue does not change that order. `auth`, `marketplace` and `custom-apps` produce
+to it and `notifications` consumes it, but each half resolves against the *queue*, not against the
 other Worker — so a producer deployed before its consumer simply leaves messages waiting. The one
-thing it does require is that the queue exists before the first deploy of any of the three (see
+thing it does require is that the queue exists before the first deploy of any of the four (see
 below).
 
 `pnpm run deploy:dev` from the root does exist, but `pnpm run -r` gives no useful order for it:
@@ -466,7 +469,7 @@ pnpm exec wrangler d1 create franciscosolis_marketplace_dev
 
 **The notifications queue, database and push keys.** A queue producer or consumer is resolved at
 deploy time against a queue that must already exist, so the two queues come first — before the
-first deploy of `auth`, `marketplace` or `notifications`, any of which otherwise fails:
+first deploy of `auth`, `marketplace`, `notifications` or `custom-apps`, any of which otherwise fails:
 
 ```bash
 pnpm exec wrangler queues create franciscosolis-notifications
@@ -494,10 +497,12 @@ node scripts/generate-vapid-keys.mjs | pnpm exec wrangler secret put VAPID_PRIVA
 node scripts/generate-vapid-keys.mjs | pnpm exec wrangler secret put VAPID_PRIVATE_KEY --env dev  # a different pair
 ```
 
-**The custom-apps database, queue and ingest host.** `apps/custom-apps` owns
+**The custom-apps database, queue, bucket and ingest host.** `apps/custom-apps` owns
 `franciscosolis_custom_apps` and `franciscosolis_custom_apps_dev`, which were created with the commands
 below; their ids are committed in `apps/custom-apps/wrangler.jsonc`, so a new account only needs this
-to recreate them. It also owns its telemetry queue, which it both produces to and consumes. Run them
+to recreate them. It also owns its telemetry queue, which it both produces to and consumes, and the
+private bucket its screenshots are kept in (no public access, no custom domain). Its socket
+presence is a Durable Object class of the Worker itself, created by the deploy — nothing to make. Run them
 from inside an app (`cd apps/custom-apps`): Wrangler is a dependency of each app, not of the root. Its
 ingest surface is a zone route, so `ingest` and `ingest-dev` need proxied DNS records in the
 `franciscosolis.cl` zone (an `AAAA` to `100::` is enough — the Worker answers before any origin):
@@ -508,6 +513,8 @@ pnpm exec wrangler d1 create franciscosolis_custom_apps
 pnpm exec wrangler d1 create franciscosolis_custom_apps_dev
 pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry
 pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry-dev
+pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-screenshots
+pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-screenshots-dev
 ```
 
 The `CLOUDFLARE_API_TOKEN` behind `deploy-dev.yml` also needs **Queues:Edit** on top of `D1:Edit`,
@@ -703,7 +710,7 @@ pnpm run cf-typegen
 | `apps/marketplace/migrations/` | D1 migrations for `franciscosolis_marketplace` |
 | `apps/notifications/wrangler.jsonc` | Worker name/config for the `notifications` service: D1, email sending, `AUTH` binding, the queue consumer, the hourly digest cron, VAPID and site vars |
 | `apps/notifications/migrations/` | D1 migrations for `franciscosolis_notifications` |
-| `apps/custom-apps/wrangler.jsonc` | Worker name/config for the `custom-apps` service: the ingest zone route, D1, the telemetry queue (producer and consumer), the three rate limiters, `AUTH` binding, the hourly roll-up cron |
+| `apps/custom-apps/wrangler.jsonc` | Worker name/config for the `custom-apps` service: the ingest zone route, D1, the telemetry queue (producer and consumer), the notifications queue producer, the `InstallationSocket` Durable Object, the screenshots bucket, the three rate limiters, `AUTH` binding, the five-minute cron |
 | `apps/custom-apps/migrations/` | D1 migrations for `franciscosolis_custom_apps` |
 | `pnpm-workspace.yaml` | Workspace packages (`apps/*`, `packages/*`) and shared dependency catalog |
 | `apps/*/vitest.config.ts` | Test runtime for that app — bindings, D1 migrations and service-binding stubs |

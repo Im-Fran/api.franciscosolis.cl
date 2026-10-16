@@ -117,8 +117,8 @@ missing one.
 
 ## 📨 How events arrive
 
-`apps/auth` and `apps/marketplace` put a `NotificationEvent` on the queue and carry
-on. This Worker is the queue's consumer:
+`apps/auth`, `apps/marketplace` and `apps/custom-apps` put a `NotificationEvent` on the queue and
+carry on. This Worker is the queue's consumer:
 
 ```ts
 { version: 1, id: '<uuid>', type: 'account.sign_in', user: { id, email?, name?, locale? },
@@ -131,6 +131,7 @@ on. This Worker is the queue's consumer:
 | `account.avatar_approved`, `account.avatar_rejected` | auth | yes |
 | `marketplace.purchase_completed`, `marketplace.purchase_refunded` | marketplace | no — the receipt and refund notice |
 | `marketplace.release_published`, `marketplace.review_reply` | marketplace | yes |
+| `custom_apps.alert_opened`, `custom_apps.alert_resolved` | custom-apps | yes — its alert rules, for the account that created them |
 
 The event id is the notification's primary key, so a redelivery inserts nothing and pushes nothing.
 A malformed event is acknowledged and dropped; an unknown type is retried, since it means a producer
@@ -170,8 +171,8 @@ was created with, so a dev subscription can never be pushed to from production. 
 orphans every subscription; the website re-subscribes on the next visit.
 
 The Worker must be deployed as `notifications` for the gateway's binding to resolve, and **after**
-`auth`, because it binds it. The queue must exist before `auth` and `marketplace` deploy,
-since they bind it as producers — a queue is not a Worker, so it adds no cycle to the deploy order.
+`auth`, because it binds it. The queue must exist before `auth`, `marketplace` and `custom-apps`
+deploy, since they bind it as producers — a queue is not a Worker, so it adds no cycle to the deploy order.
 The cron fires only on the production deployment, never on a preview.
 
 ---

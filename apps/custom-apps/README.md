@@ -27,9 +27,11 @@ database**, and which one a request came through is decided by its hostname:
   never through the gateway. It accepts installation tokens and nothing else; the panel accepts
   access tokens and nothing else.
 
-This is phase 1 of the plan: the CRM, the inventory of apps and installations, enrollment, presence,
-telemetry and the kill switch. Releases and remote updates, remote commands, maintenance windows,
-contracts and the secrets vault build on the same model and are not here yet.
+Phases 1 and 2 of the plan are here: the CRM, the inventory of apps and installations, enrollment,
+presence, telemetry and the kill switch, and then remote operation — socket presence, commands and
+screenshots, feature flags and remote config, in-app messages, remote logs, crash reports and alerts.
+Releases and remote updates (phase 3), maintenance windows, contracts and the secrets vault (phase 4)
+build on the same model and are not here yet.
 
 ---
 
@@ -70,10 +72,48 @@ contracts and the secrets vault build on the same model and are not here yet.
   every occurrence of that hour in the last 30 days, so an hour nobody used is a zero rather than a
   gap.
 - **The kill switch** — `active`, `grace`, `maintenance` or `suspended`, per app and overridable per
-  installation, answered on every heartbeat and on `/status`.
+  installation, answered on every heartbeat and on `/status`. A grace period carries its end (at most
+  31 days ahead), and the cron suspends the app when it passes, recorded in the audit trail with no
+  actor.
+- **Two presence modes, one rule** — `ping` (`POST /heartbeat` every interval) or `socket`: a
+  WebSocket to `GET /socket` held by a Durable Object per installation with the Hibernation API, so an
+  idle kiosk costs nothing between messages. The device sends the same heartbeats down the socket,
+  and whatever the panel changes for it — a command, the state, config, messages, its log level — is
+  pushed the moment it is saved instead of on the next heartbeat. "Connected" is the same rule in
+  both modes, plus one thing only a socket can tell: a clean close reads as offline at once.
+- **Every heartbeat answer is the device's to-do list** — the state to obey, the presence settings,
+  the commands it has not acknowledged, and the tags of its config and messages, so it refetches
+  those only when they changed (`GET /config` and `GET /messages` answer `ETag`s and 304s).
+- **Remote commands from a closed catalogue** — restart the app, restart a kiosk, reload config,
+  clear the cache, take a screenshot, upload logs, check for updates. Nothing else can be sent, so
+  the panel never runs arbitrary code on a client's device. A command is repeated in every answer
+  until acknowledged, expires (an hour by default, a week at most) and is audited.
+- **Screenshots, off until a contract says otherwise** — asked for by command, uploaded as the
+  image itself, kept in a private R2 bucket without expiry and served to the panel through the
+  Worker. Both the app and the device must allow them, since a screen can show a client's own
+  customers, and any one of them can be deleted.
+- **Feature flags and a versioned remote config** — a flag is a boolean, a variant or a number for
+  the whole app, one channel or one installation, the most specific winning per device. The config
+  is one JSON document per app, validated against a schema in a strict subset of JSON Schema (a
+  keyword outside it is refused, not ignored), saved as numbered versions that are never deleted,
+  with optimistic concurrency and restore-as-next-version.
+- **In-app messages** — banners and modals with a severity, a window and a target, each confirmed by
+  the device that showed it.
+- **Remote logs and grouped crashes** — logs at or above a level set per app and per device (the
+  server drops the rest too); crashes grouped by the normalised top frames of their stack and by
+  version, counted forever, reopened when a report arrives after the group was resolved. Both kept
+  raw for 30 days.
+- **Alerts** — rules on one app or every app: an installation offline for X minutes, CPU or memory
+  held above a threshold, and spikes of crashes, error logs or enrollments. Evaluated every five
+  minutes; one alert per rule and subject while it holds, reopened rather than repeated when it
+  flaps, resolved on its own when the condition clears. The rule's creator is told through the
+  notification centre (`apps/notifications`), in the bell, by push and by email as their preferences
+  say; a silenced rule keeps recording and stops telling.
 - **Per-app documents** — each app gets its own `openapi.json`, filtered to the modules it has
-  enabled, and websites get a generated `sdk.js` with the app's id, key and modules baked in. The
-  script is deterministic, so the panel quotes a Subresource Integrity hash that pins it.
+  enabled, and websites get a generated `sdk.js` with the app's id, key and modules baked in — which,
+  with the matching modules, also reports uncaught errors as crashes, sends logs, keeps the flags and
+  config, exposes the running messages and runs the commands a browser can. The script is
+  deterministic, so the panel quotes a Subresource Integrity hash that pins it.
 - **An append-only audit trail, enforced by the database** — triggers abort any `UPDATE` or
   `DELETE` on `audit_logs`. Edits carry `{ before, after }` with only the fields that changed, and
   what a device did is recorded with no actor.
@@ -88,7 +128,9 @@ contracts and the secrets vault build on the same model and are not here yet.
 | HTTP | [Hono](https://hono.dev) |
 | Schemas & docs | [valibot](https://valibot.dev) + [hono-openapi](https://github.com/rhinobase/hono-openapi) |
 | Database | [Cloudflare D1](https://developers.cloudflare.com/d1/) via [Drizzle ORM](https://orm.drizzle.team) |
-| Telemetry writes | [Cloudflare Queues](https://developers.cloudflare.com/queues/) |
+| Telemetry writes, alert notifications | [Cloudflare Queues](https://developers.cloudflare.com/queues/) |
+| Socket presence | [Durable Objects](https://developers.cloudflare.com/durable-objects/) with WebSocket Hibernation |
+| Screenshots | [Cloudflare R2](https://developers.cloudflare.com/r2/) |
 | Abuse limits | [Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) |
 | Tooling | [Wrangler](https://developers.cloudflare.com/workers/wrangler/) + [Vitest](https://vitest.dev) |
 
@@ -102,6 +144,9 @@ account and in `apps/auth` rather than in this directory — twice, once per env
 - A **D1 database**: `franciscosolis_custom_apps` (and `franciscosolis_custom_apps_dev`). Both
   exist and their ids are in `wrangler.jsonc`; recreating one means replacing its id there.
 - A **queue**: `franciscosolis-custom-apps-telemetry` (and `franciscosolis-custom-apps-telemetry-dev`).
+  It also produces to `franciscosolis-notifications` (and `-dev`), which `apps/notifications` owns.
+- An **R2 bucket**: `franciscosolis-custom-apps-screenshots` (and `-dev`), with no public access and
+  no custom domain.
 - A **proxied DNS record** for `ingest` (and `ingest-dev`) in the `franciscosolis.cl` zone, so the
   zone routes have a hostname to match.
 - The **`franciscosolis-custom-apps` client application** and the `custom-apps:admin` permission,
@@ -139,7 +184,7 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/v1/me` | The account behind the token |
-| `GET` | `/v1/overview` | Fleet counts, apps by state, latest enrollments and what waits for review |
+| `GET` | `/v1/overview` | Fleet counts, apps by state, unresolved alerts, latest enrollments and what waits for review |
 | `GET` / `POST` | `/v1/companies` | List (`?search`) and create |
 | `GET` / `PATCH` / `DELETE` | `/v1/companies/:companyId` | One company with its contacts and apps; delete refused while it has apps |
 | `GET` | `/v1/companies/:companyId/contacts` | Its contacts with their roles |
@@ -154,10 +199,30 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `GET` | `/v1/apps/:appId/sdk` | The `sdk.js` URL and its integrity hash |
 | `GET` | `/v1/apps/:appId/installations` | `?status`, `?needs_review`, `?connected`, `?search` |
 | `GET` | `/v1/apps/:appId/usage` · `/usage/heatmap` | Daily fleet usage; the weekday × hour heatmap |
-| `GET` / `PATCH` | `/v1/installations/:installationId` | Live view; alias, channel, per-installation state override |
+| `GET` / `PATCH` | `/v1/installations/:installationId` | Live view; alias, channel, state override, log level override, screenshots |
 | `POST` | `/v1/installations/:installationId/review` · `/revoke` | Confirm a new device; revoke one for good |
 | `GET` | `/v1/installations/:installationId/metrics` · `/metrics/daily` · `/events` | Downsampled series, daily roll-up, usage events |
 | `GET` | `/v1/installations/:installationId/heartbeats` | Every heartbeat as it arrived (`?from`, `?to`), newest first |
+| `GET` / `POST` | `/v1/installations/:installationId/commands` | Commands sent and their results; send one |
+| `POST` | `/v1/commands/:commandId/cancel` | Withdraw one not yet answered |
+| `GET` | `/v1/installations/:installationId/screenshots` | Screenshots, newest first |
+| `GET` / `DELETE` | `/v1/screenshots/:screenshotId/image` · `/v1/screenshots/:screenshotId` | The image; delete one |
+| `GET` / `POST` | `/v1/apps/:appId/flags` | Flags at every scope; set one |
+| `PATCH` / `DELETE` | `/v1/flags/:flagId` | Change a value; remove it |
+| `GET` / `PUT` | `/v1/apps/:appId/config` | The current document and schema; save a new version (`base_version` for concurrency) |
+| `GET` | `/v1/apps/:appId/config/history` | Every version |
+| `POST` | `/v1/apps/:appId/config/history/:version/restore` | Save an old version as the next |
+| `GET` / `POST` | `/v1/apps/:appId/messages` | `?status=active\|scheduled\|ended`; create one |
+| `PATCH` / `DELETE` | `/v1/messages/:messageId` | Edit or end; delete |
+| `GET` | `/v1/messages/:messageId/receipts` | Who confirmed it |
+| `GET` | `/v1/apps/:appId/crashes` | Crash groups (`?status`, `?app_version`, `?search`) |
+| `GET` / `PATCH` | `/v1/crashes/:crashId` | One group; resolve, ignore or reopen it |
+| `GET` | `/v1/crashes/:crashId/reports` | Its reports, stack included |
+| `GET` | `/v1/apps/:appId/logs` · `/v1/installations/:installationId/logs` | Remote logs (`?level`, `?search`, `?from`, `?to`) |
+| `GET` / `POST` | `/v1/alert-rules` | Rules; create one (its creator is notified) |
+| `PATCH` / `DELETE` | `/v1/alert-rules/:ruleId` | Edit, disable, silence; delete |
+| `GET` | `/v1/alerts` · `/v1/alerts/:alertId` | `?status` (`unresolved` for the inbox), `?app_id`, `?rule_id` |
+| `POST` | `/v1/alerts/:alertId/ack` · `/resolve` | Acknowledge, or close by hand |
 | `GET` | `/v1/audit-log` | `?event` (a trailing `.` matches a family), `?resource_type`, `?resource_id`, `?actor`, `?from`, `?to` |
 
 The full, always-current description is the OpenAPI spec at
@@ -175,13 +240,21 @@ by decision: each integrates the routes it needs from its app's own `openapi.jso
 | `GET` | `/openapi.json` · `/sdk.js` | The app's own documents; public |
 | `POST` | `/enroll` | `app_key`, `device_id`, `platform` and what the device knows about itself → tokens |
 | `POST` | `/token/refresh` | Rotate both tokens; on a 401, enroll again with the same `device_id` |
-| `POST` | `/heartbeat` | Every `presence.interval_seconds`: `active_seconds`, `app_version`, a light `snapshot`. Logged in full; the last of each minute is charted |
+| `POST` | `/heartbeat` | Every `presence.interval_seconds`: `active_seconds`, `app_version`, a light `snapshot`. Logged in full; the last of each minute is charted. Answers the state, presence, outstanding commands and the `sync` tags |
+| `GET` | `/socket` | Socket mode: a WebSocket for heartbeats and instant pushes (native apps; `Authorization` on the upgrade) |
 | `GET` | `/status` | The state to obey, read on start-up |
 | `POST` | `/metrics` | Up to 100 samples (module `metrics`) |
 | `POST` | `/events` | Up to 100 usage events (module `events`) |
+| `POST` | `/logs` | Up to 100 entries at or above `sync.log_level` (module `logs`) |
+| `POST` | `/crashes` | Up to 20 crash reports with their stacks (module `crashes`) |
+| `GET` | `/config` | Resolved flags and the config document, with an `ETag` (module `config`) |
+| `GET` | `/messages` · `POST /messages/:messageId/seen` | Running messages; confirm one was shown (module `messages`) |
+| `POST` | `/commands/:commandId/ack` | A command's result (module `commands`) |
+| `POST` | `/commands/:commandId/screenshot` | The image a `screenshot` command asked for, as the body |
 
 A device should keep its tokens in the platform's secure store, ask `/status` on start-up, queue
-metrics and events locally while offline and send them when the network is back.
+metrics, events and logs locally while offline and send them when the network is back, deduplicate
+commands by `id`, and refetch `/config` or `/messages` only when their tag in `sync` changes.
 
 ---
 
@@ -196,8 +269,10 @@ metrics and events locally while offline and send them when the network is back.
 | `INGEST_PUBLIC_URL` | Base of the ingest surface; its host is what requests are dispatched on |
 
 Bindings: `DB` (D1), `AUTH` (service binding, read for its JWKS only), `TELEMETRY_QUEUE` (producer
-and consumer of the same queue), `ENROLL_IP_LIMITER`, `ENROLL_APP_LIMITER` and `INGEST_LIMITER`
-(rate limits), the ingest zone route and an hourly cron. There are no secrets.
+and consumer of the same queue), `NOTIFICATIONS_QUEUE` (producer, for alerts), `PRESENCE` (the
+`InstallationSocket` Durable Object), `SCREENSHOTS` (R2), `ENROLL_IP_LIMITER`, `ENROLL_APP_LIMITER`
+and `INGEST_LIMITER` (rate limits), the ingest zone route and a cron every five minutes. There are no
+secrets.
 
 ---
 
@@ -207,11 +282,14 @@ and consumer of the same queue), `ENROLL_IP_LIMITER`, `ENROLL_APP_LIMITER` and `
 cd apps/custom-apps
 pnpm exec wrangler d1 create franciscosolis_custom_apps                # and _dev; ids into wrangler.jsonc
 pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry  # and -dev
+pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-screenshots  # and -dev
 pnpm run deploy
 ```
 
 The Worker must be deployed as `custom-apps` for the gateway's `CUSTOM_APPS` binding to resolve —
-**before** the gateway change that binds it — and after `auth`, which it binds. Migrations are
+**before** the gateway change that binds it — and after `auth`, which it binds. The screenshots
+bucket must exist before the deploy that binds it, and so must the notifications queue. The Durable
+Object class is created by the `v1` migration in `wrangler.jsonc` on the first deploy. Migrations are
 applied by the repository's `Migrate` workflow on a push to `dev`; `pnpm run db:migrate:remote` is
 the manual fallback.
 

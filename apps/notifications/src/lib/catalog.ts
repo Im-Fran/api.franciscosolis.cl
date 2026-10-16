@@ -106,6 +106,24 @@ const CATALOG = {
       es: { title: 'Respondieron tu reseña de {product_name}', body: 'El autor respondió lo que escribiste.' },
     },
   },
+  // Produced by `apps/custom-apps`'s alert evaluator, for the account that created the rule. Both
+  // are this Worker's to email: the producer sends no mail of its own.
+  'custom_apps.alert_opened': {
+    category: 'custom_apps',
+    emailable: true,
+    copy: {
+      en: { title: 'Alert: {rule_name}', body: '{subject} in {app_name}: {value} (threshold {threshold}).' },
+      es: { title: 'Alerta: {rule_name}', body: '{subject} en {app_name}: {value} (umbral {threshold}).' },
+    },
+  },
+  'custom_apps.alert_resolved': {
+    category: 'custom_apps',
+    emailable: true,
+    copy: {
+      en: { title: 'Resolved: {rule_name}', body: '{subject} in {app_name} is back to normal.' },
+      es: { title: 'Resuelta: {rule_name}', body: '{subject} en {app_name} volvió a la normalidad.' },
+    },
+  },
 } as const satisfies Record<string, CatalogEntry>
 
 type NotificationType = keyof typeof CATALOG

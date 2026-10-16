@@ -14,7 +14,7 @@ gateway (`apps/api`) reaches it through the `NOTIFICATIONS` service binding and 
 `/notifications/*`, so its public base URL is `https://api.franciscosolis.cl/notifications`. It lives
 at `apps/notifications`.
 
-It exists to send less email. Other Workers publish events onto a queue; this Worker files each one
+It exists to send less email. Other Workers (`auth`, `marketplace`, `custom-apps`) publish events onto a queue; this Worker files each one
 in the account's in-site inbox, pushes it to the devices the account registered (Web Push), and
 emails it immediately, in a daily or weekly digest, or never, as the account chose. The website shows
 the bell in its header and the inbox and preferences at `franciscosolis.cl/account/notifications`.

@@ -25,12 +25,13 @@ describe('apps', () => {
     expect(created.key.key).toMatch(/^cak_[A-Za-z0-9_-]{32}$/)
   })
 
-  it('refuse an unknown company, an interval out of range and a socket presence', async () => {
+  it('refuse an unknown company, an interval out of range and a presence mode that does not exist', async () => {
     const company = await createCompany()
     expect((await panelJson('/v1/apps', { method: 'POST', body: { company_id: crypto.randomUUID(), name: 'X', kind: 'web' } })).status).toBe(422)
     expect((await panelJson('/v1/apps', { method: 'POST', body: { company_id: company.id, name: 'X', kind: 'web', heartbeat_interval_seconds: 5 } })).status).toBe(400)
     const created = await createApp({ company_id: company.id })
-    expect((await panelJson(`/v1/apps/${created.id}`, { method: 'PATCH', body: { presence_mode: 'socket' } })).status).toBe(400)
+    expect((await panelJson(`/v1/apps/${created.id}`, { method: 'PATCH', body: { presence_mode: 'carrier-pigeon' } })).status).toBe(400)
+    expect((await panelJson(`/v1/apps/${created.id}`, { method: 'PATCH', body: { presence_mode: 'socket' } })).body.data.presence_mode).toBe('socket')
   })
 
   it('validate operating hours', async () => {
@@ -77,7 +78,7 @@ describe('apps', () => {
   it('carry their kill switch to every installation', async () => {
     const created = await createApp()
     const device = await enrollDevice(created.id, created.key.key)
-    const until = '2026-12-01T12:00:00.000Z'
+    const until = new Date(Math.floor(Date.now() / 1000 + 10 * 86_400) * 1000).toISOString()
     const { status, body } = await panelJson(`/v1/apps/${created.id}/status`, {
       method: 'PUT',
       body: { state: 'grace', message: 'Su contrato terminó. Contáctenos para renovar.', until },

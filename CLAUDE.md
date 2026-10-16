@@ -39,15 +39,18 @@ together seven Cloudflare Workers, all living directly in this repo:
 - `apps/notifications` — internal Worker with the **notification centre**, reachable through `apps/api`
   at `/notifications/*`: the in-site list behind the bell on the website, per-category preferences for
   push and email, Web Push (VAPID) subscriptions, and the daily/weekly email digests. It is the one
-  Worker here that *consumes another Worker's queue*: `auth` and `marketplace` publish events onto
-  `franciscosolis-notifications` rather than calling it, and it turns each into a notification row, a
+  Worker here that *consumes another Worker's queue*: `auth`, `marketplace` and `custom-apps` publish
+  events onto `franciscosolis-notifications` rather than calling it, and it turns each into a notification row, a
   push and — when the event is emailable and the account's preferences say so — an email or a digest
   line. Only tokens minted for the website (`franciscosolis-web`) are accepted, and every row belongs
   to the token's own `sub`.
 - `apps/custom-apps` — internal Worker behind the **bespoke apps built for clients**: a small CRM
   (companies with a validated RUT, contacts with roles), the apps, their public keys, every
-  installation of them, presence, telemetry and the kill switch. It is the one module with **two
-  front doors**: the panel API through `apps/api` at `/custom-apps/*` (one account, holding
+  installation of them, presence, telemetry and the kill switch, and their **remote operation**:
+  socket presence on a Durable Object per installation, commands from a closed catalogue,
+  screenshots in R2, feature flags and a versioned remote config, in-app messages, remote logs,
+  grouped crash reports and alerts delivered through the notification centre. It is the one module
+  with **two front doors**: the panel API through `apps/api` at `/custom-apps/*` (one account, holding
   `custom-apps:admin` under its own client application, `franciscosolis-custom-apps`), and an
   **ingest** surface the client apps report to at `ingest.franciscosolis.cl/custom-apps/v1/:appId`,
   routed to it directly. Which one a request reaches is decided by hostname.
@@ -87,8 +90,11 @@ workspace/catalog, root scripts).
   plain `fetch` rather than through an SDK — a handful of functions in `src/lib/mercadopago.ts`
   against a dependency that assumes Node.
 - **Cloudflare Queues** for two things: notification events, and `apps/custom-apps`' telemetry
-  (`franciscosolis-custom-apps-telemetry`, which it both produces to and consumes). For the first: `auth` and `marketplace`
-  declare a `NOTIFICATIONS_QUEUE` producer; `notifications` is the consumer. Web Push is implemented
+  (`franciscosolis-custom-apps-telemetry`, which it both produces to and consumes). For the first: `auth`, `marketplace`
+  and `custom-apps` (its alerts) declare a `NOTIFICATIONS_QUEUE` producer; `notifications` is the
+  consumer. `apps/custom-apps` is also the one Worker with a **Durable Object** (`InstallationSocket`,
+  WebSocket Hibernation), declared as a `durable_objects` binding — not inherited by a named
+  environment, so restated under `env.dev` — with its `migrations` at the top level, which is. Web Push is implemented
   in `apps/notifications` on WebCrypto, without a library that assumes Node.
 - Cloudflare Workers runtime (`nodejs_compat`), no separate build step; Wrangler bundles
   on `dev`/`deploy`.
@@ -234,8 +240,8 @@ Four things about this are worth not re-deriving:
 the binding graph above: migrations, `auth-dev`, the five remaining modules in parallel, then
 `api-dev`. Unlike production (below), the migrations there are strictly ordered before the deploy.
 Its token needs `Workers R2 Storage:Edit` and `Queues:Edit` on top of `D1:Edit` and
-`Workers Scripts:Edit` — `auth` and `marketplace` each bind a bucket, four Workers bind the
-notifications queue, and a deploy that cannot read either fails with an authentication error rather
+`Workers Scripts:Edit` — `auth`, `marketplace` and `custom-apps` each bind a bucket, four Workers
+bind the notifications queue, and a deploy that cannot read either fails with an authentication error rather
 than anything that mentions the permission.
 
 Several pieces of setup live outside this repository and are listed in the README: the
@@ -480,8 +486,13 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   so it is rate limited (`ratelimits` bindings, whose namespace ids
   `scripts/check-environments.mjs` also requires to differ per environment) and every new
   installation is flagged for review. Deploying it adds a route, so the dev deploy token needs
-  `Workers Routes:Edit` too, and `ingest`/`ingest-dev` need proxied DNS records. See
-  `apps/custom-apps/CLAUDE.md`.
+  `Workers Routes:Edit` too, and `ingest`/`ingest-dev` need proxied DNS records. Its remote operation
+  rides on the same split: a device in socket mode holds a WebSocket to a Durable Object named by its
+  installation id, reached only through the ingest route after the token check, and the panel's
+  writes are pushed to it from `waitUntil`; everything else a device must be told travels in the
+  answer to its next heartbeat. Commands are a closed catalogue, screenshots are off until a client's
+  contract allows them, and alerts go to the rule creator through `apps/notifications` like any other
+  producer's events. See `apps/custom-apps/CLAUDE.md`.
 - **Nothing in this repo renders HTML.** `api.franciscosolis.cl` is a backend end to end: every
   Worker answers JSON, a redirect or a binary asset (`apps/api/src/brand.ts`), and nothing else.
   The one place that used to break the rule was `apps/auth`'s built-in sign-in screen; it is gone,

@@ -27,6 +27,25 @@ type AuditEvent =
   | 'installation.updated'
   | 'installation.reviewed'
   | 'installation.revoked'
+  /** Remote operation: every command sent to a client's device, and every withdrawal of one. */
+  | 'command.created'
+  | 'command.cancelled'
+  /** A screenshot removed — a client asking for an image of their customers to be deleted. */
+  | 'screenshot.deleted'
+  | 'flag.created'
+  | 'flag.updated'
+  | 'flag.deleted'
+  /** A new version of the remote config document, schema changes included. */
+  | 'config.published'
+  | 'message.created'
+  | 'message.updated'
+  | 'message.deleted'
+  | 'crash.status_changed'
+  | 'alert_rule.created'
+  | 'alert_rule.updated'
+  | 'alert_rule.deleted'
+  | 'alert.acknowledged'
+  | 'alert.resolved'
 
 type AuditInput = {
   event: AuditEvent

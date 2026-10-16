@@ -4,7 +4,7 @@ import { batchOf, drainTelemetry, sentTelemetry } from '../helpers/telemetry'
 import { createApp, enrollDevice, ingest, ingestJson, panelJson } from '../helpers/api'
 import worker from '@/index'
 import { consumeTelemetry } from '@/services/telemetry'
-import { runScheduled } from '@/services/rollup'
+import { runHourly } from '@/services/rollup'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -184,7 +184,7 @@ describe('heartbeats sent faster than once a minute', () => {
     await env.DB.prepare('INSERT INTO heartbeat_log (installation_id, app_id, received_at, credited_seconds) VALUES (?, ?, ?, 0), (?, ?, ?, 0)')
       .bind(device.installation_id, created.id, Date.now() - 31 * 86_400_000, device.installation_id, created.id, Date.now())
       .run()
-    const result = await runScheduled(env, new Date())
+    const result = await runHourly(env, new Date())
     expect(result.purged.heartbeat_log).toBe(1)
     expect((await panelJson(`/v1/installations/${device.installation_id}/heartbeats`)).body.pagination.total).toBe(1)
   })
@@ -344,17 +344,17 @@ describe('reading telemetry in the panel', () => {
     await env.DB.prepare('INSERT INTO usage_hourly (installation_id, app_id, hour_start, online_seconds, active_seconds, heartbeats) VALUES (?, ?, ?, 3600, 1800, 60)')
       .bind(device.installation_id, created.id, yesterdayNoon / 1000).run()
 
-    const first = await runScheduled(env, now)
+    const first = await runHourly(env, now)
     expect(first.purged.metric_samples).toBe(1)
     expect(first.rolled_up).toEqual({ '2026-10-13': 0, '2026-10-14': 1 })
-    await runScheduled(env, now)
+    await runHourly(env, now)
 
     const { results } = await env.DB.prepare('SELECT day, cpu_avg, cpu_max, online_seconds, active_seconds, samples FROM installation_daily WHERE installation_id = ?').bind(device.installation_id).all()
     expect(results).toEqual([{ day: '2026-10-14', cpu_avg: 50, cpu_max: 60, online_seconds: 3600, active_seconds: 1800, samples: 2 }])
   })
 
   it('do not roll up outside the roll-up hour', async () => {
-    const result = await runScheduled(env, new Date('2026-10-15T15:00:00Z'))
+    const result = await runHourly(env, new Date('2026-10-15T15:00:00Z'))
     expect(result.rolled_up).toEqual({})
   })
 

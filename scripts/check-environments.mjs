@@ -110,6 +110,11 @@ const bindingsOf = (config) => {
   for (const entry of config.vectorize ?? []) bindings.set(`vectorize:${entry.binding}`, entry.index_name)
   for (const entry of config.send_email ?? []) bindings.set(`email:${entry.name}`, entry.name)
   if (config.ai) bindings.set(`ai:${config.ai.binding}`, config.ai.binding)
+  // A Durable Object binding names a class of this same Worker, so it is the same in both halves by
+  // nature; the objects themselves are separate because the two Workers are. What can drift is the
+  // binding being declared at all, and `durable_objects` is one of the keys a named environment does
+  // not inherit.
+  for (const entry of config.durable_objects?.bindings ?? []) bindings.set(`durable:${entry.name}`, entry.class_name)
   // Queues are the one kind with two halves. A producer has a binding name, like everything above.
   // A consumer has none — it is keyed by the queue it drains — so it is keyed here by position,
   // which is enough to say "production consumes a queue and dev consumes a different one" without
@@ -127,7 +132,7 @@ const bindingsOf = (config) => {
 }
 
 /** Bindings whose identifier is the binding name itself, so "they must differ" cannot apply. */
-const SHARED_BY_NATURE = /^(email|ai):/
+const SHARED_BY_NATURE = /^(email|ai|durable):/
 
 const problems = []
 const apps = readdirSync('apps', { withFileTypes: true })

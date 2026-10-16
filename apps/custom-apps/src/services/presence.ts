@@ -9,9 +9,16 @@ import { hourStart, splitByHour } from '@/lib/time'
  * is exactly the case it has to get right.
  */
 
-/** True while the last heartbeat is younger than `offlineAfterIntervals` intervals. */
-const isConnected = (lastSeenAt: Date | null, intervalSeconds: number, now: Date = new Date()) =>
-  lastSeenAt !== null && now.getTime() - lastSeenAt.getTime() <= intervalSeconds * HEARTBEAT.offlineAfterIntervals * 1000
+/**
+ * True while the last heartbeat is younger than `offlineAfterIntervals` intervals — unless a socket
+ * closed cleanly after it. A close the Durable Object saw is known disconnection, so it reads as
+ * offline at once rather than three intervals later; a socket that dropped without a close (a
+ * deploy, a network that vanished) falls back to the interval rule like a device in ping mode.
+ */
+const isConnected = (lastSeenAt: Date | null, intervalSeconds: number, now: Date = new Date(), socketClosedAt: Date | null = null) =>
+  lastSeenAt !== null &&
+  now.getTime() - lastSeenAt.getTime() <= intervalSeconds * HEARTBEAT.offlineAfterIntervals * 1000 &&
+  !(socketClosedAt !== null && socketClosedAt.getTime() >= lastSeenAt.getTime())
 
 /** The state an installation obeys: its own override when set, the app's otherwise. */
 const effectiveState = (appState: string, override: string | null): AppState => {

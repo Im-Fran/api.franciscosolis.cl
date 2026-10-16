@@ -173,6 +173,7 @@ describe('preferences', () => {
         categories: {
           account: { push: true, email: true },
           marketplace: { push: true, email: true },
+          custom_apps: { push: true, email: true },
         },
         locale: 'en',
       },
@@ -192,6 +193,7 @@ describe('preferences', () => {
       categories: {
         account: { push: true, email: true },
         marketplace: { push: false, email: true },
+        custom_apps: { push: true, email: true },
       },
       locale: 'es',
     })

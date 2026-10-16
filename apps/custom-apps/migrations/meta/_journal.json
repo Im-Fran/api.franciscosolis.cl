@@ -15,6 +15,13 @@
       "when": 1792118981355,
       "tag": "0001_heartbeat_log",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792120530620,
+      "tag": "0002_remote_operation",
+      "breakpoints": true
     }
   ]
 }

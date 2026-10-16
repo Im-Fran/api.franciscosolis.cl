@@ -6,7 +6,7 @@ import * as v from 'valibot'
 import { getDb, type Database } from '@/db/client'
 import { apps, appKeys, auditLogs, companies, installations } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { APP_KINDS, APP_MODULES, APP_STATES, HEARTBEAT, INSTALLATION_STATUSES, PRESENCE_MODES, ROLLUP, TELEMETRY } from '@/lib/config'
+import { APP_KINDS, APP_MODULES, APP_STATES, GRACE_MAX_DAYS, INSTALLATION_STATUSES, LOG_LEVELS, PRESENCE_MODES, ROLLUP, TELEMETRY, HEARTBEAT } from '@/lib/config'
 import { randomToken, TOKEN_PREFIXES } from '@/lib/tokens'
 import { zonedDay } from '@/lib/time'
 import {
@@ -26,6 +26,7 @@ import { buildSdk } from '@/services/apps'
 import { auditRow, diff, getActorContext, recordAudit } from '@/services/audit'
 import { appUsage, usageHeatmap } from '@/services/series'
 import { toApp, toAppKey, toAppSummary, toInstallationSummary, type AppRow } from '@/services/serialize'
+import { syncApp } from '@/services/socket'
 import {
   assertId,
   connectedSql,
@@ -72,13 +73,32 @@ const patchSchema = v.object({
   heartbeat_interval_seconds: v.optional(intervalInput),
   operating_hours: v.optional(v.nullable(operatingHoursSchema)),
   modules: v.optional(modulesInput),
+  log_level: v.optional(v.picklist(LOG_LEVELS)),
+  screenshots_enabled: v.optional(v.boolean()),
 })
 
-const stateSchema = v.object({
-  state: v.picklist(APP_STATES),
-  message: optionalText(1000),
-  until: v.optional(v.nullable(dateInput)),
-})
+/**
+ * The kill switch. A grace period needs its end — the countdown the devices show — and a contract
+ * caps it at `GRACE_MAX_DAYS`; when it runs out the cron suspends the app.
+ */
+const stateSchema = v.pipe(
+  v.object({
+    state: v.picklist(APP_STATES),
+    message: optionalText(1000),
+    until: v.optional(v.nullable(dateInput)),
+  }),
+  v.forward(
+    v.check((body) => body.state !== 'grace' || (body.until != null && body.until.getTime() > Date.now()), 'a grace period needs an `until` in the future'),
+    ['until'],
+  ),
+  v.forward(
+    v.check(
+      (body) => body.state !== 'grace' || body.until == null || body.until.getTime() <= Date.now() + GRACE_MAX_DAYS * 86_400_000,
+      `a grace period lasts at most ${GRACE_MAX_DAYS} days`,
+    ),
+    ['until'],
+  ),
+)
 
 /** Installation counts per app, and the company it belongs to, as subqueries on one select. */
 const appSelect = (now: number) => ({
@@ -263,12 +283,16 @@ app.patch(
         ...(body.heartbeat_interval_seconds !== undefined && { heartbeatIntervalSeconds: body.heartbeat_interval_seconds }),
         ...(body.operating_hours !== undefined && { operatingHours: body.operating_hours ? JSON.stringify(body.operating_hours) : null }),
         ...(body.modules !== undefined && { modules: JSON.stringify(body.modules) }),
+        ...(body.log_level !== undefined && { logLevel: body.log_level }),
+        ...(body.screenshots_enabled !== undefined && { screenshotsEnabled: body.screenshots_enabled }),
         updatedBy: actor.actorEmail,
         updatedAt: new Date(),
       })
       .where(eq(apps.id, id))
     const after = await loadApp(db, id, c.env.INGEST_PUBLIC_URL)
     await recordAudit(db, { event: 'app.updated', resourceType: 'app', resourceId: id, ...actor, metadata: diff(before, after) })
+    // Presence settings, modules and the log level are all in what a device is told.
+    c.executionCtx.waitUntil(syncApp(c.env, id))
     return c.json({ code: 200 as const, data: after })
   },
 )
@@ -299,7 +323,7 @@ app.put(
   '/apps/:appId/status',
   describeRoute({
     description:
-      'The kill switch. Every installation reads it on its next heartbeat or `/status`: `active` runs normally, `grace` keeps working with a countdown to `until`, `maintenance` shows a notice until `until`, `suspended` shows `message` and stops. `until` and `message` are cleared when not sent. An installation can override it individually.',
+      `The kill switch. Every installation reads it on its next heartbeat or \`/status\` — at once, if it holds a socket: \`active\` runs normally, \`grace\` keeps working with a countdown to \`until\` (required, at most ${GRACE_MAX_DAYS} days ahead; the app is suspended automatically when it passes), \`maintenance\` shows a notice until \`until\`, \`suspended\` shows \`message\` and stops. \`until\` and \`message\` are cleared when not sent. An installation can override it individually.`,
     tags: ['Apps'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Updated', content: jsonContent(dataSchema(appSchema)) }, 404: { description: 'Not found' }, ...panelErrors },
@@ -326,6 +350,7 @@ app.put(
         after: { state: after.state, message: after.state_message, until: after.state_until },
       },
     })
+    c.executionCtx.waitUntil(syncApp(c.env, id))
     return c.json({ code: 200 as const, data: after })
   },
 )
@@ -491,8 +516,8 @@ app.get(
         : undefined,
       query.connected !== undefined
         ? query.connected
-          ? sql`(${installations.status} = 'active' AND ${installations.lastSeenAt} >= ${Math.floor(now.getTime() / 1000) - appRow.heartbeatIntervalSeconds * HEARTBEAT.offlineAfterIntervals})`
-          : sql`NOT (${installations.status} = 'active' AND ${installations.lastSeenAt} IS NOT NULL AND ${installations.lastSeenAt} >= ${Math.floor(now.getTime() / 1000) - appRow.heartbeatIntervalSeconds * HEARTBEAT.offlineAfterIntervals})`
+          ? sql.raw(connectedSql(Math.floor(now.getTime() / 1000), '"installations"', String(appRow.heartbeatIntervalSeconds)))
+          : sql`NOT ${sql.raw(connectedSql(Math.floor(now.getTime() / 1000), '"installations"', String(appRow.heartbeatIntervalSeconds)))}`
         : undefined,
     ].filter((condition) => condition !== undefined)
     const where = and(...conditions)
