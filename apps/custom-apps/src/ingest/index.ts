@@ -20,6 +20,8 @@ import type { AppRow, InstallationRow } from '@/services/serialize'
 import { ingestUrls } from '@/services/serialize'
 import {
   eventsBodySchema,
+  heartbeatLogStatement,
+  heartbeatSampleStatement,
   metricsBodySchema,
   snapshotSchema,
   withinWindow,
@@ -228,7 +230,7 @@ app.post(
     operationId: 'heartbeat',
     summary: 'Report presence',
     description:
-      'Send every `presence.interval_seconds`. Marks the installation connected (it reads as disconnected after three missed intervals), credits the time since the previous heartbeat to the usage statistics, and keeps the light `snapshot` as the live view. With the `metrics` module on, the snapshot is also stored as a sample. The answer carries the state to obey and the presence settings, which can change without a new release.',
+      'Send every `presence.interval_seconds`. Marks the installation connected (it reads as disconnected after three missed intervals), credits the time since the previous heartbeat to the usage statistics, and keeps the light `snapshot` as the live view. Every heartbeat is kept for audit; with the `metrics` module on, the snapshot also becomes the sample of its minute — the last heartbeat of a minute wins, so sending more often than once a minute adds no points to the charts. The answer carries the state to obey and the presence settings, which can change without a new release.',
     tags: ['Presence'],
     security: [{ bearerAuth: [] }],
     responses: {
@@ -267,23 +269,30 @@ app.post(
       bindings.push(body.app_version, installation.appVersion)
     }
 
-    // The presence update and the hours it is filed under commit together, so the panel never shows
-    // a connected installation with no use recorded for the hour, or the reverse.
-    await c.env.DB.batch([
+    const nowMs = now.getTime()
+    const ip = c.req.header('CF-Connecting-IP') ?? null
+    const statements = [
       c.env.DB.prepare(`UPDATE installations SET ${assignments.join(', ')} WHERE id = ?`).bind(...bindings, installationId),
       ...hourlyStatements(c.env.DB, installationId, appId, credits),
-    ])
-
+      heartbeatLogStatement(c.env.DB, {
+        installationId,
+        appId,
+        receivedAtMs: nowMs,
+        ip,
+        appVersion: body.app_version ?? null,
+        activeSeconds: body.active_seconds ?? null,
+        creditedSeconds: credits.reduce((sum, credit) => sum + credit.onlineSeconds, 0),
+        snapshot: body.snapshot ?? null,
+      }),
+    ]
     if (body.snapshot && modulesOf(appRow).includes('metrics')) {
-      await c.env.TELEMETRY_QUEUE.send({
-        version: 1,
-        kind: 'metrics',
-        installation_id: installationId,
-        app_id: appId,
-        received_at: Math.floor(now.getTime() / 1000),
-        samples: [{ recorded_at: now.getTime(), ...body.snapshot }],
-      } satisfies TelemetryMessage)
+      statements.push(heartbeatSampleStatement(c.env.DB, installationId, appId, nowMs, body.snapshot))
     }
+
+    // One batch, so the presence update, the hours it is filed under, the audit row and the minute's
+    // sample commit together: the panel never shows a connected installation with no use recorded
+    // for the hour, a sample with no heartbeat behind it, or the reverse.
+    await c.env.DB.batch(statements)
 
     return c.json({
       code: 200 as const,

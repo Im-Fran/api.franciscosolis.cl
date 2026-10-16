@@ -202,12 +202,23 @@ const installations = sqliteTable('installations', {
  * platform measures a different subset: a browser reports none of them, a desktop most, and a value
  * a platform cannot measure must read as "not available", never as zero.
  *
- * `(installation_id, recorded_at)` is unique so a redelivered queue batch inserts nothing twice.
+ * Two sources write here, and `source` keeps them apart:
+ *
+ * - `batch`: what a device sends to `POST /metrics`, at whatever resolution it measures.
+ *   `(installation_id, source, recorded_at)` is unique so a redelivered queue batch inserts nothing
+ *   twice.
+ * - `heartbeat`: the snapshot a heartbeat carries, filed under the **start of its minute**. A second
+ *   heartbeat in the same minute overwrites the first instead of adding a row, so the series holds
+ *   one point per minute however often a device sends — what it sent is still all in
+ *   `heartbeat_log`. Network deltas are the exception: they are *added*, since bytes moved in the
+ *   first heartbeat of a minute did not stop counting because a second one arrived.
  */
 const metricSamples = sqliteTable('metric_samples', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   installationId: text('installation_id').notNull(),
   appId: text('app_id').notNull(),
+  /** `batch` or `heartbeat`; see above. */
+  source: text('source').notNull().default('batch'),
   /** Device time of the measurement, unix milliseconds. */
   recordedAt: integer('recorded_at').notNull(),
   receivedAt: integer('received_at', { mode: 'timestamp' }).notNull(),
@@ -224,8 +235,33 @@ const metricSamples = sqliteTable('metric_samples', {
   batteryCharging: integer('battery_charging', { mode: 'boolean' }),
   powerWatts: real('power_watts'),
 }, (table) => [
-  uniqueIndex('metric_samples_installation_time_unique').on(table.installationId, table.recordedAt),
+  uniqueIndex('metric_samples_installation_source_time_unique').on(table.installationId, table.source, table.recordedAt),
+  index('metric_samples_installation_time_idx').on(table.installationId, table.recordedAt),
   index('metric_samples_recorded_idx').on(table.recordedAt),
+])
+
+/**
+ * Every heartbeat as it arrived, kept `TELEMETRY.rawRetentionDays`: the audit record of what a device
+ * reported and when. `metric_samples` only keeps the last heartbeat of each minute, so this is the
+ * one place a device that heartbeats ten times a minute can be seen doing it.
+ */
+const heartbeatLog = sqliteTable('heartbeat_log', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  installationId: text('installation_id').notNull(),
+  appId: text('app_id').notNull(),
+  /** Server time of arrival, unix milliseconds. */
+  receivedAt: integer('received_at').notNull(),
+  ip: text('ip'),
+  appVersion: text('app_version'),
+  /** `active_seconds` as the device reported it, before any capping. */
+  activeSeconds: integer('active_seconds'),
+  /** Seconds this heartbeat credited as online — zero after a gap past the offline threshold. */
+  creditedSeconds: integer('credited_seconds').notNull().default(0),
+  /** The snapshot exactly as sent (after validation), JSON. */
+  snapshot: text('snapshot'),
+}, (table) => [
+  index('heartbeat_log_installation_time_idx').on(table.installationId, table.receivedAt),
+  index('heartbeat_log_received_idx').on(table.receivedAt),
 ])
 
 /** Usage and analytics events (sessions, screens, actions), kept `TELEMETRY.rawRetentionDays`. */
@@ -333,6 +369,7 @@ export {
   companies,
   companyContacts,
   contacts,
+  heartbeatLog,
   installationDaily,
   installations,
   metricSamples,

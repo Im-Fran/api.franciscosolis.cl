@@ -152,6 +152,92 @@ const eventStatement = (db: D1Database, message: Extract<TelemetryMessage, { kin
     event.properties ? JSON.stringify(event.properties) : null,
   )
 
+/** The measurement columns a heartbeat's snapshot fills, gauges first and the two counters last. */
+const GAUGE_COLUMNS = [
+  'cpu_percent',
+  'memory_used_bytes',
+  'memory_total_bytes',
+  'gpu_percent',
+  'disk_used_bytes',
+  'disk_total_bytes',
+  'battery_percent',
+  'battery_charging',
+  'power_watts',
+] as const
+const COUNTER_COLUMNS = ['net_rx_bytes', 'net_tx_bytes'] as const
+
+const UPSERT_HEARTBEAT_SAMPLE = `INSERT INTO metric_samples (installation_id, app_id, source, recorded_at, received_at, ${[...GAUGE_COLUMNS, ...COUNTER_COLUMNS].join(', ')})
+VALUES (?, ?, 'heartbeat', ?, ?, ${[...GAUGE_COLUMNS, ...COUNTER_COLUMNS].map(() => '?').join(', ')})
+ON CONFLICT (installation_id, source, recorded_at) DO UPDATE SET
+  received_at = excluded.received_at,
+  ${GAUGE_COLUMNS.map((column) => `${column} = excluded.${column}`).join(',\n  ')},
+  ${COUNTER_COLUMNS.map((column) => `${column} = CASE WHEN excluded.${column} IS NULL THEN metric_samples.${column} ELSE COALESCE(metric_samples.${column}, 0) + excluded.${column} END`).join(',\n  ')}`
+
+/** Start of the minute containing `ms`, in unix milliseconds. */
+const minuteStart = (ms: number) => ms - (ms % 60_000)
+
+/**
+ * The statement filing a heartbeat's snapshot as the sample of its minute.
+ *
+ * One row per installation per minute, keyed on the minute's start: the first heartbeat of a minute
+ * inserts it, every later one overwrites it, so the chart shows the **last** heartbeat of each minute
+ * however often a device sends. The gauges (CPU, memory, battery…) are replaced — the latest reading
+ * is the truth — while the network counters are *added*, because they are bytes moved since the
+ * previous report and a second heartbeat does not undo the traffic the first one counted.
+ *
+ * Written synchronously with the heartbeat rather than through the queue: "last" has to mean last to
+ * arrive, and a queue does not promise delivery order.
+ */
+const heartbeatSampleStatement = (db: D1Database, installationId: string, appId: string, receivedAtMs: number, snapshot: Snapshot) =>
+  db
+    .prepare(UPSERT_HEARTBEAT_SAMPLE)
+    .bind(
+      installationId,
+      appId,
+      minuteStart(receivedAtMs),
+      Math.floor(receivedAtMs / 1000),
+      snapshot.cpu_percent ?? null,
+      snapshot.memory_used_bytes ?? null,
+      snapshot.memory_total_bytes ?? null,
+      snapshot.gpu_percent ?? null,
+      snapshot.disk_used_bytes ?? null,
+      snapshot.disk_total_bytes ?? null,
+      snapshot.battery_percent ?? null,
+      snapshot.battery_charging === undefined || snapshot.battery_charging === null ? null : snapshot.battery_charging ? 1 : 0,
+      snapshot.power_watts ?? null,
+      snapshot.net_rx_bytes ?? null,
+      snapshot.net_tx_bytes ?? null,
+    )
+
+const INSERT_HEARTBEAT_LOG =
+  'INSERT INTO heartbeat_log (installation_id, app_id, received_at, ip, app_version, active_seconds, credited_seconds, snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+
+type HeartbeatLogEntry = {
+  installationId: string
+  appId: string
+  receivedAtMs: number
+  ip: string | null
+  appVersion: string | null
+  activeSeconds: number | null
+  creditedSeconds: number
+  snapshot: Snapshot | null
+}
+
+/** The audit row for one heartbeat: everything it carried, as it arrived. */
+const heartbeatLogStatement = (db: D1Database, entry: HeartbeatLogEntry) =>
+  db
+    .prepare(INSERT_HEARTBEAT_LOG)
+    .bind(
+      entry.installationId,
+      entry.appId,
+      entry.receivedAtMs,
+      entry.ip,
+      entry.appVersion,
+      entry.activeSeconds,
+      entry.creditedSeconds,
+      entry.snapshot ? JSON.stringify(entry.snapshot) : null,
+    )
+
 /** The D1 statements one message turns into. Unknown shapes turn into none, and are acknowledged. */
 const statementsFor = (db: D1Database, body: unknown): D1PreparedStatement[] => {
   const message = body as Partial<TelemetryMessage> | null
@@ -187,6 +273,9 @@ const consumeTelemetry = async (env: Env, batch: MessageBatch<unknown>) => {
 export {
   consumeTelemetry,
   eventsBodySchema,
+  heartbeatLogStatement,
+  heartbeatSampleStatement,
+  minuteStart,
   metricsBodySchema,
   snapshotSchema,
   withinWindow,

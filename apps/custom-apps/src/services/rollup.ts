@@ -242,6 +242,7 @@ const purgeExpired = async (db: D1Database, now: Date) => {
   return {
     metric_samples: await purgeTable(db, 'metric_samples', 'recorded_at', rawCutoffMs),
     usage_events: await purgeTable(db, 'usage_events', 'occurred_at', rawCutoffMs),
+    heartbeat_log: await purgeTable(db, 'heartbeat_log', 'received_at', rawCutoffMs),
     usage_hourly: await purgeTable(db, 'usage_hourly', 'hour_start', hourlyCutoff),
   }
 }
