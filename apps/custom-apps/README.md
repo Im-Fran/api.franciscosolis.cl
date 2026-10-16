@@ -95,8 +95,8 @@ contracts and the secrets vault build on the same model and are not here yet.
 Beyond a `pnpm install` at the monorepo root, this Worker needs things that live in the Cloudflare
 account and in `apps/auth` rather than in this directory — twice, once per environment:
 
-- A **D1 database**: `franciscosolis_custom_apps` (and `franciscosolis_custom_apps_dev`). Their ids
-  go into `wrangler.jsonc`, replacing the placeholders committed there.
+- A **D1 database**: `franciscosolis_custom_apps` (and `franciscosolis_custom_apps_dev`). Both
+  exist and their ids are in `wrangler.jsonc`; recreating one means replacing its id there.
 - A **queue**: `franciscosolis-custom-apps-telemetry` (and `franciscosolis-custom-apps-telemetry-dev`).
 - A **proxied DNS record** for `ingest` (and `ingest-dev`) in the `franciscosolis.cl` zone, so the
   zone routes have a hostname to match.
@@ -199,9 +199,10 @@ and consumer of the same queue), `ENROLL_IP_LIMITER`, `ENROLL_APP_LIMITER` and `
 ## 🌐 Deployment
 
 ```bash
-wrangler d1 create franciscosolis_custom_apps                # and _dev; ids into wrangler.jsonc
-wrangler queues create franciscosolis-custom-apps-telemetry  # and -dev
-cd apps/custom-apps && pnpm run deploy
+cd apps/custom-apps
+pnpm exec wrangler d1 create franciscosolis_custom_apps                # and _dev; ids into wrangler.jsonc
+pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry  # and -dev
+pnpm run deploy
 ```
 
 The Worker must be deployed as `custom-apps` for the gateway's `CUSTOM_APPS` binding to resolve —

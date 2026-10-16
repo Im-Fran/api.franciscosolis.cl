@@ -495,12 +495,15 @@ node scripts/generate-vapid-keys.mjs | pnpm exec wrangler secret put VAPID_PRIVA
 ```
 
 **The custom-apps database, queue and ingest host.** `apps/custom-apps` owns
-`franciscosolis_custom_apps` and `franciscosolis_custom_apps_dev`, whose ids replace the placeholders
-in `apps/custom-apps/wrangler.jsonc`, and its own telemetry queue, which it both produces to and
-consumes. Its ingest surface is a zone route, so `ingest` and `ingest-dev` need proxied DNS records in
-the `franciscosolis.cl` zone (an `AAAA` to `100::` is enough — the Worker answers before any origin):
+`franciscosolis_custom_apps` and `franciscosolis_custom_apps_dev`, which were created with the commands
+below; their ids are committed in `apps/custom-apps/wrangler.jsonc`, so a new account only needs this
+to recreate them. It also owns its telemetry queue, which it both produces to and consumes. Run them
+from inside an app (`cd apps/custom-apps`): Wrangler is a dependency of each app, not of the root. Its
+ingest surface is a zone route, so `ingest` and `ingest-dev` need proxied DNS records in the
+`franciscosolis.cl` zone (an `AAAA` to `100::` is enough — the Worker answers before any origin):
 
 ```bash
+cd apps/custom-apps
 pnpm exec wrangler d1 create franciscosolis_custom_apps
 pnpm exec wrangler d1 create franciscosolis_custom_apps_dev
 pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry

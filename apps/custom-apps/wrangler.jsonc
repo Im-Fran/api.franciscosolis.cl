@@ -41,7 +41,7 @@
     {
       "binding": "DB",
       "database_name": "franciscosolis_custom_apps",
-      "database_id": "00000000-0000-4000-8000-000000000001",
+      "database_id": "2a6f2d4a-4dce-4e61-83b7-1ee8cb928ca4",
       "migrations_dir": "migrations"
     }
   ],
@@ -147,7 +147,7 @@
         {
           "binding": "DB",
           "database_name": "franciscosolis_custom_apps_dev",
-          "database_id": "00000000-0000-4000-8000-000000000002",
+          "database_id": "f7d7722f-f8e2-4a3d-9cdc-34b08b70b89e",
           "migrations_dir": "migrations"
         }
       ],
