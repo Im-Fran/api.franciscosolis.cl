@@ -4,7 +4,7 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb, type Database } from '@/db/client'
-import { apps, installations, usageEvents } from '@/db/schema'
+import { apps, heartbeatLog, installations, usageEvents } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { APP_STATES, CHANNELS, EVENT_TYPES, ROLLUP, SERIES, TELEMETRY } from '@/lib/config'
 import { parseJsonObject } from '@/lib/json'
@@ -260,6 +260,46 @@ app.get(
         occurred_at: new Date(row.occurredAt).toISOString(),
         received_at: row.receivedAt.toISOString(),
         properties: parseJsonObject(row.properties),
+      })),
+      pagination: { limit, offset, total: Number(total?.count ?? 0) },
+    })
+  },
+)
+
+app.get(
+  '/installations/:installationId/heartbeats',
+  describeRoute({
+    description: `Every heartbeat the installation sent, newest first, exactly as it arrived: when, from which IP, the app version, the seconds of use it reported, the seconds it credited as online, and its snapshot. The audit record behind the charts, which only keep the last heartbeat of each minute. Kept ${TELEMETRY.rawRetentionDays} days.`,
+    tags: ['Telemetry'],
+    security: [{ bearerAuth: [] }],
+    responses: { 200: { description: 'The heartbeats' }, 404: { description: 'Not found' }, ...panelErrors },
+  }),
+  validate('query', v.object({ from: v.optional(dateInput), to: v.optional(dateInput), ...paginationQuery })),
+  async (c) => {
+    const id = assertId(c.req.param('installationId'), 'Installation')
+    const query = c.req.valid('query')
+    const { limit, offset } = page(query)
+    const db = getDb(c.env)
+    await load(db, id)
+    const where = and(
+      eq(heartbeatLog.installationId, id),
+      query.from ? sql`${heartbeatLog.receivedAt} >= ${query.from.getTime()}` : undefined,
+      query.to ? sql`${heartbeatLog.receivedAt} <= ${query.to.getTime()}` : undefined,
+    )
+    const [rows, [total]] = await Promise.all([
+      db.select().from(heartbeatLog).where(where).orderBy(desc(heartbeatLog.receivedAt), desc(heartbeatLog.id)).limit(limit).offset(offset),
+      db.select({ count: sql<number>`COUNT(*)` }).from(heartbeatLog).where(where),
+    ])
+    return c.json({
+      code: 200 as const,
+      data: rows.map((row) => ({
+        id: row.id,
+        received_at: new Date(row.receivedAt).toISOString(),
+        ip: row.ip,
+        app_version: row.appVersion,
+        active_seconds: row.activeSeconds,
+        credited_seconds: row.creditedSeconds,
+        snapshot: parseJsonObject(row.snapshot),
       })),
       pagination: { limit, offset, total: Number(total?.count ?? 0) },
     })

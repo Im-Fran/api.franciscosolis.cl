@@ -76,11 +76,19 @@ contracts, alerts and the secrets vault are later phases and build on this schem
 - **"Connected" is never stored.** It is `last_seen_at >= now - 3 × interval`, in JS
   (`isConnected`) and in SQL (`connectedSql`) — keep the two in step.
 - **The heartbeat writes synchronously, metrics and events through the queue.** Presence must be
-  current the moment the panel reads it, and the heartbeat's installation update and its
-  `usage_hourly` upserts commit in one `DB.batch`. Bulk telemetry goes to the queue so the device is
+  current the moment the panel reads it, and the heartbeat's installation update, its
+  `usage_hourly` upserts, its `heartbeat_log` row and its minute's sample commit in one `DB.batch`. Bulk telemetry goes to the queue so the device is
   answered after validation alone. The consumer's inserts are `OR IGNORE` against natural keys
   (`(installation_id, recorded_at)`, `(installation_id, event_id)`), so redelivery writes nothing
   twice and a failing batch is simply retried. An unknown message shape is acknowledged, not retried.
+- **A heartbeat is logged in full and charted once a minute.** Every heartbeat goes into
+  `heartbeat_log` (the audit record: arrival time, IP, version, reported and credited seconds,
+  snapshot). Its snapshot becomes the `metric_samples` row of its minute, `source = 'heartbeat'`,
+  keyed on the minute's start: later heartbeats in the same minute overwrite the gauges and *add* to
+  the network counters, so a device heartbeating every few seconds still yields one point per
+  minute. This is written synchronously in the heartbeat's batch, not through the queue, because
+  "last" must mean last to arrive. `source` keeps these rows from ever colliding with `POST /metrics`
+  samples (`source = 'batch'`), which stay at whatever resolution the device measured.
 - **A heartbeat credits the gap since the previous one, but only while still connected.** After a
   gap longer than the offline threshold nothing is credited — inventing time would turn every
   reconnect into phantom use. `active_seconds` is capped at the credited time and split across

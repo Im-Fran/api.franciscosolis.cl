@@ -41,7 +41,7 @@ describe('heartbeats', () => {
     expect(totals.beats).toBe(1)
   })
 
-  it('keep the snapshot as the live view, and as a sample when metrics are on', async () => {
+  it('keep the snapshot as the live view, and as the sample of its minute when metrics are on', async () => {
     const created = await createApp()
     const device = await enrollDevice(created.id, created.key.key)
     const snapshot = { cpu_percent: 37.5, memory_used_bytes: 4_000_000_000, memory_total_bytes: 8_000_000_000, battery_percent: null, uptime_seconds: 3600 }
@@ -49,15 +49,21 @@ describe('heartbeats', () => {
 
     const detail = (await panelJson(`/v1/installations/${device.installation_id}`)).body.data
     expect(detail.last_snapshot).toMatchObject(snapshot)
-    expect(sentTelemetry()).toHaveLength(1)
-    expect(sentTelemetry()[0]).toMatchObject({ kind: 'metrics', installation_id: device.installation_id, samples: [{ cpu_percent: 37.5 }] })
+    // Written with the heartbeat itself, not through the queue: "last of the minute" needs arrival order.
+    expect(sentTelemetry()).toEqual([])
+    const sample = await env.DB.prepare('SELECT source, recorded_at, cpu_percent FROM metric_samples WHERE installation_id = ?').bind(device.installation_id).first<Record<string, unknown>>()
+    expect(sample).toMatchObject({ source: 'heartbeat', cpu_percent: 37.5 })
+    expect(Number(sample!.recorded_at) % 60_000).toBe(0)
   })
 
-  it('do not queue a sample when the metrics module is off', async () => {
+  it('store no sample when the metrics module is off, but still log the heartbeat', async () => {
     const created = await createApp({ modules: [] })
     const device = await enrollDevice(created.id, created.key.key)
     await ingest(created.id, '/heartbeat', { token: device.access_token, body: { snapshot: { cpu_percent: 10 } } })
-    expect(sentTelemetry()).toEqual([])
+    const samples = await env.DB.prepare('SELECT COUNT(*) AS n FROM metric_samples WHERE installation_id = ?').bind(device.installation_id).first<{ n: number }>()
+    expect(samples!.n).toBe(0)
+    const logged = await env.DB.prepare('SELECT COUNT(*) AS n FROM heartbeat_log WHERE installation_id = ?').bind(device.installation_id).first<{ n: number }>()
+    expect(logged!.n).toBe(1)
   })
 
   it('record a new version and remember the previous one', async () => {
@@ -95,6 +101,92 @@ describe('heartbeats', () => {
     const device = await enrollDevice(created.id, created.key.key)
     await ingest(created.id, '/heartbeat', { token: device.access_token, body: { snapshot: { cpu_percent: 103.4 } } })
     expect((await panelJson(`/v1/installations/${device.installation_id}`)).body.data.last_snapshot.cpu_percent).toBe(100)
+  })
+})
+
+describe('heartbeats sent faster than once a minute', () => {
+  const beat = (appId: string, token: string, body: Record<string, unknown>) => ingest(appId, '/heartbeat', { token, body })
+
+  it('keep one sample per minute — the last heartbeat — and log every one of them', async () => {
+    const created = await createApp()
+    const device = await enrollDevice(created.id, created.key.key)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-16T12:00:05Z'))
+    await beat(created.id, device.access_token, { active_seconds: 5, snapshot: { cpu_percent: 10, battery_percent: 90, net_rx_bytes: 100 } })
+    vi.setSystemTime(new Date('2026-10-16T12:00:25Z'))
+    await beat(created.id, device.access_token, { active_seconds: 20, snapshot: { cpu_percent: 20, battery_percent: 89, net_rx_bytes: 200 } })
+    vi.setSystemTime(new Date('2026-10-16T12:00:55Z'))
+    await beat(created.id, device.access_token, { active_seconds: 30, snapshot: { cpu_percent: 30, battery_percent: 88, net_rx_bytes: 300 } })
+    vi.setSystemTime(new Date('2026-10-16T12:01:10Z'))
+    await beat(created.id, device.access_token, { active_seconds: 15, snapshot: { cpu_percent: 70, net_rx_bytes: 50 } })
+    vi.useRealTimers()
+
+    const { results } = await env.DB.prepare(
+      'SELECT recorded_at, cpu_percent, battery_percent, net_rx_bytes FROM metric_samples WHERE installation_id = ? ORDER BY recorded_at',
+    ).bind(device.installation_id).all()
+    expect(results).toEqual([
+      // Gauges are the minute's last reading; the network counter adds up everything moved in it.
+      { recorded_at: Date.parse('2026-10-16T12:00:00Z'), cpu_percent: 30, battery_percent: 88, net_rx_bytes: 600 },
+      // A gauge the last heartbeat did not report is N/A for its minute, not carried over.
+      { recorded_at: Date.parse('2026-10-16T12:01:00Z'), cpu_percent: 70, battery_percent: null, net_rx_bytes: 50 },
+    ])
+
+    const { body } = await panelJson(`/v1/installations/${device.installation_id}/heartbeats`)
+    expect(body.pagination.total).toBe(4)
+    expect(body.data.map((row: any) => [row.received_at, row.active_seconds, row.snapshot.cpu_percent])).toEqual([
+      ['2026-10-16T12:01:10.000Z', 15, 70],
+      ['2026-10-16T12:00:55.000Z', 30, 30],
+      ['2026-10-16T12:00:25.000Z', 20, 20],
+      ['2026-10-16T12:00:05.000Z', 5, 10],
+    ])
+    // Each heartbeat after the first credited the gap since the previous one.
+    expect(body.data.map((row: any) => row.credited_seconds)).toEqual([15, 30, 20, expect.any(Number)])
+    expect(body.data[0].ip).toMatch(/^198\.51\.100\./)
+  })
+
+  it('chart one point per minute however often a device sends', async () => {
+    const created = await createApp({ heartbeat_interval_seconds: 15 })
+    const device = await enrollDevice(created.id, created.key.key)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    for (let second = 0; second < 180; second += 10) {
+      vi.setSystemTime(new Date(Date.parse('2026-10-16T12:00:00Z') + second * 1000))
+      await beat(created.id, device.access_token, { snapshot: { cpu_percent: second / 2 } })
+    }
+    vi.setSystemTime(new Date('2026-10-16T12:05:00Z'))
+    const { body } = await panelJson(`/v1/installations/${device.installation_id}/metrics?from=2026-10-16T11:59:00Z&to=2026-10-16T12:04:00Z&points=1000`)
+    vi.useRealTimers()
+    expect(body.data.points.map((point: any) => [point.t, point.cpu_percent, point.samples])).toEqual([
+      ['2026-10-16T12:00:00.000Z', 25, 1],
+      ['2026-10-16T12:01:00.000Z', 55, 1],
+      ['2026-10-16T12:02:00.000Z', 85, 1],
+    ])
+    expect((await panelJson(`/v1/installations/${device.installation_id}/heartbeats?limit=1`)).body.pagination.total).toBe(18)
+  })
+
+  it('never overwrite a batch sample that happens to fall on the same minute boundary', async () => {
+    const created = await createApp()
+    const device = await enrollDevice(created.id, created.key.key)
+    const minute = Math.floor(Date.now() / 60_000) * 60_000
+    await consumeTelemetry(env, batchOf([
+      { version: 1, kind: 'metrics', installation_id: device.installation_id, app_id: created.id, received_at: 1, samples: [{ recorded_at: minute, cpu_percent: 5 }] },
+    ]))
+    await beat(created.id, device.access_token, { snapshot: { cpu_percent: 95 } })
+    const { results } = await env.DB.prepare('SELECT source, cpu_percent FROM metric_samples WHERE installation_id = ? ORDER BY source').bind(device.installation_id).all()
+    expect(results).toEqual([
+      { source: 'batch', cpu_percent: 5 },
+      { source: 'heartbeat', cpu_percent: 95 },
+    ])
+  })
+
+  it('is purged with the rest of the raw telemetry', async () => {
+    const created = await createApp()
+    const device = await enrollDevice(created.id, created.key.key)
+    await env.DB.prepare('INSERT INTO heartbeat_log (installation_id, app_id, received_at, credited_seconds) VALUES (?, ?, ?, 0), (?, ?, ?, 0)')
+      .bind(device.installation_id, created.id, Date.now() - 31 * 86_400_000, device.installation_id, created.id, Date.now())
+      .run()
+    const result = await runScheduled(env, new Date())
+    expect(result.purged.heartbeat_log).toBe(1)
+    expect((await panelJson(`/v1/installations/${device.installation_id}/heartbeats`)).body.pagination.total).toBe(1)
   })
 })
 

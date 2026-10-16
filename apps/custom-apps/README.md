@@ -58,6 +58,10 @@ contracts and the secrets vault build on the same model and are not here yet.
   none of the system ones and a desktop most; a value a platform cannot measure is never a zero.
   Metrics and usage events go through a Cloudflare Queue to D1, with natural keys that make a
   redelivered batch insert nothing twice.
+- **Every heartbeat audited, one point per minute charted** — each heartbeat is kept as it arrived
+  in `heartbeat_log`, while only the last one of each minute becomes a metric sample (network
+  counters are summed across the minute). A device that heartbeats every few seconds leaves a full
+  trail and still draws one point a minute.
 - **Thirty days raw, the summary forever** — an hourly cron purges raw samples and events past
   retention, and at 03:00 Santiago time rolls each installation's day into averages, maxima,
   95th percentiles, network totals and hours online and in use. A roll-up recomputes its day rather
@@ -153,6 +157,7 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `GET` / `PATCH` | `/v1/installations/:installationId` | Live view; alias, channel, per-installation state override |
 | `POST` | `/v1/installations/:installationId/review` · `/revoke` | Confirm a new device; revoke one for good |
 | `GET` | `/v1/installations/:installationId/metrics` · `/metrics/daily` · `/events` | Downsampled series, daily roll-up, usage events |
+| `GET` | `/v1/installations/:installationId/heartbeats` | Every heartbeat as it arrived (`?from`, `?to`), newest first |
 | `GET` | `/v1/audit-log` | `?event` (a trailing `.` matches a family), `?resource_type`, `?resource_id`, `?actor`, `?from`, `?to` |
 
 The full, always-current description is the OpenAPI spec at
@@ -170,7 +175,7 @@ by decision: each integrates the routes it needs from its app's own `openapi.jso
 | `GET` | `/openapi.json` · `/sdk.js` | The app's own documents; public |
 | `POST` | `/enroll` | `app_key`, `device_id`, `platform` and what the device knows about itself → tokens |
 | `POST` | `/token/refresh` | Rotate both tokens; on a 401, enroll again with the same `device_id` |
-| `POST` | `/heartbeat` | Every `presence.interval_seconds`: `active_seconds`, `app_version`, a light `snapshot` |
+| `POST` | `/heartbeat` | Every `presence.interval_seconds`: `active_seconds`, `app_version`, a light `snapshot`. Logged in full; the last of each minute is charted |
 | `GET` | `/status` | The state to obey, read on start-up |
 | `POST` | `/metrics` | Up to 100 samples (module `metrics`) |
 | `POST` | `/events` | Up to 100 usage events (module `events`) |

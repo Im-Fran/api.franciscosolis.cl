@@ -8,6 +8,13 @@
       "when": 1792042740939,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792118981355,
+      "tag": "0001_heartbeat_log",
+      "breakpoints": true
     }
   ]
 }
