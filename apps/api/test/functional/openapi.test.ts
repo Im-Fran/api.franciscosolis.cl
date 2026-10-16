@@ -64,6 +64,8 @@ describe('GET /openapi.json', () => {
       '/auth/thing',
       '/cms',
       '/cms/thing',
+      '/custom-apps',
+      '/custom-apps/thing',
       '/landing',
       '/landing/thing',
       '/marketplace',
@@ -76,7 +78,7 @@ describe('GET /openapi.json', () => {
   it('keeps each module operation attached to the module it came from', async () => {
     const { paths } = await documentFrom(await gateway('/openapi.json'))
 
-    for (const module of ['landing', 'auth', 'cms', 'marketplace', 'notifications']) {
+    for (const module of ['landing', 'auth', 'cms', 'marketplace', 'notifications', 'custom-apps']) {
       expect(paths[`/${module}`]?.get?.summary).toBe(`${module} root`)
       expect(paths[`/${module}/thing`]?.get?.summary).toBe(`${module} thing`)
     }
@@ -85,7 +87,7 @@ describe('GET /openapi.json', () => {
   it('collapses each module root onto the bare prefix', async () => {
     const { paths } = await documentFrom(await gateway('/openapi.json'))
 
-    for (const module of ['landing', 'auth', 'cms', 'marketplace', 'notifications']) {
+    for (const module of ['landing', 'auth', 'cms', 'marketplace', 'notifications', 'custom-apps']) {
       expect(paths).not.toHaveProperty([`/${module}/`])
     }
   })
@@ -109,7 +111,7 @@ describe('GET /openapi.json', () => {
     const names = Object.keys(components.schemas)
 
     expect(names).toHaveLength(1)
-    expect(['landingSchema', 'authSchema', 'cmsSchema', 'marketplaceSchema', 'supportSchema', 'notificationsSchema']).toContain(names[0])
+    expect(['landingSchema', 'authSchema', 'cmsSchema', 'marketplaceSchema', 'supportSchema', 'notificationsSchema', 'custom-appsSchema']).toContain(names[0])
   })
 })
 
@@ -142,10 +144,10 @@ describe('GET /<module>/openapi.json', () => {
   })
 
   it('keeps every module schema, unlike the merged document that collapses them', async () => {
-    const perModule = await Promise.all(['landing', 'auth', 'cms', 'marketplace', 'notifications'].map(async (module) =>
+    const perModule = await Promise.all(['landing', 'auth', 'cms', 'marketplace', 'notifications', 'custom-apps'].map(async (module) =>
       Object.keys((await documentFrom(await gateway(`/${module}/openapi.json`))).components.schemas)))
 
-    expect(perModule).toEqual([['landingSchema'], ['authSchema'], ['cmsSchema'], ['marketplaceSchema'], ['notificationsSchema']])
+    expect(perModule).toEqual([['landingSchema'], ['authSchema'], ['cmsSchema'], ['marketplaceSchema'], ['notificationsSchema'], ['custom-appsSchema']])
   })
 })
 
@@ -159,8 +161,8 @@ describe('GET /openapi.json with a module unavailable', () => {
     expect(response.status).toBe(200)
     const { paths } = await documentFrom(response)
     expect(Object.keys(paths).sort()).toEqual([
-      '/', '/auth', '/auth/thing', '/cms', '/cms/thing', '/marketplace', '/marketplace/thing', '/notifications',
-      '/notifications/thing',
+      '/', '/auth', '/auth/thing', '/cms', '/cms/thing', '/custom-apps', '/custom-apps/thing', '/marketplace',
+      '/marketplace/thing', '/notifications', '/notifications/thing',
     ])
   })
 
@@ -189,7 +191,7 @@ describe('GET /openapi.json with a module unavailable', () => {
   it('still answers with the gateway own routes when every module is down', async () => {
     const down = () => fetcher(() => Promise.reject(new Error('down')))
     const response = await gatewayWithBindings(
-      { LANDING: down(), AUTH: down(), CMS: down(), MARKETPLACE: down(), NOTIFICATIONS: down() },
+      { LANDING: down(), AUTH: down(), CMS: down(), MARKETPLACE: down(), NOTIFICATIONS: down(), CUSTOM_APPS: down() },
       '/openapi.json',
     )
 
@@ -213,11 +215,12 @@ describe('GET /openapi.json with a module unavailable', () => {
         CMS: recording('cms'),
         MARKETPLACE: recording('marketplace'),
         NOTIFICATIONS: recording('notifications'),
+        CUSTOM_APPS: recording('custom-apps'),
       },
       '/openapi.json?ignored=1',
     )
 
     expect(response.status).toBe(200)
-    expect(asked).toEqual(Array(5).fill('/openapi.json'))
+    expect(asked).toEqual(Array(6).fill('/openapi.json'))
   })
 })

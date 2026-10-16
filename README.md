@@ -16,8 +16,8 @@
 This repository holds the backend that powers **franciscosolis.cl**: a public-facing API
 worker (`apps/api`) that fronts a set of internal Cloudflare Workers — the landing site's
 own API (`apps/landing`), the centralized authentication service (`apps/auth`), the
-content management service (`apps/cms`), the marketplace (`apps/marketplace`) and the notification
-centre (`apps/notifications`). The workers talk to each other directly through Cloudflare **service bindings** — no HTTP
+content management service (`apps/cms`), the marketplace (`apps/marketplace`), the notification
+centre (`apps/notifications`) and the panel behind the apps built for clients (`apps/custom-apps`). The workers talk to each other directly through Cloudflare **service bindings** — no HTTP
 round-trip over the public internet — and the root API transparently proxies and merges the
 OpenAPI specs of every internal module it exposes. The one exception is how the other Workers tell
 `apps/notifications` that something happened: they publish onto a **Cloudflare Queue**, for the
@@ -44,9 +44,11 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 ## ✨ Features
 
 - **Single public entrypoint, multiple internal Workers** — `apps/api` proxies `/landing/*`,
-  `/auth/*`, `/cms/*`, `/marketplace/*` and `/notifications/*` to the `landing`, `auth`, `cms`,
-  `marketplace` and `notifications` Workers via Cloudflare service bindings (`LANDING`, `AUTH`,
-  `CMS`, `MARKETPLACE`, `NOTIFICATIONS`), keeping internal services off the public internet.
+  `/auth/*`, `/cms/*`, `/marketplace/*`, `/notifications/*` and `/custom-apps/*` to the `landing`,
+  `auth`, `cms`, `marketplace`, `notifications` and `custom-apps` Workers via Cloudflare service
+  bindings (`LANDING`, `AUTH`, `CMS`, `MARKETPLACE`, `NOTIFICATIONS`, `CUSTOM_APPS`), keeping
+  internal services off the public internet. The one deliberate exception is `custom-apps`' ingest
+  surface, below.
 - **Centralized authentication** — `apps/auth` implements an OAuth 2.0 authorization code
   flow with PKCE over two providers (magic link by email, Google OAuth 2.0), backed by a D1
   database of users, identities, applications, roles, permissions, invitations and sessions.
@@ -112,6 +114,15 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   the same thing twice. The account-access notice is the one that moved: `auth` no longer emails it
   directly, and only falls back to doing so when the queue refuses the event — a security notice must
   never be lost to an outage.
+- **Custom apps** — [`apps/custom-apps`](apps/custom-apps/README.md) keeps the apps built to order
+  for clients running after they ship: a small CRM (companies with a validated RUT, contacts with
+  roles), the apps and their public keys, every installation (a POS, a kiosk, a browser), presence,
+  telemetry kept 30 days raw and summarised daily forever, a usage heatmap to plan maintenance on,
+  and a kill switch every installation obeys. The panel API sits behind the gateway at
+  `/custom-apps/*`, for one account holding `custom-apps:admin`; the client apps report to
+  `ingest.franciscosolis.cl/custom-apps/v1/<appId>`, a route of its own straight to the Worker, which
+  tells the two apart by hostname. Enrollment is auto-approved for anybody holding an app's public
+  key, so it is rate limited and every new installation is flagged for review.
 - **Shared email templates** — every message any of these Workers sends is a react-email component in
   `packages/emails`, rendered to an HTML + plain-text pair at send time. Values are escaped by
   construction, the text alternative is derived from the HTML so the two cannot drift, and the
@@ -158,9 +169,9 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
 | Runtime | Cloudflare Workers (`nodejs_compat`) |
 | Framework | [Hono](https://hono.dev) + [hono-openapi](https://www.npmjs.com/package/hono-openapi) |
 | Validation | [valibot](https://valibot.dev) via `@hono/standard-validator` |
-| Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth`, `apps/cms`, `apps/marketplace`, `apps/notifications`) |
+| Database | Cloudflare D1 + [Drizzle ORM](https://orm.drizzle.team) (`apps/auth`, `apps/cms`, `apps/marketplace`, `apps/notifications`, `apps/custom-apps`) |
 | Email | [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/) (`apps/auth`, `apps/cms`, `apps/marketplace`, `apps/notifications`) |
-| Events | [Cloudflare Queues](https://developers.cloudflare.com/queues/) — `auth` and `marketplace` produce, `notifications` consumes |
+| Events | [Cloudflare Queues](https://developers.cloudflare.com/queues/) — `auth` and `marketplace` produce, `notifications` consumes; `custom-apps` both ends of its telemetry queue |
 | Push | Web Push with VAPID (`apps/notifications`) |
 | Email templates | [react-email](https://react.email) in the shared `@franciscosolis/emails` package |
 | Machine translation | [Workers AI](https://developers.cloudflare.com/workers-ai/) behind the shared `@franciscosolis/translate` package (`apps/cms`, `apps/marketplace`) |
@@ -253,6 +264,9 @@ This starts:
 - `cms` on `http://localhost:8790` (inspector on port `9232`)
 - `marketplace` on `http://localhost:8794` (inspector on port `9235`)
 - `notifications` on `http://localhost:8795` (inspector on port `9236`)
+- `custom-apps` on `http://localhost:8796` (inspector on port `9237`); its ingest surface answers on
+  `http://127.0.0.1:8796/custom-apps/v1/<appId>` with the `.dev.vars.example` values, because it is
+  chosen by hostname
 
 The notifications queue is simulated per `wrangler dev` process, and the producers and the consumer
 each run their own, so an event published by a local `auth` is not something to count on reaching a
@@ -295,18 +309,19 @@ Notes on the setup, per app:
 
 | App | What the harness provides |
 |-----|---------------------------|
-| `api` | The `landing`, `auth`, `cms`, `marketplace` and `notifications` Workers are booted as auxiliary Miniflare Workers (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`MARKETPLACE`/`NOTIFICATIONS` are genuine service bindings under test |
+| `api` | The `landing`, `auth`, `cms`, `marketplace`, `notifications` and `custom-apps` Workers are booted as auxiliary Miniflare Workers (`apps/api/test/stubs.ts`), so `LANDING`/`AUTH`/`CMS`/`MARKETPLACE`/`NOTIFICATIONS`/`CUSTOM_APPS` are genuine service bindings under test |
 | `landing` | Dummy `GH_TOKEN` and `BCCH_API_TOKEN`; every GitHub call is mocked at the `axios` module and every Banco Central de Chile call through a stubbed global `fetch` |
 | `auth` | A live D1 database with `migrations/` applied per test file, plus a fixed test-only Ed25519 signing key |
 | `cms` | A live D1 database with `migrations/` applied per test file; `AUTH_JWKS_URL` points at an unroutable host so a JWKS fetch that escapes its stub fails loudly |
 | `marketplace` | The same as `cms`. Its JWKS-cache tests live in a file of their own, because the cache is per isolate and one warm fetch would make every later stub go unasked |
+| `custom-apps` | A live D1 database with `migrations/` applied per test file, Miniflare's real rate limiters, and the telemetry queue replaced by a capture the tests hand to the consumer explicitly |
 
 The two producers (`auth`, `marketplace`) keep `NOTIFICATIONS_QUEUE` declared under
 test — Miniflare simulates a queue producer with no account behind it — and replace it by assignment
 wherever a test asserts on what was published (`test/helpers/queue.ts` in each), the same way the
 suites replace `EMAIL`.
 
-Because `auth`, `cms`, `marketplace` and `notifications` apply their real `migrations/` directory to each test file's
+Because `auth`, `cms`, `marketplace`, `notifications` and `custom-apps` apply their real `migrations/` directory to each test file's
 isolated database, a migration that stops applying cleanly fails the test run rather than surfacing at
 deploy time.
 
@@ -329,7 +344,7 @@ a missing binding or code that does not bundle for the Workers runtime.
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request, on pushes to
 `dev`, and on demand.
 
-It runs **one job per app**, so `api`, `landing`, `auth`, `cms`, `marketplace` and `notifications` each report as an
+It runs **one job per app**, so `api`, `landing`, `auth`, `cms`, `marketplace`, `notifications` and `custom-apps` each report as an
 independent check, plus a small `emails` job that typechecks the shared template package. `fail-fast` is disabled: a failure in one app never cancels or hides the others, and the
 check that goes red points straight at the Worker that broke. Each job does the same three things
 for its own app:
@@ -351,11 +366,12 @@ There are two full stacks of these Workers on the account, and they share nothin
 | | Production | Development |
 |---|---|---|
 | Gateway | `api` → `api.franciscosolis.cl` | `api-dev` → `api-dev.franciscosolis.cl` |
-| Modules | `landing`, `auth`, `cms`, `marketplace`, `notifications` | `landing-dev`, `auth-dev`, `cms-dev`, `marketplace-dev`, `notifications-dev` |
+| Ingest (client apps) | `custom-apps` → `ingest.franciscosolis.cl/custom-apps/*` | `custom-apps-dev` → `ingest-dev.franciscosolis.cl/custom-apps/*` |
+| Modules | `landing`, `auth`, `cms`, `marketplace`, `notifications`, `custom-apps` | `landing-dev`, `auth-dev`, `cms-dev`, `marketplace-dev`, `notifications-dev`, `custom-apps-dev` |
 | Front-end | `franciscosolis` → `franciscosolis.cl` | `franciscosolis-dev` → `dev.franciscosolis.cl` |
-| Databases | `franciscosolis_auth`, `_cms`, `_marketplace`, `_notifications` | the same four with a `_dev` suffix |
+| Databases | `franciscosolis_auth`, `_cms`, `_marketplace`, `_notifications`, `_custom_apps` | the same five with a `_dev` suffix |
 | Buckets | `franciscosolis-avatars`, `franciscosolis-app-releases` | the same two with a `-dev` suffix |
-| Queue | `franciscosolis-notifications` | `franciscosolis-notifications-dev` |
+| Queues | `franciscosolis-notifications`, `franciscosolis-custom-apps-telemetry` | the same two with a `-dev` suffix |
 | Deployed by | Cloudflare's Git integration (dashboard) | `.github/workflows/deploy-dev.yml` |
 
 The `-dev` suffix is not typed anywhere: each app declares a named Wrangler environment called
@@ -377,6 +393,7 @@ cd ../landing   && pnpm run deploy:dev
 cd ../cms       && pnpm run deploy:dev
 cd ../marketplace && pnpm run deploy:dev
 cd ../notifications && pnpm run deploy:dev
+cd ../custom-apps && pnpm run deploy:dev
 cd ../api       && pnpm run deploy:dev
 ```
 
@@ -477,8 +494,25 @@ node scripts/generate-vapid-keys.mjs | pnpm exec wrangler secret put VAPID_PRIVA
 node scripts/generate-vapid-keys.mjs | pnpm exec wrangler secret put VAPID_PRIVATE_KEY --env dev  # a different pair
 ```
 
+**The custom-apps database, queue and ingest host.** `apps/custom-apps` owns
+`franciscosolis_custom_apps` and `franciscosolis_custom_apps_dev`, which were created with the commands
+below; their ids are committed in `apps/custom-apps/wrangler.jsonc`, so a new account only needs this
+to recreate them. It also owns its telemetry queue, which it both produces to and consumes. Run them
+from inside an app (`cd apps/custom-apps`): Wrangler is a dependency of each app, not of the root. Its
+ingest surface is a zone route, so `ingest` and `ingest-dev` need proxied DNS records in the
+`franciscosolis.cl` zone (an `AAAA` to `100::` is enough — the Worker answers before any origin):
+
+```bash
+cd apps/custom-apps
+pnpm exec wrangler d1 create franciscosolis_custom_apps
+pnpm exec wrangler d1 create franciscosolis_custom_apps_dev
+pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry
+pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry-dev
+```
+
 The `CLOUDFLARE_API_TOKEN` behind `deploy-dev.yml` also needs **Queues:Edit** on top of `D1:Edit`,
-`Workers Scripts:Edit` and `Workers R2 Storage:Edit`: it deploys three Workers bound to the queue.
+`Workers Scripts:Edit` and `Workers R2 Storage:Edit` — it deploys four Workers bound to a queue — and
+**Workers Routes:Edit**, for the ingest route `custom-apps-dev` claims.
 
 **Client applications.** An OAuth client is a row in the auth database, and the development stack
 has its own, so nothing registered for `franciscosolis.cl` exists on `api-dev`. Register them
@@ -493,7 +527,14 @@ pnpm run applications -- create franciscosolis-cms --dev --remote \
   --name "CMS (dev)" --redirect-uri https://dev.franciscosolis.cl/cms/callback
 pnpm run applications -- create franciscosolis-marketplace --dev --remote \
   --name "Marketplace (dev)" --redirect-uri https://dev.franciscosolis.cl/marketplace/callback
+# Registered by 0013_custom_apps_application.sql with production's callback; add the dev one.
+pnpm run applications -- update franciscosolis-custom-apps --dev --remote \
+  --add-redirect-uri https://dev.franciscosolis.cl/custom-apps/callback
 ```
+
+`apps/custom-apps` checks a permission too, `custom-apps:admin`, registered by the same migration
+with an application-scoped `custom-apps-admin` role. The global `admin` role carries it; otherwise
+grant that role to the panel's owner in each environment.
 
 `apps/marketplace` also needs a **permission**, not just an application: its editorial half checks
 `marketplace:editor` on top of the email domain, so grant it to the editorial accounts in each
@@ -564,12 +605,14 @@ cd apps/auth && pnpm run deploy
 cd apps/cms && pnpm run deploy
 cd apps/marketplace && pnpm run deploy
 cd apps/notifications && pnpm run deploy
+cd apps/custom-apps && pnpm run deploy
 ```
 
 `apps/api/wrangler.jsonc` binds the custom domain `api.franciscosolis.cl` (zone
-`franciscosolis.cl`) plus the `LANDING`, `AUTH`, `CMS`, `MARKETPLACE` and `NOTIFICATIONS`
-service bindings, so those Workers must be deployed under exactly the names `landing`, `auth`, `cms`,
-`marketplace` and `notifications` for the bindings to resolve. The
+`franciscosolis.cl`) plus the `LANDING`, `AUTH`, `CMS`, `MARKETPLACE`, `NOTIFICATIONS` and
+`CUSTOM_APPS` service bindings, so those Workers must be deployed under exactly the names `landing`,
+`auth`, `cms`, `marketplace`, `notifications` and `custom-apps` for the bindings to resolve — and
+`custom-apps` therefore has to exist before the gateway that binds it is built. The
 `franciscosolis-notifications` queue has to exist before `auth`, `marketplace` or `notifications` is
 first deployed.
 
@@ -602,11 +645,11 @@ cd apps/notifications
 pnpm exec wrangler secret put VAPID_PRIVATE_KEY
 ```
 
-`apps/cms` needs no secrets at all.
+`apps/cms` and `apps/custom-apps` need no secrets at all.
 
 ### Database migrations
 
-The four stateful Workers — `auth`, `cms`, `marketplace` and `notifications` — own a D1 database each, and their migrations are
+The five stateful Workers — `auth`, `cms`, `marketplace`, `notifications` and `custom-apps` — own a D1 database each, and their migrations are
 applied by the **`Migrate` workflow** (`.github/workflows/migrate.yml`), not by hand. It runs on a
 push to `dev` that touches `apps/*/migrations/**`, one job per database, and can also be started by
 hand from the Actions tab — applying is idempotent, so a run against a database that is already
@@ -650,7 +693,7 @@ pnpm run cf-typegen
 
 | File | Purpose |
 |------|---------|
-| `apps/api/wrangler.jsonc` | Routes, custom domain, `LANDING`, `AUTH`, `CMS`, `MARKETPLACE` and `NOTIFICATIONS` service bindings, observability sampling |
+| `apps/api/wrangler.jsonc` | Routes, custom domain, `LANDING`, `AUTH`, `CMS`, `MARKETPLACE`, `NOTIFICATIONS` and `CUSTOM_APPS` service bindings, observability sampling |
 | `apps/landing/wrangler.jsonc` | Worker name/config for the `landing` service |
 | `apps/auth/wrangler.jsonc` | Worker name/config for the `auth` service, D1 binding, email sending binding, notifications queue producer, public URL and issuer vars |
 | `apps/auth/migrations/` | D1 migrations for `franciscosolis_auth` |
@@ -660,6 +703,8 @@ pnpm run cf-typegen
 | `apps/marketplace/migrations/` | D1 migrations for `franciscosolis_marketplace` |
 | `apps/notifications/wrangler.jsonc` | Worker name/config for the `notifications` service: D1, email sending, `AUTH` binding, the queue consumer, the hourly digest cron, VAPID and site vars |
 | `apps/notifications/migrations/` | D1 migrations for `franciscosolis_notifications` |
+| `apps/custom-apps/wrangler.jsonc` | Worker name/config for the `custom-apps` service: the ingest zone route, D1, the telemetry queue (producer and consumer), the three rate limiters, `AUTH` binding, the hourly roll-up cron |
+| `apps/custom-apps/migrations/` | D1 migrations for `franciscosolis_custom_apps` |
 | `pnpm-workspace.yaml` | Workspace packages (`apps/*`, `packages/*`) and shared dependency catalog |
 | `apps/*/vitest.config.ts` | Test runtime for that app — bindings, D1 migrations and service-binding stubs |
 | `.github/workflows/ci.yml` | CI pipeline: typecheck, test and dry-run build, one independent check per app |

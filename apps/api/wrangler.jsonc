@@ -41,6 +41,10 @@
     {
       "binding": "NOTIFICATIONS",
       "service": "notifications"
+    },
+    {
+      "binding": "CUSTOM_APPS",
+      "service": "custom-apps"
     }
   ],
   "observability": {
@@ -93,6 +97,10 @@
         {
           "binding": "NOTIFICATIONS",
           "service": "notifications-dev"
+        },
+        {
+          "binding": "CUSTOM_APPS",
+          "service": "custom-apps-dev"
         }
       ]
     }

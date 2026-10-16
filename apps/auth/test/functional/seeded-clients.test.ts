@@ -105,6 +105,41 @@ describe('the client applications the front-end signs in with', () => {
     expect(granted.map((row) => row.slug)).not.toContain('support:admin')
   })
 
+  it('registers the custom-apps panel with its own role and the permission it checks', async () => {
+    // `0013_custom_apps_application.sql`. `apps/custom-apps` accepts only this audience and only an
+    // account carrying `custom-apps:admin`; a missing row here is a 401 for the panel's owner.
+    const [application] = await db().select().from(applications).where(eq(applications.id, 'franciscosolis-custom-apps'))
+    const scoped = await db()
+      .select({ slug: roles.slug, permission: permissions.slug })
+      .from(roles)
+      .innerJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
+      .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
+      .where(eq(roles.applicationId, 'franciscosolis-custom-apps'))
+    const granted = await db()
+      .select({ slug: permissions.slug })
+      .from(rolePermissions)
+      .innerJoin(permissions, eq(permissions.id, rolePermissions.permissionId))
+      .where(eq(rolePermissions.roleId, SEED.adminRoleId))
+
+    expect(application).toMatchObject({ tokenEndpointAuthMethod: 'none', requirePkce: true, isActive: true })
+    expect(JSON.parse(application!.redirectUris)).toEqual([
+      'https://franciscosolis.cl/custom-apps/callback',
+      'http://localhost:5173/custom-apps/callback',
+    ])
+    expect(scoped).toEqual([{ slug: 'custom-apps-admin', permission: 'custom-apps:admin' }])
+    expect(granted.map((row) => row.slug)).toContain('custom-apps:admin')
+  })
+
+  it('accepts a sign-in for the custom-apps panel on its callback', async () => {
+    const response = await authorize({
+      client_id: 'franciscosolis-custom-apps',
+      redirect_uri: 'https://franciscosolis.cl/custom-apps/callback',
+      state: 'st',
+    })
+
+    expect(isAccepted(response)).toBe(true)
+  })
+
   it('still matches a redirect URI exactly, with no room for a near miss', async () => {
     const response = await authorize({
       client_id: SEED.webAppId,

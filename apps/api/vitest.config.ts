@@ -6,7 +6,7 @@ import { internalWorkers } from './test/stubs.ts'
 /**
  * The gateway is nothing but its bindings, so the internal Workers it proxies to are booted alongside
  * it as auxiliary Miniflare Workers. Every binding in `wrangler.jsonc` — `LANDING`, `AUTH`, `CMS`,
- * `MARKETPLACE` and `NOTIFICATIONS` — therefore resolves to a real service binding under
+ * `MARKETPLACE`, `NOTIFICATIONS` and `CUSTOM_APPS` — therefore resolves to a real service binding under
  * test, exactly as it does once deployed.
  */
 export default defineConfig({

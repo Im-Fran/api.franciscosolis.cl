@@ -128,6 +128,20 @@ const SERVICE_MODULES = [
     // This is the only direction the two are wired in. The producers (`auth` and
     // `marketplace`) reach this Worker through a queue, not through a binding and not through here.
   },
+  {
+    name: 'custom-apps',
+    binding: 'CUSTOM_APPS',
+    tag: 'Custom apps',
+    description:
+      'Proxy to the custom-apps panel API (clients, their bespoke apps, installations and telemetry)',
+    // Forwards the whole Request for the same reasons as the CMS: the body of every write, the
+    // `Authorization` header the module verifies itself, and CF-Connecting-IP and User-Agent for its
+    // audit trail. Its CORS is the gateway's — the only caller is the panel on franciscosolis.cl.
+    //
+    // This is only the panel half. The client apps report to the same Worker on a host of its own,
+    // `ingest.franciscosolis.cl/custom-apps/*`, which is routed to it directly and never passes
+    // through here; the module tells the two apart by hostname.
+  },
 ] as const satisfies readonly ServiceModule[]
 
 /** A registry entry as written above, with its `binding` and `name` narrowed to the literals used. */

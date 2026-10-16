@@ -1,0 +1,211 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "custom-apps",
+  "main": "src/index.ts",
+  "preview_urls": true,
+  "workers_dev": true,
+  "compatibility_date": "2026-07-31",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "placement": {
+    "mode": "smart"
+  },
+  // The ingest surface, and the one public route of an internal module in this repository.
+  //
+  // The panel half of this Worker is reached like every other module, through the gateway's
+  // `CUSTOM_APPS` binding at api.franciscosolis.cl/custom-apps. The client apps are not: they are
+  // kiosks, POS terminals and customers' websites that talk to `ingest.franciscosolis.cl`, a host of
+  // its own so it can be rate limited, cached and — if it ever needs to — moved without touching the
+  // API every other front-end depends on. `src/index.ts` dispatches on the hostname, so a request on
+  // this route can only ever reach the ingest app, and a request through the gateway only the panel.
+  //
+  // A zone route with a path rather than a custom domain: the host is meant to front other ingest
+  // paths later, and a custom domain would claim all of it. It needs a proxied DNS record for
+  // `ingest` in the zone (see the README).
+  "routes": [
+    {
+      "pattern": "ingest.franciscosolis.cl/custom-apps/*",
+      "zone_name": "franciscosolis.cl"
+    }
+  ],
+  // Hourly, for the same reason as the notifications digest: the daily roll-up is defined on
+  // Santiago's wall clock, and Chile moves its clocks twice a year. Each run purges raw telemetry
+  // past its retention, and the run that lands at `ROLLUP.hour` in Santiago also rolls up yesterday.
+  "triggers": {
+    "crons": [
+      "0 * * * *"
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "franciscosolis_custom_apps",
+      "database_id": "2a6f2d4a-4dce-4e61-83b7-1ee8cb928ca4",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Metrics and usage events are written behind a queue so a device is answered as soon as its batch
+  // is validated, and a D1 hiccup is a retry rather than a sample lost. This Worker is both ends of
+  // it: the ingest app produces, the `queue` handler consumes. Heartbeats do not go through it —
+  // presence has to be current the moment the panel reads it.
+  "queues": {
+    "producers": [
+      {
+        "binding": "TELEMETRY_QUEUE",
+        "queue": "franciscosolis-custom-apps-telemetry"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "franciscosolis-custom-apps-telemetry",
+        "max_batch_size": 100,
+        "max_batch_timeout": 5,
+        "max_retries": 5
+      }
+    ]
+  },
+  // Enrollment is auto-approved — anybody holding an app's public key may enroll a device — so it is
+  // limited per client IP and per app. Everything a device sends afterwards is limited per
+  // installation. The namespace ids are arbitrary but must differ from the development stack's, or
+  // the two environments would share counters.
+  "ratelimits": [
+    {
+      "name": "ENROLL_IP_LIMITER",
+      "namespace_id": "4101",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "ENROLL_APP_LIMITER",
+      "namespace_id": "4102",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "INGEST_LIMITER",
+      "namespace_id": "4103",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ],
+  "services": [
+    {
+      // Only ever asked for `/.well-known/jwks.json`. A binding rather than a public fetch for the
+      // reason `src/lib/jwks.ts` spells out: a subrequest to its own zone skips Workers routing.
+      "binding": "AUTH",
+      "service": "auth"
+    }
+  ],
+  "vars": {
+    // Path the JWKS is read from over the AUTH binding. The host is a placeholder: a service binding
+    // routes by binding, not by DNS.
+    "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
+    // Expected `iss`. Must match `AUTH_ISSUER` in apps/auth/wrangler.jsonc exactly.
+    "AUTH_ISSUER": "https://api.franciscosolis.cl/auth",
+    // The panel's own client application, and nothing else. See `src/middleware/admin.ts`.
+    "CUSTOM_APPS_ALLOWED_AUDIENCES": "franciscosolis-custom-apps",
+    // The broad gate on top of the `custom-apps:admin` permission.
+    "CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+    // Public base of the ingest surface, up to and including the version. Its host is what
+    // `src/index.ts` dispatches on, and the panel quotes it so a client app can be configured.
+    "INGEST_PUBLIC_URL": "https://ingest.franciscosolis.cl/custom-apps/v1"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.25,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.25
+    }
+  },
+  "env": {
+    // The development stack: `custom-apps-dev`, behind api-dev.franciscosolis.cl/custom-apps and
+    // ingest-dev.franciscosolis.cl/custom-apps.
+    //
+    // Everything is restated, because a named environment inherits no bindings and no vars. The route
+    // is restated too, and that one is not bookkeeping: `routes` *is* inherited, so without this
+    // block the development Worker would claim production's ingest path on its first deploy.
+    "dev": {
+      "routes": [
+        {
+          "pattern": "ingest-dev.franciscosolis.cl/custom-apps/*",
+          "zone_name": "franciscosolis.cl"
+        }
+      ],
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "franciscosolis_custom_apps_dev",
+          "database_id": "f7d7722f-f8e2-4a3d-9cdc-34b08b70b89e",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "TELEMETRY_QUEUE",
+            "queue": "franciscosolis-custom-apps-telemetry-dev"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "franciscosolis-custom-apps-telemetry-dev",
+            "max_batch_size": 100,
+            "max_batch_timeout": 5,
+            "max_retries": 5
+          }
+        ]
+      },
+      "ratelimits": [
+        {
+          "name": "ENROLL_IP_LIMITER",
+          "namespace_id": "4201",
+          "simple": {
+            "limit": 10,
+            "period": 60
+          }
+        },
+        {
+          "name": "ENROLL_APP_LIMITER",
+          "namespace_id": "4202",
+          "simple": {
+            "limit": 60,
+            "period": 60
+          }
+        },
+        {
+          "name": "INGEST_LIMITER",
+          "namespace_id": "4203",
+          "simple": {
+            "limit": 120,
+            "period": 60
+          }
+        }
+      ],
+      "services": [
+        {
+          "binding": "AUTH",
+          "service": "auth-dev"
+        }
+      ],
+      "vars": {
+        "AUTH_JWKS_URL": "https://auth.internal/.well-known/jwks.json",
+        "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
+        "CUSTOM_APPS_ALLOWED_AUDIENCES": "franciscosolis-custom-apps",
+        "CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
+        "INGEST_PUBLIC_URL": "https://ingest-dev.franciscosolis.cl/custom-apps/v1"
+      }
+    }
+  }
+}

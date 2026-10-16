@@ -11,7 +11,7 @@
  */
 
 /** Name of the module the gateway strips from the path before forwarding. */
-type ModuleName = 'landing' | 'auth' | 'cms' | 'marketplace' | 'notifications'
+type ModuleName = 'landing' | 'auth' | 'cms' | 'marketplace' | 'notifications' | 'custom-apps'
 
 const echoWorkerScript = (module: ModuleName) => `
 export default {
@@ -26,7 +26,7 @@ export default {
           '/': { get: { summary: '${module} root' } },
           '/thing': { get: { summary: '${module} thing' } },
         },
-        components: { schemas: { ${module}Schema: { type: 'object' } } },
+        components: { schemas: { '${module}Schema': { type: 'object' } } },
       })
     }
 
@@ -102,6 +102,7 @@ const internalWorkers = [
   stubWorker('cms'),
   stubWorker('marketplace'),
   stubWorker('notifications'),
+  stubWorker('custom-apps'),
 ]
 
 export { internalWorkers, stubWorker }

@@ -15,9 +15,10 @@ endpoint — it forwards requests to internal Workers over Cloudflare service bi
 merges their OpenAPI specs into one combined document. It lives at `apps/api` inside the
 `api.franciscosolis.cl` monorepo.
 
-Three internal components are wired up: `landing` (the sibling `apps/landing` Worker),
-`auth` (`apps/auth`, centralized authentication) and `cms` (`apps/cms`, content management),
-all in the parent monorepo.
+Six internal components are wired up: `landing` (the sibling `apps/landing` Worker),
+`auth` (`apps/auth`, centralized authentication), `cms` (`apps/cms`, content management),
+`marketplace`, `notifications` and `custom-apps` — the last only for its panel half; the client
+apps reach `custom-apps` on `ingest.franciscosolis.cl`, which never passes through this gateway.
 
 ## Stack
 
@@ -129,4 +130,5 @@ There is no separate `build` script — Wrangler bundles as part of `dev`/`deplo
 - **No `.env` files here** — all infra config lives in `wrangler.jsonc` (bindings,
   custom domain, observability) and is resolved by Cloudflare at deploy time.
 - Each service binding only resolves in production if a Worker literally named `landing`,
-  `auth` or `cms` is deployed in the same Cloudflare account.
+  `auth`, `cms`, `marketplace`, `notifications` or `custom-apps` is deployed in the same
+  Cloudflare account — so a new module has to be deployed before the gateway change that binds it.
