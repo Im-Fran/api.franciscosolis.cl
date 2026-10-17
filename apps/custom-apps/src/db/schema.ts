@@ -118,6 +118,21 @@ const apps = sqliteTable('apps', {
   screenshotsEnabled: integer('screenshots_enabled', { mode: 'boolean' }).notNull().default(false),
   /** JSON Schema (the subset in `lib/json-schema.ts`) the remote config document must satisfy. */
   configSchema: text('config_schema'),
+  /**
+   * The Ed25519 public key (32 bytes, base64) releases are signed against — the same key every build
+   * of the app embeds to check what it downloads. The private half lives only in CI. An upload whose
+   * signature this key does not verify is refused, so a release in the bucket is always one the
+   * devices will accept.
+   */
+  releasePublicKey: text('release_public_key'),
+  /** Seconds a freshly installed version has to report `health_ok` before the device rolls back. */
+  updateHealthTimeoutSeconds: integer('update_health_timeout_seconds').notNull().default(600),
+  /** Consecutive crashes of a new version after which the device rolls back on its own. */
+  updateMaxFailures: integer('update_max_failures').notNull().default(3),
+  /** Rollback rate (%) at which a rollout pauses itself. */
+  rolloutPauseRollbackPercent: integer('rollout_pause_rollback_percent').notNull().default(20),
+  /** Share (%) of updated devices reporting a crash on the new version at which a rollout pauses itself. */
+  rolloutPauseCrashPercent: integer('rollout_pause_crash_percent').notNull().default(20),
   ...authorship,
   ...timestamps,
 }, (table) => [
@@ -469,6 +484,98 @@ const messageReceipts = sqliteTable('message_receipts', {
   seenAt: integer('seen_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
 }, (table) => [primaryKey({ columns: [table.messageId, table.installationId] })])
 
+/* ── Releases ──────────────────────────────────────────────────────────────── */
+
+/**
+ * A credential CI uploads releases of one app with. Opaque and stored as a hash, like a device token;
+ * shown once when it is created. It can upload and nothing else — no panel route accepts it.
+ */
+const ciTokens = sqliteTable('ci_tokens', {
+  id: text('id').primaryKey(),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  label: text('label'),
+  tokenHash: text('token_hash').notNull(),
+  /** The first characters, so a token can be recognised in a CI settings page without the whole. */
+  tokenPrefix: text('token_prefix').notNull(),
+  lastUsedAt: integer('last_used_at', { mode: 'timestamp' }),
+  revokedAt: integer('revoked_at', { mode: 'timestamp' }),
+  revokedBy: text('revoked_by'),
+  createdBy: text('created_by'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  uniqueIndex('ci_tokens_hash_unique').on(table.tokenHash),
+  index('ci_tokens_app_idx').on(table.appId),
+])
+
+/**
+ * One build of one version, for one channel, platform and architecture. CI uploads it as a draft;
+ * a person publishes it, decides how far it rolls out, and pauses, resumes or withdraws it. The bytes
+ * are in R2 (`RELEASES`), never public: a device downloads through a short-lived signed link.
+ */
+const releases = sqliteTable('releases', {
+  id: text('id').primaryKey(),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  /** Semantic version, as the device reports it. */
+  version: text('version').notNull(),
+  /** `CHANNELS`. */
+  channel: text('channel').notNull(),
+  /** `PLATFORMS`. */
+  platform: text('platform').notNull(),
+  /** `ARCHES`. */
+  arch: text('arch').notNull(),
+  /** `RELEASE_STATUSES`. */
+  status: text('status').notNull().default('draft'),
+  /** Share of eligible installations offered this release, 0–100. */
+  rolloutPercent: integer('rollout_percent').notNull().default(0),
+  /** JSON array of installation ids offered it regardless of the percentage. */
+  rolloutInstallations: text('rollout_installations').notNull().default('[]'),
+  /** Devices below this version must update before they carry on: `mandatory` in the offer. */
+  minVersion: text('min_version'),
+  notes: text('notes'),
+  objectKey: text('object_key').notNull(),
+  filename: text('filename').notNull(),
+  contentType: text('content_type').notNull(),
+  sizeBytes: integer('size_bytes').notNull(),
+  /** SHA-256 of the artifact, hex. Computed by this Worker while the upload streamed in. */
+  sha256: text('sha256').notNull(),
+  /** Ed25519 signature over the raw SHA-256 digest, base64. Verified against `apps.release_public_key`. */
+  signature: text('signature').notNull(),
+  /** `ci:<token id>` or the editor's email. */
+  uploadedBy: text('uploaded_by'),
+  publishedAt: integer('published_at', { mode: 'timestamp' }),
+  publishedBy: text('published_by'),
+  /** Why it was paused or withdrawn, JSON: `{ by, automatic, reason, … }`. */
+  statusReason: text('status_reason'),
+  statusChangedAt: integer('status_changed_at', { mode: 'timestamp' }),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('releases_line_version_unique').on(table.appId, table.channel, table.platform, table.arch, table.version),
+  index('releases_app_status_idx').on(table.appId, table.status),
+])
+
+/**
+ * What a device said about an update: one row per step, so a release's numbers are counted from what
+ * devices did rather than from what they were offered. Kept for good — they are the history of a
+ * rollout, and there is one per device per step.
+ */
+const releaseReports = sqliteTable('release_reports', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  releaseId: text('release_id').notNull().references(() => releases.id, { onDelete: 'cascade' }),
+  appId: text('app_id').notNull(),
+  installationId: text('installation_id').notNull(),
+  /** `UPDATE_REPORT_STATUSES`. */
+  status: text('status').notNull(),
+  /** The version the device updated from. */
+  fromVersion: text('from_version'),
+  /** Free text from the device: why it failed, which check rolled it back. */
+  detail: text('detail'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  index('release_reports_release_idx').on(table.releaseId, table.installationId),
+  index('release_reports_installation_idx').on(table.installationId, table.createdAt),
+  index('release_reports_app_time_idx').on(table.appId, table.createdAt),
+])
+
 /* ── Crashes and logs ──────────────────────────────────────────────────────── */
 
 /**
@@ -633,6 +740,7 @@ export {
   apps,
   appKeys,
   auditLogs,
+  ciTokens,
   commands,
   companies,
   companyContacts,
@@ -648,6 +756,8 @@ export {
   messageReceipts,
   messages,
   metricSamples,
+  releaseReports,
+  releases,
   screenshots,
   usageEvents,
   usageHourly,
