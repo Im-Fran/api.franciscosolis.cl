@@ -25,6 +25,8 @@ import type { AppModule } from '@/lib/config'
  * the running messages for the page to show, and confirms the ones it marks seen (`messages`); and
  * answers commands (`commands`) — `reload_config` and `restart_app` (a page reload) it runs itself,
  * anything else goes to the page's `onCommand` handler, and fails as unsupported when there is none.
+ * With `support`, `FSCustomApps.support({ subject, message, name, email })` sends the page's support
+ * form to the support inbox and resolves once it was sent.
  * A website always reports by ping: browsers cannot set the header a socket would need.
  */
 
@@ -294,7 +296,14 @@ const RUNTIME = String.raw`
         for (var i = 0; i < messageList.length; i++) if (messageList[i].id === id) messageList[i].seen = true;
       }).catch(function () {});
     },
-    onCommand: function (listener) { listeners.command.push(listener); }
+    onCommand: function (listener) { listeners.command.push(listener); },
+    support: function (request) {
+      if (!has('support')) return Promise.reject(new Error('the support module is not enabled for this app'));
+      return authed('/support', request || {}).then(function (response) {
+        if (response.ok) return true;
+        return response.json().then(function (json) { throw new Error(json && json.error ? json.error : 'support request failed'); });
+      });
+    }
   };
 
   event('session_start', null, null);

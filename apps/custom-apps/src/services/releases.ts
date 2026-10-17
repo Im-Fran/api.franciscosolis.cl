@@ -5,6 +5,7 @@ import { RELEASES, type Arch } from '@/lib/config'
 import { iso, parseJsonArray } from '@/lib/json'
 import { compareSemver } from '@/lib/semver'
 import { hashToken } from '@/lib/tokens'
+import { graceAllows } from '@/services/contracts'
 import { effectiveState } from '@/services/presence'
 import type { AppRow, InstallationRow } from '@/services/serialize'
 
@@ -86,7 +87,10 @@ const newest = (rows: ReleaseRow[]) => rows.reduce<ReleaseRow | null>((best, row
 const offerFor = async (db: Database, input: OfferInput): Promise<Offer | null> => {
   const { app, installation } = input
   const state = effectiveState(app.state, installation.stateOverride)
-  if (state === 'grace' || state === 'suspended') return null
+  if (state === 'suspended') return null
+  // In grace only the app keeps working, unless the contract that lapsed says updates do too. An
+  // installation put in grace by hand (`state_override`) has no contract behind it to say so.
+  if (state === 'grace' && (installation.stateOverride === 'grace' || !(await graceAllows(db, app.id, 'updates')))) return null
 
   const platform = input.platform ?? installation.platform
   const arch = normaliseArch(input.arch ?? installation.arch)

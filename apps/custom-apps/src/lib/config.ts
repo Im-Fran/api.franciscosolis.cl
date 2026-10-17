@@ -68,8 +68,11 @@ type PresenceMode = (typeof PRESENCE_MODES)[number]
  * - `commands`: remote commands from the closed catalogue in `COMMAND_TYPES`, screenshots included.
  * - `updates`: remote updates — the release a device is offered, its signed download, and the
  *   reports that tell a rollout whether it is working.
+ * - `support`: the in-app support form. A request is emailed to the support inbox with the device's
+ *   context attached; nothing is kept here as a ticket (support is plain email, see the root
+ *   CLAUDE.md).
  */
-const APP_MODULES = ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands', 'updates'] as const
+const APP_MODULES = ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands', 'updates', 'support'] as const
 type AppModule = (typeof APP_MODULES)[number]
 
 /** What a contact is to a company. A contact may hold several at once. */
@@ -191,10 +194,26 @@ const LOGS = {
  * - `release_rollbacks`: at least `threshold` rollbacks of an update reported in the last
  *   `window_minutes`, across the app's releases.
  *
- * Site uptime, certificates, contracts and hours arrive with the phases that bring the data they
- * would watch.
+ * - `contract_expiring`: a contract that does not renew itself ends within `threshold` days.
+ * - `cycle_hours_low`: an open hours cycle has `threshold` % or less of its available hours left
+ *   (overdrawn cycles included).
+ *
+ * Both are about a contract rather than a device, and an alert belongs to an app, so they are filed
+ * under the first app the contract covers; a contract that covers no app raises nothing.
+ *
+ * Site uptime and certificates arrive with the phase that brings the data they would watch.
  */
-const ALERT_KINDS = ['installation_offline', 'cpu_high', 'memory_high', 'crash_spike', 'error_log_spike', 'enrollment_spike', 'release_rollbacks'] as const
+const ALERT_KINDS = [
+  'installation_offline',
+  'cpu_high',
+  'memory_high',
+  'crash_spike',
+  'error_log_spike',
+  'enrollment_spike',
+  'release_rollbacks',
+  'contract_expiring',
+  'cycle_hours_low',
+] as const
 type AlertKind = (typeof ALERT_KINDS)[number]
 
 /** `open` until somebody acknowledges it or its condition clears; `resolved` either way at the end. */
@@ -256,6 +275,67 @@ const RELEASES = {
 
 /** Grace before suspension is a contract term, capped at a month. */
 const GRACE_MAX_DAYS = 31
+
+/**
+ * Contracts and the hours they include.
+ *
+ * - `CURRENCIES`: what a contract is priced in. UF amounts are converted for display with the UF
+ *   indicator the landing module publishes; nothing here converts money.
+ * - `BILLING_PERIODS`: what `amount` is the price of.
+ * - `CYCLE_PERIODS`: how often the included hours renew. Cycles are anchored on the contract's start
+ *   date: a monthly contract starting on the 31st renews on the last day of shorter months.
+ * - `GRACE_ALLOWANCES`: what keeps working during the grace period after a contract ends, on top of
+ *   the app itself. Nothing by default, as the plan says.
+ * - `CYCLE_STATUSES`: `open` while hours are logged against it, `closed` once its period ended and
+ *   the balance was computed (final), `billed` once its overage was charged.
+ */
+const CURRENCIES = ['CLP', 'UF'] as const
+type Currency = (typeof CURRENCIES)[number]
+
+const BILLING_PERIODS = ['monthly', 'yearly', 'one_time'] as const
+type BillingPeriod = (typeof BILLING_PERIODS)[number]
+
+const CYCLE_PERIODS = ['daily', 'weekly', 'monthly'] as const
+type CyclePeriod = (typeof CYCLE_PERIODS)[number]
+
+const GRACE_ALLOWANCES = ['updates', 'support'] as const
+type GraceAllowance = (typeof GRACE_ALLOWANCES)[number]
+
+const CYCLE_STATUSES = ['open', 'closed', 'billed'] as const
+type CycleStatus = (typeof CYCLE_STATUSES)[number]
+
+/**
+ * What an entry of the work log is. Every kind counts against the contract's hours: the log is what
+ * was done, and the contract decides what is included.
+ */
+const WORK_KINDS = ['maintenance', 'support', 'development', 'other'] as const
+type WorkKind = (typeof WORK_KINDS)[number]
+
+const CONTRACTS = {
+  /** A contract's grace period, in days. The plan caps it at a month. */
+  maxGraceDays: 30,
+  /** Days before the end the client is told, by default. */
+  defaultNoticeDays: 30,
+  maxNoticeDays: 180,
+  /** Months an auto-renewing contract is extended by when it reaches its end, by default. */
+  defaultRenewalMonths: 12,
+  /** Cycles the cron catches up in one go. A contract left alone for longer is caught up over several runs. */
+  maxCyclesPerRun: 400,
+  /** Largest single entry of the work log, in minutes. */
+  maxWorkLogMinutes: 24 * 60,
+} as const
+
+/** The in-app support form. */
+const SUPPORT = {
+  /** Requests an installation may send per hour. The form is a mailing endpoint; this is its limit. */
+  maxPerHour: 5,
+  maxSubjectLength: 200,
+  maxMessageLength: 5000,
+  /** Recent log entries attached to a request, when the app has the `logs` module. */
+  attachedLogs: 20,
+  /** Open crash groups of the running version attached to a request, when the app has `crashes`. */
+  attachedCrashes: 5,
+} as const
 
 /** Heartbeat interval bounds, in seconds. */
 const HEARTBEAT = {
@@ -326,15 +406,21 @@ export {
   APP_KINDS,
   ARCHES,
   APP_MODULES,
+  BILLING_PERIODS,
   APP_STATES,
   CHANNELS,
   COMMAND_STATUSES,
   COMMAND_TYPES,
   COMMANDS,
   CONTACT_ROLES,
+  CONTRACTS,
   CRASH_STATUSES,
   CRASHES,
+  CURRENCIES,
+  CYCLE_PERIODS,
+  CYCLE_STATUSES,
   EVENT_TYPES,
+  GRACE_ALLOWANCES,
   GRACE_MAX_DAYS,
   HEARTBEAT,
   INSTALLATION_STATUSES,
@@ -353,11 +439,13 @@ export {
   ROLLUP,
   SCREENSHOTS,
   SERIES,
+  SUPPORT,
   TARGET_SCOPES,
   TELEMETRY,
   TOKENS,
   UPDATE_REPORT_STATUSES,
   WEEKDAYS,
+  WORK_KINDS,
 }
 export type {
   AlertKind,
@@ -366,12 +454,17 @@ export type {
   AppModule,
   AppState,
   Arch,
+  BillingPeriod,
   Channel,
   CommandStatus,
   CommandType,
   ContactRole,
   CrashStatus,
+  Currency,
+  CyclePeriod,
+  CycleStatus,
   EventType,
+  GraceAllowance,
   InstallationStatus,
   KeyStatus,
   LogLevel,
@@ -383,4 +476,5 @@ export type {
   TargetScope,
   UpdateReportStatus,
   Weekday,
+  WorkKind,
 }

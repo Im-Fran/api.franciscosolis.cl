@@ -1,15 +1,16 @@
-import { and, asc, desc, eq, gte, like, lte, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, isNull, like, lte, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { describeRoute } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
-import { apps, auditLogs, installations } from '@/db/schema'
+import { apps, auditLogs, contracts, installations } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { APP_STATES, type AppState } from '@/lib/config'
 import { parseJsonObject } from '@/lib/json'
 import { dateInput, paginationQuery, searchQuery } from '@/lib/validation'
 import { validate } from '@/lib/validate'
 import { unresolvedCount } from '@/services/alerts'
+import { todayIn, toContract } from '@/services/contracts'
 import { toInstallationSummary } from '@/services/serialize'
 import { connectedSql, nowSeconds, page, panelErrors } from '@/panel/shared'
 
@@ -24,7 +25,7 @@ app.get(
   '/overview',
   describeRoute({
     description:
-      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, and the latest enrollments.',
+      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, contracts ending or in grace, hours cycles over budget or waiting to be billed, and the latest enrollments.',
     tags: ['Overview'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'The overview' }, ...panelErrors },
@@ -35,7 +36,7 @@ app.get(
     const nowDate = new Date(now * 1000)
 
     const summaryColumns = { installation: installations, appName: apps.name, interval: apps.heartbeatIntervalSeconds }
-    const [[fleet], states, [counts], recent, review, openAlerts, [rollouts]] = await Promise.all([
+    const [[fleet], states, [counts], recent, review, openAlerts, [rollouts], contractRows, [cycleRow]] = await Promise.all([
       c.env.DB.prepare(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN i.status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -63,7 +64,15 @@ app.get(
                 SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS drafts
          FROM releases`,
       ).all<Record<string, number | null>>().then((result) => result.results),
+      db.select().from(contracts).where(isNull(contracts.cancelledAt)),
+      c.env.DB.prepare(
+        `SELECT SUM(CASE WHEN y.status = 'open' AND (SELECT COALESCE(SUM(w.minutes), 0) FROM work_logs w WHERE w.cycle_id = y.id) > y.included_minutes + y.carried_minutes THEN 1 ELSE 0 END) AS exceeded,
+                SUM(CASE WHEN y.status = 'closed' AND COALESCE(y.overage_minutes, 0) > 0 THEN 1 ELSE 0 END) AS to_bill
+         FROM contract_cycles y JOIN contracts c ON c.id = y.contract_id`,
+      ).all<Record<string, number | null>>().then((result) => result.results),
     ])
+    const today = todayIn(nowDate)
+    const contractViews = contractRows.map((row) => toContract(row, { day: today }))
 
     const byState = Object.fromEntries(APP_STATES.map((state) => [state, 0])) as Record<AppState, number>
     for (const row of states) {
@@ -88,6 +97,12 @@ app.get(
         companies: { total: Number(counts?.companies ?? 0) },
         contacts: { total: Number(counts?.contacts ?? 0) },
         alerts: { unresolved: openAlerts },
+        contracts: {
+          active: contractViews.filter((view) => view.status === 'active').length,
+          expiring: contractViews.filter((view) => view.expiring).length,
+          in_grace: contractViews.filter((view) => view.status === 'grace').length,
+        },
+        cycles: { exceeded: Number(cycleRow?.exceeded ?? 0), to_bill: Number(cycleRow?.to_bill ?? 0) },
         releases: { rolling_out: Number(rollouts?.rolling_out ?? 0), paused: Number(rollouts?.paused ?? 0), drafts: Number(rollouts?.drafts ?? 0) },
         recent_installations: recent.map(summary),
         needs_review: review.map(summary),
