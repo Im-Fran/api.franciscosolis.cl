@@ -1,4 +1,6 @@
 import type { AccessTokenClaims } from '@/lib/jwks'
+import type { NotificationEvent } from '@/services/notify'
+import type { InstallationSocket } from '@/services/socket'
 import type { TelemetryMessage } from '@/services/telemetry'
 
 /**
@@ -13,8 +15,14 @@ type Env = {
   DB: D1Database
   /** Only ever asked for the JWKS. See `src/lib/jwks.ts` for why it is a binding and not a fetch. */
   AUTH: Fetcher
-  /** Metrics and usage events on their way to D1. This Worker is both producer and consumer. */
+  /** Metrics, usage events, logs and crashes on their way to D1. This Worker is both ends of it. */
   TELEMETRY_QUEUE: Queue<TelemetryMessage>
+  /** Alert notifications for `apps/notifications`, which files, pushes and emails them. */
+  NOTIFICATIONS_QUEUE: Queue<NotificationEvent>
+  /** One Durable Object per installation in socket mode, named by the installation id. */
+  PRESENCE: DurableObjectNamespace<InstallationSocket>
+  /** Screenshots, private: the panel streams them through this Worker. */
+  SCREENSHOTS: R2Bucket
 
   /** Enrollments per client IP. */
   ENROLL_IP_LIMITER: RateLimiter

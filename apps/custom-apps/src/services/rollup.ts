@@ -243,16 +243,20 @@ const purgeExpired = async (db: D1Database, now: Date) => {
     metric_samples: await purgeTable(db, 'metric_samples', 'recorded_at', rawCutoffMs),
     usage_events: await purgeTable(db, 'usage_events', 'occurred_at', rawCutoffMs),
     heartbeat_log: await purgeTable(db, 'heartbeat_log', 'received_at', rawCutoffMs),
+    log_entries: await purgeTable(db, 'log_entries', 'occurred_at', rawCutoffMs),
+    // The reports only: their group keeps its counts and its first and last sighting for good.
+    crash_reports: await purgeTable(db, 'crash_reports', 'occurred_at', rawCutoffMs),
     usage_hourly: await purgeTable(db, 'usage_hourly', 'hour_start', hourlyCutoff),
   }
 }
 
 /**
- * The hourly cron. Purges every run; at `ROLLUP.hour` in Santiago it also rolls up the two days
+ * The hourly half of the cron (`services/maintenance.ts` runs it on the first run of each hour).
+ * Purges every time; at `ROLLUP.hour` in Santiago it also rolls up the two days
  * before today — yesterday, which has just ended, and the day before, again, so a device that came
  * back online and flushed its offline queue late still lands in its totals.
  */
-const runScheduled = async (env: Env, now: Date) => {
+const runHourly = async (env: Env, now: Date) => {
   const purged = await purgeExpired(env.DB, now)
   const rolledUp: Record<string, number> = {}
   if (zonedParts(now, ROLLUP.timeZone).hour === ROLLUP.hour) {
@@ -264,5 +268,5 @@ const runScheduled = async (env: Env, now: Date) => {
   return { purged, rolled_up: rolledUp }
 }
 
-export { computeDaily, purgeExpired, rollupDay, runScheduled }
+export { computeDaily, MEMORY_PERCENT, purgeExpired, rollupDay, runHourly }
 export type { DailyRow }

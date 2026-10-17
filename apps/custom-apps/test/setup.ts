@@ -1,5 +1,6 @@
 import { applyD1Migrations, env } from 'cloudflare:test'
 import { beforeAll, beforeEach } from 'vitest'
+import { captureNotifications } from './helpers/notifications'
 import { captureTelemetry } from './helpers/telemetry'
 
 /**
@@ -17,10 +18,23 @@ beforeAll(async () => {
  *
  * The telemetry queue is replaced by a capture for every test: the simulated one would deliver to
  * this same Worker's consumer in the background, writing rows while a test is asserting on them.
- * Tests that want the rows written hand the captured messages to the consumer explicitly.
+ * Tests that want the rows written hand the captured messages to the consumer explicitly. The
+ * notifications queue is captured the same way: its consumer is another Worker, so what was
+ * published is only ever read back from the capture.
  */
 beforeEach(async () => {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM alerts'),
+    env.DB.prepare('DELETE FROM alert_rules'),
+    env.DB.prepare('DELETE FROM message_receipts'),
+    env.DB.prepare('DELETE FROM messages'),
+    env.DB.prepare('DELETE FROM flags'),
+    env.DB.prepare('DELETE FROM config_versions'),
+    env.DB.prepare('DELETE FROM crash_reports'),
+    env.DB.prepare('DELETE FROM crash_groups'),
+    env.DB.prepare('DELETE FROM log_entries'),
+    env.DB.prepare('DELETE FROM screenshots'),
+    env.DB.prepare('DELETE FROM commands'),
     env.DB.prepare('DELETE FROM company_contacts'),
     env.DB.prepare('DELETE FROM app_keys'),
     env.DB.prepare('DELETE FROM installations'),
@@ -34,4 +48,5 @@ beforeEach(async () => {
     env.DB.prepare('DELETE FROM installation_daily'),
   ])
   captureTelemetry()
+  captureNotifications()
 })

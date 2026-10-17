@@ -6,7 +6,7 @@ import * as v from 'valibot'
 import { getDb, type Database } from '@/db/client'
 import { apps, heartbeatLog, installations, usageEvents } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { APP_STATES, CHANNELS, EVENT_TYPES, ROLLUP, SERIES, TELEMETRY } from '@/lib/config'
+import { APP_STATES, CHANNELS, EVENT_TYPES, LOG_LEVELS, ROLLUP, SERIES, TELEMETRY } from '@/lib/config'
 import { parseJsonObject } from '@/lib/json'
 import { zonedDay } from '@/lib/time'
 import { dateInput, dayInput, optionalText, paginationQuery } from '@/lib/validation'
@@ -14,6 +14,7 @@ import { readOptionalJson, validate } from '@/lib/validate'
 import { diff, getActorContext, recordAudit } from '@/services/audit'
 import { dailyStats, metricsSeries, rawWindowStart } from '@/services/series'
 import { toInstallation } from '@/services/serialize'
+import { disconnectInstallation, syncInstallation } from '@/services/socket'
 import { assertId, dataSchema, jsonContent, notFound, page, panelErrors } from '@/panel/shared'
 
 /**
@@ -24,14 +25,9 @@ const app = new Hono<AppEnv>()
 const installationSchema = v.looseObject({ id: v.string(), app_id: v.string(), connected: v.boolean() })
 
 const load = async (db: Database, id: string) => {
-  const [row] = await db
-    .select({ installation: installations, appState: apps.state, interval: apps.heartbeatIntervalSeconds })
-    .from(installations)
-    .innerJoin(apps, eq(apps.id, installations.appId))
-    .where(eq(installations.id, id))
-    .limit(1)
+  const [row] = await db.select({ installation: installations, app: apps }).from(installations).innerJoin(apps, eq(apps.id, installations.appId)).where(eq(installations.id, id)).limit(1)
   if (!row) throw notFound('Installation')
-  return { row: row.installation, app: { state: row.appState, heartbeatIntervalSeconds: row.interval } }
+  return { row: row.installation, app: row.app }
 }
 
 const view = async (db: Database, id: string) => {
@@ -58,13 +54,15 @@ const patchSchema = v.object({
   channel: v.optional(v.picklist(CHANNELS)),
   state_override: v.optional(v.nullable(v.picklist(APP_STATES))),
   state_message: optionalText(1000),
+  log_level_override: v.optional(v.nullable(v.picklist(LOG_LEVELS))),
+  screenshots_enabled: v.optional(v.boolean()),
 })
 
 app.patch(
   '/installations/:installationId',
   describeRoute({
     description:
-      'Renames an installation, moves it to another channel, or overrides the app state for it alone — one kiosk into maintenance while the rest keep selling. `state_override: null` makes it follow the app again.',
+      'Renames an installation, moves it to another channel, overrides the app state for it alone — one kiosk into maintenance while the rest keep selling — or its log level, or turns screenshots off for it. `state_override: null` and `log_level_override: null` make it follow the app again. A device holding a socket is told at once; the others on their next heartbeat.',
     tags: ['Installations'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Updated', content: jsonContent(dataSchema(installationSchema)) }, 404: { description: 'Not found' }, ...panelErrors },
@@ -83,6 +81,8 @@ app.patch(
         ...(body.channel !== undefined && { channel: body.channel }),
         ...(body.state_override !== undefined && { stateOverride: body.state_override }),
         ...(body.state_message !== undefined && { stateMessage: body.state_message }),
+        ...(body.log_level_override !== undefined && { logLevelOverride: body.log_level_override }),
+        ...(body.screenshots_enabled !== undefined && { screenshotsEnabled: body.screenshots_enabled }),
         updatedAt: new Date(),
       })
       .where(eq(installations.id, id))
@@ -100,6 +100,7 @@ app.patch(
       ...actor,
       metadata: { app_id: after.app_id, before: changedBefore, after: changedAfter },
     })
+    if (after.socket_connected) c.executionCtx.waitUntil(syncInstallation(c.env, id))
     return c.json({ code: 200 as const, data: after })
   },
 )
@@ -169,6 +170,7 @@ app.post(
         ...actor,
         metadata: { app_id: row.appId, device_id: row.deviceId, reason: body.reason ?? null },
       })
+      if (row.socketConnectedAt) c.executionCtx.waitUntil(disconnectInstallation(c.env, id))
     }
     return c.json({ code: 200 as const, data: await view(db, id) })
   },

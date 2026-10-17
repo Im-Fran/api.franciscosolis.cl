@@ -6,24 +6,28 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, generateSpecs, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
-import { apps, appKeys, installations } from '@/db/schema'
+import { apps, appKeys, commands, installations, messageReceipts, messages, screenshots } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { TELEMETRY, type AppModule } from '@/lib/config'
-import { iso } from '@/lib/json'
+import { CRASHES, LOG_LEVELS, LOGS, SCREENSHOTS, TELEMETRY, type AppModule } from '@/lib/config'
 import { validate } from '@/lib/validate'
 import { isUuid } from '@/lib/validation'
 import { invalidToken, requireInstallation } from '@/middleware/installation'
-import { enroll, enrollBodySchema, refresh, refreshBodySchema, type IssuedTokens } from '@/services/enrollment'
-import { effectiveState, heartbeatCredit, hourlyStatements } from '@/services/presence'
 import { buildSdk, modulesOf } from '@/services/apps'
+import { acknowledgeCommand, commandAckSchema } from '@/services/commands'
+import { enroll, enrollBodySchema, refresh, refreshBodySchema, type IssuedTokens } from '@/services/enrollment'
+import { heartbeatBodySchema, presenceFor, recordHeartbeat, stateFor } from '@/services/heartbeat'
+import { activeMessages } from '@/services/messages'
+import { effectiveLogLevel, etagOf, resolveConfig } from '@/services/remote-config'
 import type { AppRow, InstallationRow } from '@/services/serialize'
 import { ingestUrls } from '@/services/serialize'
+import { SOCKET_HEADERS } from '@/services/socket'
 import {
+  crashesBodySchema,
+  crashSignature,
+  crashTitle,
   eventsBodySchema,
-  heartbeatLogStatement,
-  heartbeatSampleStatement,
+  logsBodySchema,
   metricsBodySchema,
-  snapshotSchema,
   withinWindow,
   type TelemetryMessage,
 } from '@/services/telemetry'
@@ -51,13 +55,19 @@ app.use(
   }),
 )
 
-app.use(
-  '*',
-  bodyLimit({
-    maxSize: TELEMETRY.maxBodyBytes,
-    onError: (c) => c.json({ code: 413, error: `Request bodies are limited to ${TELEMETRY.maxBodyBytes} bytes` }, 413),
-  }),
-)
+/** The one route whose body is not JSON: a screenshot's bytes, with a limit of its own. */
+const isScreenshotUpload = (path: string) => /^\/[^/]+\/commands\/[^/]+\/screenshot$/.test(path)
+
+const jsonBodyLimit = bodyLimit({
+  maxSize: TELEMETRY.maxBodyBytes,
+  onError: (c) => c.json({ code: 413, error: `Request bodies are limited to ${TELEMETRY.maxBodyBytes} bytes` }, 413),
+})
+const screenshotBodyLimit = bodyLimit({
+  maxSize: SCREENSHOTS.maxBytes,
+  onError: (c) => c.json({ code: 413, error: `Screenshots are limited to ${SCREENSHOTS.maxBytes} bytes` }, 413),
+})
+
+app.use('*', (c, next) => (isScreenshotUpload(c.req.path) ? screenshotBodyLimit(c, next) : jsonBodyLimit(c, next)))
 
 // Device traffic is never cacheable, with the two public documents as the exception they set themselves.
 app.use('*', async (c, next) => {
@@ -78,23 +88,18 @@ const requireApp = async (c: { env: AppEnv['Bindings'] }, appId: string | undefi
   return row
 }
 
+/** The installation behind an authenticated request. It exists: `requireInstallation` just read it. */
+const loadInstallation = async (c: { env: AppEnv['Bindings'] }, installationId: string): Promise<InstallationRow> => {
+  const [row] = await getDb(c.env).select().from(installations).where(eq(installations.id, installationId)).limit(1)
+  if (!row) throw invalidToken('The installation token is invalid, expired or revoked')
+  return row
+}
+
 const requireModule = (row: AppRow, module: AppModule) => {
   if (!modulesOf(row).includes(module)) {
     throw new HTTPException(403, { message: `The ${module} module is not enabled for this app` })
   }
 }
-
-/** The state an installation is told to obey, in the shape every ingest response carries it. */
-const stateFor = (row: AppRow, installation: Pick<InstallationRow, 'stateOverride' | 'stateMessage'> | null) => {
-  const override = installation?.stateOverride ?? null
-  return {
-    state: effectiveState(row.state, override),
-    message: override ? (installation?.stateMessage ?? row.stateMessage) : row.stateMessage,
-    until: iso(row.stateUntil),
-  }
-}
-
-const presenceFor = (row: AppRow) => ({ mode: row.presenceMode, interval_seconds: row.heartbeatIntervalSeconds })
 
 const tokenBody = (installationId: string, tokens: IssuedTokens) => ({
   installation_id: installationId,
@@ -111,6 +116,20 @@ const stateSchema = v.object({
   until: v.nullable(v.string()),
 })
 const presenceSchema = v.object({ mode: v.string(), interval_seconds: v.number() })
+const commandSchema = v.object({
+  id: v.string(),
+  type: v.string(),
+  payload: v.nullable(v.record(v.string(), v.unknown())),
+  created_at: v.string(),
+  expires_at: v.string(),
+})
+const directivesSchema = v.object({
+  state: stateSchema,
+  presence: presenceSchema,
+  server_time: v.string(),
+  commands: v.array(commandSchema),
+  sync: v.object({ config_etag: v.nullable(v.string()), messages_etag: v.nullable(v.string()), log_level: v.nullable(v.string()) }),
+})
 const tokensSchema = v.object({
   installation_id: v.string(),
   access_token: v.string(),
@@ -217,27 +236,17 @@ app.post(
 
 /* ── Presence and state ────────────────────────────────────────────────────── */
 
-const heartbeatBodySchema = v.object({
-  app_version: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(64)))),
-  /** Seconds somebody used the app since the previous heartbeat (a visible tab, recent input). */
-  active_seconds: v.optional(v.nullable(v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(86_400)))),
-  snapshot: v.optional(v.nullable(snapshotSchema)),
-})
-
 app.post(
   '/:appId/heartbeat',
   describeRoute({
     operationId: 'heartbeat',
     summary: 'Report presence',
     description:
-      'Send every `presence.interval_seconds`. Marks the installation connected (it reads as disconnected after three missed intervals), credits the time since the previous heartbeat to the usage statistics, and keeps the light `snapshot` as the live view. Every heartbeat is kept for audit; with the `metrics` module on, the snapshot also becomes the sample of its minute — the last heartbeat of a minute wins, so sending more often than once a minute adds no points to the charts. The answer carries the state to obey and the presence settings, which can change without a new release.',
+      'Send every `presence.interval_seconds` (in socket mode, send the same body down the socket instead). Marks the installation connected (it reads as disconnected after three missed intervals), credits the time since the previous heartbeat to the usage statistics, and keeps the light `snapshot` as the live view. Every heartbeat is kept for audit; with the `metrics` module on, the snapshot also becomes the sample of its minute — the last heartbeat of a minute wins, so sending more often than once a minute adds no points to the charts.\n\nThe answer is what the panel has for this device: the `state` to obey, the `presence` settings (a mode or interval change takes effect without a release), the `commands` not yet acknowledged — repeated in every answer until acknowledged, so deduplicate them by `id` — and in `sync` the tags of the config and messages (refetch `/config` or `/messages` when one changes) and the minimum `log_level` to send. Parts of modules the app does not have are null or empty.',
     tags: ['Presence'],
     security: [{ bearerAuth: [] }],
     responses: {
-      200: {
-        description: 'Accepted',
-        content: json(v.object({ code: v.literal(200), data: v.object({ state: stateSchema, presence: presenceSchema, server_time: v.string() }) })),
-      },
+      200: { description: 'Accepted', content: json(v.object({ code: v.literal(200), data: directivesSchema })) },
       401: { description: 'Refresh the token, or enroll again' },
     },
   }),
@@ -245,59 +254,55 @@ app.post(
   validate('json', heartbeatBodySchema),
   async (c) => {
     const { installationId, appId } = c.get('device')
-    const body = c.req.valid('json')
-    const db = getDb(c.env)
-    const now = new Date()
-
-    const [appRow, installation] = await Promise.all([
-      requireApp(c, appId),
-      db.select().from(installations).where(eq(installations.id, installationId)).limit(1).then((rows) => rows[0]!),
-    ])
-
-    const credits = heartbeatCredit(installation.lastSeenAt, now, appRow.heartbeatIntervalSeconds, body.active_seconds)
-    const versionChanged = body.app_version != null && body.app_version !== installation.appVersion
-    const nowSeconds = Math.floor(now.getTime() / 1000)
-
-    const assignments = ['last_seen_at = ?', 'last_ip = ?', 'updated_at = ?']
-    const bindings: unknown[] = [nowSeconds, c.req.header('CF-Connecting-IP') ?? installation.lastIp, nowSeconds]
-    if (body.snapshot) {
-      assignments.push('last_snapshot = ?')
-      bindings.push(JSON.stringify(body.snapshot))
-    }
-    if (versionChanged) {
-      assignments.push('app_version = ?', 'previous_app_version = ?')
-      bindings.push(body.app_version, installation.appVersion)
-    }
-
-    const nowMs = now.getTime()
-    const ip = c.req.header('CF-Connecting-IP') ?? null
-    const statements = [
-      c.env.DB.prepare(`UPDATE installations SET ${assignments.join(', ')} WHERE id = ?`).bind(...bindings, installationId),
-      ...hourlyStatements(c.env.DB, installationId, appId, credits),
-      heartbeatLogStatement(c.env.DB, {
-        installationId,
-        appId,
-        receivedAtMs: nowMs,
-        ip,
-        appVersion: body.app_version ?? null,
-        activeSeconds: body.active_seconds ?? null,
-        creditedSeconds: credits.reduce((sum, credit) => sum + credit.onlineSeconds, 0),
-        snapshot: body.snapshot ?? null,
-      }),
-    ]
-    if (body.snapshot && modulesOf(appRow).includes('metrics')) {
-      statements.push(heartbeatSampleStatement(c.env.DB, installationId, appId, nowMs, body.snapshot))
-    }
-
-    // One batch, so the presence update, the hours it is filed under, the audit row and the minute's
-    // sample commit together: the panel never shows a connected installation with no use recorded
-    // for the hour, a sample with no heartbeat behind it, or the reverse.
-    await c.env.DB.batch(statements)
-
-    return c.json({
-      code: 200 as const,
-      data: { state: stateFor(appRow, installation), presence: presenceFor(appRow), server_time: now.toISOString() },
+    const directives = await recordHeartbeat(c.env, {
+      installationId,
+      appId,
+      body: c.req.valid('json'),
+      ip: c.req.header('CF-Connecting-IP') ?? null,
     })
+    if (!directives) {
+      throw invalidToken('The installation token is invalid, expired or revoked')
+    }
+    return c.json({ code: 200 as const, data: directives })
+  },
+)
+
+app.get(
+  '/:appId/socket',
+  describeRoute({
+    operationId: 'socket',
+    summary: 'Hold a socket open (socket mode)',
+    description:
+      'For apps whose `presence.mode` is `socket`: a WebSocket, authenticated with the same `Authorization: Bearer` header as every other route — a native client sets it on the upgrade request. JSON text frames. On connect the server sends `{"type":"hello","data":<the heartbeat answer>}`. Send `{"type":"heartbeat", …heartbeat body}` every `presence.interval_seconds` and get `{"type":"heartbeat_ack","data":…}` back; acknowledge commands with `{"type":"command_ack","id","status","result"}` (or `POST /commands/{commandId}/ack`). Whenever the panel changes something for this device the server sends `{"type":"sync","data":…}` at once. `{"type":"ping"}` is answered `{"type":"pong"}`. One socket per installation: a new one closes the previous (code 4000); a revoked installation is closed with 4001 — enroll again. In ping mode this answers 409: use `POST /heartbeat`.',
+    tags: ['Presence'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      101: { description: 'Switching protocols' },
+      401: { description: 'Refresh the token, or enroll again' },
+      409: { description: 'This app reports presence by ping' },
+      426: { description: 'Not a WebSocket upgrade' },
+    },
+  }),
+  requireInstallation,
+  async (c) => {
+    if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
+      throw new HTTPException(426, { message: 'This route only answers WebSocket upgrades' })
+    }
+    const { installationId, appId } = c.get('device')
+    const appRow = await requireApp(c, appId)
+    if (appRow.presenceMode !== 'socket') {
+      throw new HTTPException(409, { message: 'This app reports presence by ping: use POST /heartbeat' })
+    }
+    // The device is handed over by headers this route sets itself, after authenticating it; the
+    // object never reads an identity from the network.
+    const headers = new Headers({ Upgrade: 'websocket' })
+    headers.set(SOCKET_HEADERS.installation, installationId)
+    headers.set(SOCKET_HEADERS.app, appId)
+    const ip = c.req.header('CF-Connecting-IP')
+    if (ip) headers.set(SOCKET_HEADERS.ip, ip)
+    const upstream = await c.env.PRESENCE.get(c.env.PRESENCE.idFromName(installationId)).fetch('https://socket.internal/', { headers })
+    // A fresh Response, so the conventions middleware can still set its headers on it.
+    return new Response(null, { status: upstream.status, webSocket: upstream.webSocket, headers: { 'Cache-Control': 'no-store' } })
   },
 )
 
@@ -319,12 +324,8 @@ app.get(
   async (c) => {
     const { installationId, appId } = c.get('device')
     const appRow = await requireApp(c, appId)
-    const [installation] = await getDb(c.env)
-      .select({ stateOverride: installations.stateOverride, stateMessage: installations.stateMessage })
-      .from(installations)
-      .where(eq(installations.id, installationId))
-      .limit(1)
-    return c.json({ code: 200 as const, data: { ...stateFor(appRow, installation ?? null), presence: presenceFor(appRow) } })
+    const installation = await loadInstallation(c, installationId)
+    return c.json({ code: 200 as const, data: { ...stateFor(appRow, installation), presence: presenceFor(appRow) } })
   },
 )
 
@@ -402,10 +403,321 @@ app.post(
   },
 )
 
+app.post(
+  '/:appId/logs',
+  describeRoute({
+    operationId: 'logs',
+    summary: 'Send log entries',
+    description: `A batch of up to ${TELEMETRY.maxBatch} log entries. Send only those at or above \`sync.log_level\` from the last heartbeat answer — it can be changed remotely, per app or per device — anything below it is dropped and counted in \`dropped\`. \`id\` is minted by the device and unique per installation, so a batch sent twice is stored once. Messages longer than ${LOGS.maxMessageBytes} characters are cut. Kept ${TELEMETRY.rawRetentionDays} days. Queue them while offline and send them later; answer an \`upload_logs\` command by sending what it asks for here.`,
+    tags: ['Logs and crashes'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      202: {
+        description: 'Queued for storage',
+        content: json(v.object({ code: v.literal(202), data: v.object({ accepted: v.number(), rejected: v.number(), dropped: v.number() }) })),
+      },
+      403: { description: 'The logs module is not enabled for this app' },
+    },
+  }),
+  requireInstallation,
+  validate('json', logsBodySchema),
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    const appRow = await requireApp(c, appId)
+    requireModule(appRow, 'logs')
+    const installation = await loadInstallation(c, installationId)
+    const minimum = LOG_LEVELS.indexOf(effectiveLogLevel(appRow, installation))
+    const now = Date.now()
+    const entries = c.req.valid('json').entries
+    const inWindow = entries.filter((entry) => withinWindow(entry.occurred_at, now))
+    const accepted = inWindow.filter((entry) => LOG_LEVELS.indexOf(entry.level) >= minimum)
+    if (accepted.length > 0) {
+      await c.env.TELEMETRY_QUEUE.send({
+        version: 1,
+        kind: 'logs',
+        installation_id: installationId,
+        app_id: appId,
+        received_at: Math.floor(now / 1000),
+        entries: accepted,
+      } satisfies TelemetryMessage)
+    }
+    return c.json(
+      { code: 202 as const, data: { accepted: accepted.length, rejected: entries.length - inWindow.length, dropped: inWindow.length - accepted.length } },
+      202,
+    )
+  },
+)
+
+app.post(
+  '/:appId/crashes',
+  describeRoute({
+    operationId: 'crashes',
+    summary: 'Report crashes',
+    description: `Up to ${CRASHES.maxBatch} crash reports. Send each one on the next start after the crash, with the \`stack\` as the platform prints it (a Rust panic backtrace, a JavaScript \`error.stack\`), the \`kind\` (panic, signal or exception type), the \`message\` and the \`app_version\` that crashed. The service groups reports by the top frames of the stack — addresses and line numbers taken out — and by version. \`id\` is minted by the device and unique per installation, so a report sent twice counts once.`,
+    tags: ['Logs and crashes'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      202: { description: 'Queued for storage', content: json(acceptedSchema) },
+      403: { description: 'The crashes module is not enabled for this app' },
+    },
+  }),
+  requireInstallation,
+  validate('json', crashesBodySchema),
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'crashes')
+    const now = Date.now()
+    const crashes = c.req.valid('json').crashes
+    const inWindow = crashes.filter((crash) => withinWindow(crash.occurred_at, now))
+    if (inWindow.length > 0) {
+      const queued = await Promise.all(inWindow.map(async (crash) => ({ ...crash, signature: await crashSignature(crash), title: crashTitle(crash) })))
+      await c.env.TELEMETRY_QUEUE.send({
+        version: 1,
+        kind: 'crashes',
+        installation_id: installationId,
+        app_id: appId,
+        received_at: Math.floor(now / 1000),
+        crashes: queued,
+      } satisfies TelemetryMessage)
+    }
+    return c.json({ code: 202 as const, data: { accepted: inWindow.length, rejected: crashes.length - inWindow.length } }, 202)
+  },
+)
+
+/* ── Remote operation ──────────────────────────────────────────────────────── */
+
+app.get(
+  '/:appId/config',
+  describeRoute({
+    operationId: 'config',
+    summary: 'Read flags and remote config',
+    description:
+      'The feature flags that apply to this device — each key resolved to the most specific value: this installation, then its channel, then the app — and the remote config document with its version. Answers an `ETag`; send it back as `If-None-Match` to get a 304 when nothing changed. Fetch it on start-up and whenever `sync.config_etag` in a heartbeat answer differs from the tag you hold. Cache it locally so the app still works offline.',
+    tags: ['Remote control'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description: 'The resolved config',
+        content: json(
+          v.object({
+            code: v.literal(200),
+            data: v.object({ flags: v.record(v.string(), v.unknown()), config: v.record(v.string(), v.unknown()), config_version: v.number() }),
+          }),
+        ),
+      },
+      304: { description: 'Unchanged since the ETag sent' },
+      403: { description: 'The config module is not enabled for this app' },
+    },
+  }),
+  requireInstallation,
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'config')
+    const installation = await loadInstallation(c, installationId)
+    const resolved = await resolveConfig(getDb(c.env), appId, { id: installation.id, channel: installation.channel })
+    const etag = await etagOf(resolved)
+    const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
+    if (c.req.header('If-None-Match') === etag) {
+      return c.body(null, 304, headers)
+    }
+    return c.json({ code: 200 as const, data: resolved }, 200, headers)
+  },
+)
+
+const messageSchema = v.object({
+  id: v.string(),
+  title: v.string(),
+  body: v.string(),
+  severity: v.picklist(['info', 'warning', 'critical']),
+  display: v.picklist(['banner', 'modal']),
+  starts_at: v.nullable(v.string()),
+  ends_at: v.nullable(v.string()),
+  updated_at: v.nullable(v.string()),
+  seen: v.boolean(),
+})
+
+app.get(
+  '/:appId/messages',
+  describeRoute({
+    operationId: 'messages',
+    summary: 'Read in-app messages',
+    description:
+      'The messages running now that are aimed at this device, most severe first. Show a `banner` where it does not block work and a `modal` the user has to close; confirm each one with `POST /messages/{messageId}/seen` once it was shown. `seen` says whether this device already did. Answers an `ETag` like `/config`; refetch when `sync.messages_etag` changes.',
+    tags: ['Remote control'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'The messages', content: json(v.object({ code: v.literal(200), data: v.array(messageSchema) })) },
+      304: { description: 'Unchanged since the ETag sent' },
+      403: { description: 'The messages module is not enabled for this app' },
+    },
+  }),
+  requireInstallation,
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'messages')
+    const installation = await loadInstallation(c, installationId)
+    const list = await activeMessages(getDb(c.env), appId, { id: installation.id, channel: installation.channel })
+    const etag = await etagOf(list)
+    const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
+    if (c.req.header('If-None-Match') === etag) {
+      return c.body(null, 304, headers)
+    }
+    return c.json({ code: 200 as const, data: list }, 200, headers)
+  },
+)
+
+app.post(
+  '/:appId/messages/:messageId/seen',
+  describeRoute({
+    operationId: 'messageSeen',
+    summary: 'Confirm a message was shown',
+    description: 'Idempotent: confirming twice is the same as once.',
+    tags: ['Remote control'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'Recorded', content: json(v.object({ code: v.literal(200), data: v.object({ id: v.string(), seen: v.literal(true) }) })) },
+      403: { description: 'The messages module is not enabled for this app' },
+      404: { description: 'No such message for this app' },
+    },
+  }),
+  requireInstallation,
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'messages')
+    const messageId = c.req.param('messageId')
+    const db = getDb(c.env)
+    const [message] = isUuid(messageId)
+      ? await db.select({ id: messages.id }).from(messages).where(and(eq(messages.id, messageId), eq(messages.appId, appId))).limit(1)
+      : []
+    if (!message) {
+      throw new HTTPException(404, { message: 'Message not found' })
+    }
+    await db.insert(messageReceipts).values({ messageId: message.id, installationId }).onConflictDoNothing()
+    return c.json({ code: 200 as const, data: { id: message.id, seen: true as const } })
+  },
+)
+
+/** A command of the calling installation, or 404 — whatever the reason, the device learns nothing. */
+const requireCommand = async (c: { env: AppEnv['Bindings'] }, installationId: string, commandId: string | undefined) => {
+  const [row] = commandId && isUuid(commandId)
+    ? await getDb(c.env).select().from(commands).where(and(eq(commands.id, commandId), eq(commands.installationId, installationId))).limit(1)
+    : []
+  if (!row) {
+    throw new HTTPException(404, { message: 'Command not found' })
+  }
+  return row
+}
+
+app.post(
+  '/:appId/commands/:commandId/ack',
+  describeRoute({
+    operationId: 'commandAck',
+    summary: 'Report the result of a command',
+    description:
+      'Once a command is done, or has failed. Only commands from the catalogue are ever sent — `restart_app`, `restart_device` (kiosks), `reload_config`, `clear_cache`, `screenshot` (answer with `POST /commands/{commandId}/screenshot` instead), `upload_logs` (send the logs to `/logs`, then acknowledge), `check_update` — and a device must refuse anything else by failing it. Acknowledging the same result twice is harmless. A command that expired or was cancelled before the acknowledgement answers 409.',
+    tags: ['Remote control'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'Recorded' },
+      403: { description: 'The commands module is not enabled for this app' },
+      404: { description: 'No such command for this installation' },
+      409: { description: 'The command expired or was cancelled' },
+    },
+  }),
+  requireInstallation,
+  validate('json', commandAckSchema),
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'commands')
+    const commandId = c.req.param('commandId') ?? ''
+    if (!isUuid(commandId)) throw new HTTPException(404, { message: 'Command not found' })
+    const result = await acknowledgeCommand(getDb(c.env), installationId, commandId, c.req.valid('json'))
+    if (result.outcome === 'not_found') throw new HTTPException(404, { message: 'Command not found' })
+    if (result.outcome === 'closed') throw new HTTPException(409, { message: `The command is already ${result.row.status}` })
+    return c.json({ code: 200 as const, data: { id: commandId, status: result.row.status } })
+  },
+)
+
+const SCREENSHOT_EXTENSIONS: Record<(typeof SCREENSHOTS.contentTypes)[number], string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+}
+
+app.post(
+  '/:appId/commands/:commandId/screenshot',
+  describeRoute({
+    operationId: 'commandScreenshot',
+    summary: 'Upload the screenshot a command asked for',
+    description: `The answer to a \`screenshot\` command: the image as the request body — not JSON — with \`Content-Type\` \`image/png\`, \`image/jpeg\` or \`image/webp\`, at most ${SCREENSHOTS.maxBytes / (1024 * 1024)} MB. It completes the command; no separate acknowledgement is needed. If screenshots were turned off for the app or this device after the command was sent, this answers 403 — fail the command instead.`,
+    tags: ['Remote control'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      201: { description: 'Stored' },
+      403: { description: 'Screenshots, or the commands module, are off' },
+      404: { description: 'No such screenshot command for this installation' },
+      409: { description: 'The command is no longer waiting for a screenshot' },
+      413: { description: 'The image is too large' },
+      415: { description: 'Not a PNG, JPEG or WebP image' },
+    },
+  }),
+  requireInstallation,
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    const appRow = await requireApp(c, appId)
+    requireModule(appRow, 'commands')
+    const command = await requireCommand(c, installationId, c.req.param('commandId'))
+    if (command.type !== 'screenshot') throw new HTTPException(404, { message: 'Command not found' })
+    if ((command.status !== 'pending' && command.status !== 'delivered') || command.expiresAt.getTime() <= Date.now()) {
+      throw new HTTPException(409, { message: `The command is already ${command.status === 'pending' || command.status === 'delivered' ? 'expired' : command.status}` })
+    }
+    const installation = await loadInstallation(c, installationId)
+    if (!appRow.screenshotsEnabled || !installation.screenshotsEnabled) {
+      throw new HTTPException(403, { message: 'Screenshots are turned off for this app or this device' })
+    }
+    const contentType = (c.req.header('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase()
+    if (!(SCREENSHOTS.contentTypes as readonly string[]).includes(contentType)) {
+      throw new HTTPException(415, { message: 'A screenshot is a PNG, JPEG or WebP image' })
+    }
+    const bytes = await c.req.arrayBuffer()
+    if (bytes.byteLength === 0) {
+      throw new HTTPException(400, { message: 'The image is empty' })
+    }
+
+    const id = crypto.randomUUID()
+    const objectKey = `screenshots/${appId}/${installationId}/${id}.${SCREENSHOT_EXTENSIONS[contentType as keyof typeof SCREENSHOT_EXTENSIONS]}`
+    await c.env.SCREENSHOTS.put(objectKey, bytes, { httpMetadata: { contentType } })
+    const now = new Date()
+    const db = getDb(c.env)
+    await db.batch([
+      db.insert(screenshots).values({ id, installationId, appId, commandId: command.id, objectKey, contentType, sizeBytes: bytes.byteLength }),
+      db
+        .update(commands)
+        .set({ status: 'succeeded', completedAt: now, deliveredAt: command.deliveredAt ?? now, result: JSON.stringify({ screenshot_id: id }) })
+        .where(eq(commands.id, command.id)),
+    ])
+    return c.json({ code: 201 as const, data: { id, command_id: command.id, size_bytes: bytes.byteLength } }, 201)
+  },
+)
+
 /* ── Documents ─────────────────────────────────────────────────────────────── */
 
-/** The operations that belong to an optional module, by path relative to the app. */
-const MODULE_OF_PATH: Record<string, AppModule> = { '/metrics': 'metrics', '/events': 'events' }
+/**
+ * The module an operation belongs to, by the first segment of its path relative to the app. Anything
+ * not listed is presence, which every app has.
+ */
+const MODULE_OF_SEGMENT: Record<string, AppModule> = {
+  metrics: 'metrics',
+  events: 'events',
+  logs: 'logs',
+  crashes: 'crashes',
+  config: 'config',
+  messages: 'messages',
+  commands: 'commands',
+}
+
+/** Socket presence is listed only for apps in socket mode: a ping app would be refused it. */
+const isSocketPath = (relative: string) => relative === '/socket'
 
 app.get(
   '/:appId/sdk.js',
@@ -465,8 +777,9 @@ app.get(
     const paths: Record<string, unknown> = {}
     for (const [path, item] of Object.entries(spec.paths ?? {})) {
       const relative = path.replace(/^\/\{appId\}/, '')
-      const module = MODULE_OF_PATH[relative]
+      const module = MODULE_OF_SEGMENT[relative.split('/')[1] ?? '']
       if (module && !modules.includes(module)) continue
+      if (isSocketPath(relative) && appRow.presenceMode !== 'socket') continue
       if (relative === '/openapi.json') continue
       for (const operation of Object.values(item as Record<string, { parameters?: Array<{ name: string; in: string }> }>)) {
         if (operation && typeof operation === 'object' && Array.isArray(operation.parameters)) {

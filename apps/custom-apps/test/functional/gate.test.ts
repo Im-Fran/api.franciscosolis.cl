@@ -69,8 +69,8 @@ describe('the two front doors', () => {
     const body = (await response.json()) as { data: Record<string, unknown> }
     expect(body.data).toMatchObject({
       ingest_base_url: 'https://ingest.franciscosolis.cl/custom-apps/v1',
-      presence_modes: ['ping'],
-      modules: ['metrics', 'events'],
+      presence_modes: ['ping', 'socket'],
+      modules: ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands'],
       offline_after_intervals: 3,
       timezone: 'America/Santiago',
     })

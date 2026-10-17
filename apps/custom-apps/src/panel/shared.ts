@@ -32,12 +32,14 @@ const likeTerm = (term: string) => `%${term.replace(/[\\%_]/g, (char) => `\\${ch
  */
 
 /**
- * SQL deciding whether an installation row (aliased `i`, joined to its app as `a`) is connected at
- * `now` (unix seconds). The same rule as `isConnected`, in SQL so lists and counts can filter on it.
- * `now` is an integer the Worker computed, never input, so it is inlined rather than bound.
+ * SQL deciding whether an installation row (aliased `i`, joined to its app as `a`, unless another
+ * alias and interval expression are named) is connected at `now` (unix seconds). The same rule as `isConnected`, in SQL so
+ * lists and counts can filter on it.
+ * `now` and any interval passed are integers the Worker computed, never input, so they are inlined
+ * rather than bound.
  */
-const connectedSql = (now: number) =>
-  `(i.status = 'active' AND i.last_seen_at IS NOT NULL AND i.last_seen_at >= ${Math.floor(now)} - a.heartbeat_interval_seconds * ${HEARTBEAT.offlineAfterIntervals})`
+const connectedSql = (now: number, installation = 'i', interval = 'a.heartbeat_interval_seconds') =>
+  `(${installation}.status = 'active' AND ${installation}.last_seen_at IS NOT NULL AND ${installation}.last_seen_at >= ${Math.floor(now)} - ${interval} * ${HEARTBEAT.offlineAfterIntervals} AND NOT (${installation}.socket_closed_at IS NOT NULL AND ${installation}.socket_closed_at >= ${installation}.last_seen_at))`
 
 const nowSeconds = () => Math.floor(Date.now() / 1000)
 

@@ -1,6 +1,7 @@
 import * as v from 'valibot'
 import type { Env } from '@/env'
-import { EVENT_TYPES, TELEMETRY } from '@/lib/config'
+import { CRASHES, EVENT_TYPES, LOG_LEVELS, LOGS, TELEMETRY } from '@/lib/config'
+import { hashToken } from '@/lib/tokens'
 
 /**
  * What a device measures, and the queue that carries it to D1.
@@ -80,6 +81,90 @@ const eventsBodySchema = v.object({
   events: v.pipe(v.array(eventSchema), v.minLength(1), v.maxLength(TELEMETRY.maxBatch)),
 })
 
+/** A flat-ish JSON object of at most `max` bytes once serialised. */
+const boundedObject = (max: number, what: string) =>
+  v.optional(
+    v.nullable(
+      v.pipe(
+        v.record(v.string(), v.unknown()),
+        v.check((value) => new TextEncoder().encode(JSON.stringify(value)).byteLength <= max, `${what} must serialise to at most ${max} bytes`),
+      ),
+    ),
+  )
+
+/** Text cut to `max` UTF-16 units rather than refused: a log line is worth keeping even when long. */
+const clipped = (max: number) => v.pipe(v.string(), v.transform((value) => (value.length > max ? `${value.slice(0, max - 1)}…` : value)))
+
+const logEntrySchema = v.object({
+  /** Device-minted and unique per installation, so a retried batch is recognised. */
+  id: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(64)),
+  level: v.picklist(LOG_LEVELS),
+  message: v.pipe(v.string(), v.minLength(1), clipped(LOGS.maxMessageBytes)),
+  target: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))),
+  occurred_at: deviceTime,
+  context: boundedObject(LOGS.maxContextBytes, 'context'),
+})
+type LogEntryInput = v.InferOutput<typeof logEntrySchema>
+
+const logsBodySchema = v.object({
+  entries: v.pipe(v.array(logEntrySchema), v.minLength(1), v.maxLength(TELEMETRY.maxBatch)),
+})
+
+const crashSchema = v.object({
+  /** Device-minted and unique per installation. */
+  id: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(64)),
+  occurred_at: deviceTime,
+  app_version: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(64)))),
+  /** Exception type or signal: `panic`, `SIGSEGV`, `TypeError`. */
+  kind: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))),
+  message: v.optional(v.nullable(clipped(CRASHES.maxMessageBytes))),
+  stack: v.optional(v.nullable(clipped(CRASHES.maxStackBytes))),
+  context: boundedObject(CRASHES.maxContextBytes, 'context'),
+})
+type CrashInput = v.InferOutput<typeof crashSchema>
+
+const crashesBodySchema = v.object({
+  crashes: v.pipe(v.array(crashSchema), v.minLength(1), v.maxLength(CRASHES.maxBatch)),
+})
+
+/**
+ * The frames that identify a crash, with everything that differs between two runs of the same bug
+ * taken out: addresses, line and column numbers, and the numbers inside generic or closure names.
+ * What is left is "which functions, in which order" — the same for every occurrence of one bug.
+ */
+const normaliseStack = (stack: string) =>
+  stack
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .replace(/0x[0-9a-f]+/gi, '<addr>')
+        .replace(/:\d+(?::\d+)?/g, '')
+        .replace(/\d+/g, 'N')
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter((line) => line.length > 0)
+    .slice(0, CRASHES.signatureFrames)
+    .join('\n')
+
+/**
+ * What groups crashes: SHA-256 of the kind and the normalised top frames. A report with no stack is
+ * grouped by its kind and message, numbers taken out, which is the best a stackless panic offers.
+ */
+const crashSignature = async (crash: Pick<CrashInput, 'kind' | 'message' | 'stack'>) => {
+  const body = crash.stack?.trim() ? normaliseStack(crash.stack) : (crash.message ?? '').replace(/\d+/g, 'N').trim()
+  return hashToken(`${crash.kind ?? ''}\n${body}`)
+}
+
+/** A crash group's title: its kind and the first line of its message. */
+const crashTitle = (crash: Pick<CrashInput, 'kind' | 'message'>) => {
+  const firstLine = (crash.message ?? '').split(/\r?\n/)[0]?.trim() ?? ''
+  const title = [crash.kind, firstLine].filter(Boolean).join(': ') || 'Crash'
+  return title.length > 200 ? `${title.slice(0, 199)}…` : title
+}
+
+type QueuedCrash = CrashInput & { signature: string; title: string }
+
 /**
  * The queue's one message shape. `version` so a consumer deployed ahead of (or behind) a producer can
  * tell; both halves live in this Worker today, but a queue outlives a deploy by its retry window.
@@ -87,6 +172,8 @@ const eventsBodySchema = v.object({
 type TelemetryMessage =
   | { version: 1; kind: 'metrics'; installation_id: string; app_id: string; received_at: number; samples: Sample[] }
   | { version: 1; kind: 'events'; installation_id: string; app_id: string; received_at: number; events: UsageEventInput[] }
+  | { version: 1; kind: 'logs'; installation_id: string; app_id: string; received_at: number; entries: LogEntryInput[] }
+  | { version: 1; kind: 'crashes'; installation_id: string; app_id: string; received_at: number; crashes: QueuedCrash[] }
 
 /**
  * Drops what a device should not have sent: a timestamp in the future beyond the allowed skew, or
@@ -238,6 +325,70 @@ const heartbeatLogStatement = (db: D1Database, entry: HeartbeatLogEntry) =>
       entry.snapshot ? JSON.stringify(entry.snapshot) : null,
     )
 
+const INSERT_LOG =
+  'INSERT OR IGNORE INTO log_entries (installation_id, entry_id, app_id, level, severity, message, target, context, occurred_at, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+
+const logStatement = (db: D1Database, message: Extract<TelemetryMessage, { kind: 'logs' }>, entry: LogEntryInput) =>
+  db.prepare(INSERT_LOG).bind(
+    message.installation_id,
+    entry.id,
+    message.app_id,
+    entry.level,
+    LOG_LEVELS.indexOf(entry.level),
+    entry.message,
+    entry.target ?? null,
+    entry.context ? JSON.stringify(entry.context) : null,
+    Math.round(entry.occurred_at),
+    message.received_at,
+  )
+
+/**
+ * Counts a crash into its group — creating the group on its first report — but only when this report
+ * has not been stored before, so a redelivered batch counts nothing twice. A report that occurred
+ * after its group was resolved reopens it: the fix did not hold. An `ignored` group stays ignored.
+ * The `WHERE` on the `SELECT` is also what lets SQLite parse the `ON CONFLICT` after it.
+ */
+const UPSERT_CRASH_GROUP = `INSERT INTO crash_groups (id, app_id, signature, app_version, title, status, occurrences, first_seen_at, last_seen_at)
+SELECT ?, ?, ?, ?, ?, 'open', 1, ?, ?
+WHERE NOT EXISTS (SELECT 1 FROM crash_reports WHERE installation_id = ? AND report_id = ?)
+ON CONFLICT (app_id, signature, app_version) DO UPDATE SET
+  occurrences = crash_groups.occurrences + 1,
+  first_seen_at = MIN(crash_groups.first_seen_at, excluded.first_seen_at),
+  last_seen_at = MAX(crash_groups.last_seen_at, excluded.last_seen_at),
+  status = CASE WHEN crash_groups.status = 'resolved' AND excluded.last_seen_at > crash_groups.resolved_at THEN 'open' ELSE crash_groups.status END,
+  resolved_by = CASE WHEN crash_groups.status = 'resolved' AND excluded.last_seen_at > crash_groups.resolved_at THEN NULL ELSE crash_groups.resolved_by END,
+  resolved_at = CASE WHEN crash_groups.status = 'resolved' AND excluded.last_seen_at > crash_groups.resolved_at THEN NULL ELSE crash_groups.resolved_at END`
+
+const INSERT_CRASH_REPORT = `INSERT OR IGNORE INTO crash_reports (installation_id, report_id, app_id, group_id, app_version, kind, message, stack, context, occurred_at, received_at)
+VALUES (?, ?, ?, (SELECT id FROM crash_groups WHERE app_id = ? AND signature = ? AND app_version = ?), ?, ?, ?, ?, ?, ?, ?)`
+
+const crashStatements = (db: D1Database, message: Extract<TelemetryMessage, { kind: 'crashes' }>, crash: QueuedCrash) => {
+  const version = crash.app_version ?? ''
+  const occurredSeconds = Math.floor(crash.occurred_at / 1000)
+  return [
+    db
+      .prepare(UPSERT_CRASH_GROUP)
+      .bind(crypto.randomUUID(), message.app_id, crash.signature, version, crash.title, occurredSeconds, occurredSeconds, message.installation_id, crash.id),
+    db
+      .prepare(INSERT_CRASH_REPORT)
+      .bind(
+        message.installation_id,
+        crash.id,
+        message.app_id,
+        message.app_id,
+        crash.signature,
+        version,
+        crash.app_version ?? null,
+        crash.kind ?? null,
+        crash.message ?? null,
+        crash.stack ?? null,
+        crash.context ? JSON.stringify(crash.context) : null,
+        Math.round(crash.occurred_at),
+        message.received_at,
+      ),
+  ]
+}
+
 /** The D1 statements one message turns into. Unknown shapes turn into none, and are acknowledged. */
 const statementsFor = (db: D1Database, body: unknown): D1PreparedStatement[] => {
   const message = body as Partial<TelemetryMessage> | null
@@ -249,6 +400,12 @@ const statementsFor = (db: D1Database, body: unknown): D1PreparedStatement[] => 
   }
   if (message.kind === 'events' && Array.isArray(message.events)) {
     return message.events.map((event) => eventStatement(db, message as Extract<TelemetryMessage, { kind: 'events' }>, event))
+  }
+  if (message.kind === 'logs' && Array.isArray(message.entries)) {
+    return message.entries.map((entry) => logStatement(db, message as Extract<TelemetryMessage, { kind: 'logs' }>, entry))
+  }
+  if (message.kind === 'crashes' && Array.isArray(message.crashes)) {
+    return message.crashes.flatMap((crash) => crashStatements(db, message as Extract<TelemetryMessage, { kind: 'crashes' }>, crash))
   }
   return []
 }
@@ -263,21 +420,36 @@ const BATCH_CHUNK = 500
  * rather than retried forever.
  */
 const consumeTelemetry = async (env: Env, batch: MessageBatch<unknown>) => {
-  const statements = batch.messages.flatMap((message) => statementsFor(env.DB, message.body))
-  for (let index = 0; index < statements.length; index += BATCH_CHUNK) {
-    await env.DB.batch(statements.slice(index, index + BATCH_CHUNK))
+  // Chunked by message, never inside one: a crash's two statements — the group count and the report
+  // that count is gated on — must commit in the same transaction.
+  const chunks: D1PreparedStatement[][] = [[]]
+  let rows = 0
+  for (const message of batch.messages) {
+    const statements = statementsFor(env.DB, message.body)
+    rows += statements.length
+    const current = chunks[chunks.length - 1]!
+    if (current.length > 0 && current.length + statements.length > BATCH_CHUNK) chunks.push([...statements])
+    else current.push(...statements)
   }
-  return { messages: batch.messages.length, rows: statements.length }
+  for (const chunk of chunks) {
+    if (chunk.length > 0) await env.DB.batch(chunk)
+  }
+  return { messages: batch.messages.length, rows }
 }
 
 export {
   consumeTelemetry,
+  crashesBodySchema,
+  crashSignature,
+  crashTitle,
   eventsBodySchema,
   heartbeatLogStatement,
   heartbeatSampleStatement,
+  logsBodySchema,
   minuteStart,
   metricsBodySchema,
+  normaliseStack,
   snapshotSchema,
   withinWindow,
 }
-export type { Sample, Snapshot, TelemetryMessage, UsageEventInput }
+export type { CrashInput, LogEntryInput, QueuedCrash, Sample, Snapshot, TelemetryMessage, UsageEventInput }

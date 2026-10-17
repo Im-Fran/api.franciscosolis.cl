@@ -33,6 +33,13 @@ const panelJson = async (path: string, init: PanelInit = {}) => {
 /** A device request, on the ingest host. */
 type IngestInit = Omit<RequestInit, 'body'> & { token?: string; body?: any; ip?: string }
 
+/** A body as `fetch` takes it: JSON for plain values, bytes and strings as they are. */
+const encodeBody = (body: unknown): BodyInit | undefined => {
+  if (body === undefined) return undefined
+  if (typeof body === 'string' || body instanceof ArrayBuffer || ArrayBuffer.isView(body) || body instanceof Blob) return body as BodyInit
+  return JSON.stringify(body)
+}
+
 const ingest = (appId: string, path: string, init: IngestInit = {}) => {
   const { token, body, ip, ...rest } = init
   const headers: Record<string, string> = {
@@ -45,7 +52,7 @@ const ingest = (appId: string, path: string, init: IngestInit = {}) => {
     method: body === undefined ? 'GET' : 'POST',
     ...rest,
     headers,
-    body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+    body: encodeBody(body),
   })
 }
 

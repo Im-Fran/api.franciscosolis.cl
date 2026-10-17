@@ -34,26 +34,40 @@ type Platform = (typeof PLATFORMS)[number]
 const APP_STATES = ['active', 'grace', 'maintenance', 'suspended'] as const
 type AppState = (typeof APP_STATES)[number]
 
-/** Release channels an installation follows. Nothing is released yet; the channel is recorded now. */
+/**
+ * Release channels an installation follows. Nothing is released yet (that is phase 3), but flags and
+ * messages can already target a channel.
+ */
 const CHANNELS = ['stable', 'beta'] as const
 type Channel = (typeof CHANNELS)[number]
 
 /**
  * How an installation reports that it is alive.
  *
- * Only `ping` today: `POST /heartbeat` every N seconds. A persistent `socket` mode belongs with
- * remote commands, which are what make a held-open connection worth its cost, and it will be added
- * to this list then — not before, so no app can be configured into a mode nothing answers.
+ * - `ping`: `POST /heartbeat` every N seconds. What websites and ordinary desktop apps use.
+ * - `socket`: a WebSocket to `GET /socket`, held open by a Durable Object per installation. The
+ *   device sends its heartbeats down the socket instead, and everything the panel sends — commands,
+ *   a state change, new config or messages — arrives the moment it is made rather than on the next
+ *   heartbeat. For kiosks and POS terminals.
+ *
+ * Either way "connected" is the same rule (`isConnected`), so switching an app between them changes
+ * how fast it hears from the panel, never what the panel shows about it.
  */
-const PRESENCE_MODES = ['ping'] as const
+const PRESENCE_MODES = ['ping', 'socket'] as const
 type PresenceMode = (typeof PRESENCE_MODES)[number]
 
 /**
  * Optional ingest modules an app can turn on. Presence (enroll, heartbeat, status) is always on —
  * an app that does not report it is not being maintained. A disabled module's endpoints answer 403
  * and are left out of that app's `openapi.json` and `sdk.js`.
+ *
+ * - `metrics` / `events`: system metrics and usage analytics.
+ * - `logs` / `crashes`: remote logs by level, and crash reports grouped by stack signature.
+ * - `config`: feature flags and the remote config document, read from `GET /config`.
+ * - `messages`: in-app banners and modals.
+ * - `commands`: remote commands from the closed catalogue in `COMMAND_TYPES`, screenshots included.
  */
-const APP_MODULES = ['metrics', 'events'] as const
+const APP_MODULES = ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands'] as const
 type AppModule = (typeof APP_MODULES)[number]
 
 /** What a contact is to a company. A contact may hold several at once. */
@@ -72,6 +86,128 @@ type EventType = (typeof EVENT_TYPES)[number]
 
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const
 type Weekday = (typeof WEEKDAYS)[number]
+
+/**
+ * Remote log levels, least severe first. An app sets the minimum it wants (`apps.log_level`), an
+ * installation can lower or raise it for itself, and the device is told the effective one on every
+ * heartbeat. Entries below it are dropped by the server too, so a device that ignores the setting
+ * cannot fill the table.
+ */
+const LOG_LEVELS = ['debug', 'info', 'warning', 'error', 'fatal'] as const
+type LogLevel = (typeof LOG_LEVELS)[number]
+
+/**
+ * The closed catalogue of remote commands. Closed on purpose: the panel never runs arbitrary shell
+ * on a client's device, so anything not in this list cannot be sent, whatever the payload says.
+ */
+const COMMAND_TYPES = [
+  'restart_app',
+  'restart_device',
+  'reload_config',
+  'clear_cache',
+  'screenshot',
+  'upload_logs',
+  'check_update',
+] as const
+type CommandType = (typeof COMMAND_TYPES)[number]
+
+/**
+ * A command's lifecycle: `pending` until a device is told about it, `delivered` once it was, then
+ * `succeeded` or `failed` as the device reports. `expired` when nobody acted on it in time,
+ * `cancelled` when the panel withdrew it first.
+ */
+const COMMAND_STATUSES = ['pending', 'delivered', 'succeeded', 'failed', 'expired', 'cancelled'] as const
+type CommandStatus = (typeof COMMAND_STATUSES)[number]
+
+const COMMANDS = {
+  /** Default and maximum lifetime of a command, in seconds. */
+  defaultTtlSeconds: 3600,
+  maxTtlSeconds: 7 * 24 * 3600,
+  /** Most commands handed to a device in one heartbeat answer. */
+  maxPerDelivery: 20,
+  /** Largest `payload` or `result`, serialised. */
+  maxPayloadBytes: 4096,
+} as const
+
+/** Screenshots: what a device may upload, and how big. Kept without expiry, by decision. */
+const SCREENSHOTS = {
+  maxBytes: 5 * 1024 * 1024,
+  contentTypes: ['image/png', 'image/jpeg', 'image/webp'] as const,
+} as const
+
+/** What a flag or a message is aimed at. The most specific match wins: installation, channel, app. */
+const TARGET_SCOPES = ['app', 'channel', 'installation'] as const
+type TargetScope = (typeof TARGET_SCOPES)[number]
+
+const MESSAGE_SEVERITIES = ['info', 'warning', 'critical'] as const
+type MessageSeverity = (typeof MESSAGE_SEVERITIES)[number]
+
+/** How a message is shown: a dismissible banner, or a modal the user has to acknowledge. */
+const MESSAGE_DISPLAYS = ['banner', 'modal'] as const
+type MessageDisplay = (typeof MESSAGE_DISPLAYS)[number]
+
+/** Remote config: the document and its schema, both JSON, both bounded. */
+const REMOTE_CONFIG = {
+  maxDocumentBytes: 64 * 1024,
+  maxSchemaBytes: 32 * 1024,
+  /** Flags per app. */
+  maxFlags: 200,
+  maxFlagValueBytes: 1024,
+} as const
+
+/** Crash grouping and the shape of a report. */
+const CRASHES = {
+  /** Frames of the stack that make up the signature, after normalisation. */
+  signatureFrames: 12,
+  maxStackBytes: 64 * 1024,
+  maxMessageBytes: 2048,
+  maxContextBytes: 8192,
+  /** Crash reports per request. */
+  maxBatch: 20,
+} as const
+
+const CRASH_STATUSES = ['open', 'resolved', 'ignored'] as const
+type CrashStatus = (typeof CRASH_STATUSES)[number]
+
+const LOGS = {
+  maxMessageBytes: 4096,
+  maxContextBytes: 4096,
+} as const
+
+/**
+ * What an alert rule can watch. Each is evaluated every few minutes by the cron, against data this
+ * Worker already holds:
+ *
+ * - `installation_offline`: an installation not seen for `threshold` minutes. Websites are left out —
+ *   a browser closing its tab is not an outage.
+ * - `cpu_high` / `memory_high`: every sample of the last `window_minutes` at or above `threshold` %.
+ * - `crash_spike`: at least `threshold` crash reports in the last `window_minutes`.
+ * - `error_log_spike`: at least `threshold` `error`/`fatal` log entries in the last `window_minutes`.
+ * - `enrollment_spike`: at least `threshold` new installations in the last `window_minutes` — the
+ *   alarm on auto-approved enrollment.
+ *
+ * Site uptime, certificates, rollbacks, contracts and hours arrive with the phases that bring the
+ * data they would watch.
+ */
+const ALERT_KINDS = ['installation_offline', 'cpu_high', 'memory_high', 'crash_spike', 'error_log_spike', 'enrollment_spike'] as const
+type AlertKind = (typeof ALERT_KINDS)[number]
+
+/** `open` until somebody acknowledges it or its condition clears; `resolved` either way at the end. */
+const ALERT_STATUSES = ['open', 'acknowledged', 'resolved'] as const
+type AlertStatus = (typeof ALERT_STATUSES)[number]
+
+const ALERTS = {
+  /**
+   * An alert whose condition comes back within this many minutes of resolving is reopened rather
+   * than raised again, so a flapping kiosk is one alert with a count, not a notification each time.
+   */
+  reopenWithinMinutes: 30,
+  /** Most alert rules in total. Evaluation is a handful of queries per rule every few minutes. */
+  maxRules: 100,
+} as const
+
+/** Grace before suspension is a contract term, capped at a month. */
+const GRACE_MAX_DAYS = 31
 
 /** Heartbeat interval bounds, in seconds. */
 const HEARTBEAT = {
@@ -136,35 +272,60 @@ const PAGINATION = {
 
 export {
   ADMIN_PERMISSION,
+  ALERT_KINDS,
+  ALERT_STATUSES,
+  ALERTS,
   APP_KINDS,
   APP_MODULES,
   APP_STATES,
   CHANNELS,
+  COMMAND_STATUSES,
+  COMMAND_TYPES,
+  COMMANDS,
   CONTACT_ROLES,
+  CRASH_STATUSES,
+  CRASHES,
   EVENT_TYPES,
+  GRACE_MAX_DAYS,
   HEARTBEAT,
   INSTALLATION_STATUSES,
   JWKS_CACHE_TTL,
   KEY_STATUSES,
+  LOG_LEVELS,
+  LOGS,
+  MESSAGE_DISPLAYS,
+  MESSAGE_SEVERITIES,
   PAGINATION,
   PLATFORMS,
   PRESENCE_MODES,
+  REMOTE_CONFIG,
   ROLLUP,
+  SCREENSHOTS,
   SERIES,
+  TARGET_SCOPES,
   TELEMETRY,
   TOKENS,
   WEEKDAYS,
 }
 export type {
+  AlertKind,
+  AlertStatus,
   AppKind,
   AppModule,
   AppState,
   Channel,
+  CommandStatus,
+  CommandType,
   ContactRole,
+  CrashStatus,
   EventType,
   InstallationStatus,
   KeyStatus,
+  LogLevel,
+  MessageDisplay,
+  MessageSeverity,
   Platform,
   PresenceMode,
+  TargetScope,
   Weekday,
 }

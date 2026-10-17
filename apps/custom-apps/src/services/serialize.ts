@@ -1,5 +1,5 @@
 import type { apps, appKeys, companies, companyContacts, contacts, installations } from '@/db/schema'
-import type { AppModule, AppState } from '@/lib/config'
+import type { AppModule, AppState, LogLevel } from '@/lib/config'
 import { iso, parseJsonArray, parseJsonObject } from '@/lib/json'
 import { effectiveState, isConnected } from '@/services/presence'
 import type { Snapshot } from '@/services/telemetry'
@@ -96,6 +96,8 @@ const toApp = (
   heartbeat_interval_seconds: row.heartbeatIntervalSeconds,
   operating_hours: parseJsonObject(row.operatingHours),
   modules: parseJsonArray<AppModule>(row.modules),
+  log_level: row.logLevel,
+  screenshots_enabled: row.screenshotsEnabled,
   state_message: row.stateMessage,
   state_until: iso(row.stateUntil),
   needs_review_count: counts.needsReview ?? 0,
@@ -130,13 +132,19 @@ const toInstallationSummary = (row: InstallationRow, intervalSeconds: number, no
   app_version: row.appVersion,
   channel: row.channel,
   status: row.status,
-  connected: row.status === 'active' && isConnected(row.lastSeenAt, intervalSeconds, now),
+  connected: row.status === 'active' && isConnected(row.lastSeenAt, intervalSeconds, now, row.socketClosedAt),
   needs_review: row.needsReview,
+  /** Whether a socket is open right now (socket mode). */
+  socket_connected: row.socketConnectedAt !== null,
   last_seen_at: iso(row.lastSeenAt),
   enrolled_at: iso(row.enrolledAt),
 })
 
-const toInstallation = (row: InstallationRow, app: Pick<AppRow, 'state' | 'heartbeatIntervalSeconds'>, now: Date = new Date()) => ({
+const toInstallation = (
+  row: InstallationRow,
+  app: Pick<AppRow, 'state' | 'heartbeatIntervalSeconds' | 'logLevel' | 'screenshotsEnabled' | 'presenceMode'>,
+  now: Date = new Date(),
+) => ({
   ...toInstallationSummary(row, app.heartbeatIntervalSeconds, now),
   previous_app_version: row.previousAppVersion,
   user_agent: row.userAgent,
@@ -146,6 +154,14 @@ const toInstallation = (row: InstallationRow, app: Pick<AppRow, 'state' | 'heart
   state_override: row.stateOverride as AppState | null,
   state_message: row.stateMessage,
   effective_state: effectiveState(app.state, row.stateOverride),
+  log_level_override: row.logLevelOverride as LogLevel | null,
+  effective_log_level: (row.logLevelOverride ?? app.logLevel) as LogLevel,
+  screenshots_enabled: row.screenshotsEnabled,
+  /** Both switches: the app's and this device's. What decides whether a screenshot can be asked for. */
+  screenshots_allowed: app.screenshotsEnabled && row.screenshotsEnabled,
+  presence_mode: app.presenceMode,
+  socket_connected_at: iso(row.socketConnectedAt),
+  socket_closed_at: iso(row.socketClosedAt),
   reviewed_at: iso(row.reviewedAt),
   reviewed_by: row.reviewedBy,
   revoked_at: iso(row.revokedAt),

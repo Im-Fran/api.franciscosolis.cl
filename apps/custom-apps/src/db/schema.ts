@@ -109,6 +109,15 @@ const apps = sqliteTable('apps', {
   stateMessage: text('state_message'),
   /** End of a grace period, or a maintenance's estimated end. */
   stateUntil: integer('state_until', { mode: 'timestamp' }),
+  /** `LOG_LEVELS`: the least severe remote log entry the fleet sends and the server keeps. */
+  logLevel: text('log_level').notNull().default('info'),
+  /**
+   * Whether a screenshot may be asked for at all. Off until the client's contract says so: a
+   * screenshot can show the client's own customers, which is personal data (ley 21.719).
+   */
+  screenshotsEnabled: integer('screenshots_enabled', { mode: 'boolean' }).notNull().default(false),
+  /** JSON Schema (the subset in `lib/json-schema.ts`) the remote config document must satisfy. */
+  configSchema: text('config_schema'),
   ...authorship,
   ...timestamps,
 }, (table) => [
@@ -172,6 +181,17 @@ const installations = sqliteTable('installations', {
   /** Per-installation kill switch, overriding the app's `state` when set. */
   stateOverride: text('state_override'),
   stateMessage: text('state_message'),
+  /** `LOG_LEVELS`, overriding the app's for this device alone — turning one kiosk up to `debug`. */
+  logLevelOverride: text('log_level_override'),
+  /** Screenshots for this device, on top of the app's switch. Both must be on. */
+  screenshotsEnabled: integer('screenshots_enabled', { mode: 'boolean' }).notNull().default(true),
+  /** When the current socket opened, while one is open. Null in ping mode or between sockets. */
+  socketConnectedAt: integer('socket_connected_at', { mode: 'timestamp' }),
+  /**
+   * When the last socket closed cleanly. A close the Durable Object saw is known disconnection, so
+   * `isConnected` reads it as offline at once instead of waiting out three intervals.
+   */
+  socketClosedAt: integer('socket_closed_at', { mode: 'timestamp' }),
   enrolledWithKeyId: text('enrolled_with_key_id'),
   enrolledIp: text('enrolled_ip'),
   enrolledAt: integer('enrolled_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
@@ -338,6 +358,251 @@ const installationDaily = sqliteTable('installation_daily', {
   index('installation_daily_app_day_idx').on(table.appId, table.day),
 ])
 
+/* ── Remote operation ──────────────────────────────────────────────────────── */
+
+/**
+ * A command from the closed catalogue (`COMMAND_TYPES`) for one installation. Delivered in the next
+ * heartbeat answer in ping mode, or pushed down the socket the moment it is created in socket mode;
+ * acknowledged by the device with its result. Never deleted: it is the record of what was done to a
+ * client's device, and when.
+ */
+const commands = sqliteTable('commands', {
+  id: text('id').primaryKey(),
+  installationId: text('installation_id').notNull().references(() => installations.id, { onDelete: 'cascade' }),
+  appId: text('app_id').notNull(),
+  /** `COMMAND_TYPES`. */
+  type: text('type').notNull(),
+  /** JSON object, or null. */
+  payload: text('payload'),
+  /** `COMMAND_STATUSES`. */
+  status: text('status').notNull().default('pending'),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  deliveredAt: integer('delivered_at', { mode: 'timestamp' }),
+  completedAt: integer('completed_at', { mode: 'timestamp' }),
+  /** What the device reported: JSON. */
+  result: text('result'),
+  createdBy: text('created_by'),
+  cancelledBy: text('cancelled_by'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  index('commands_installation_created_idx').on(table.installationId, table.createdAt),
+  index('commands_status_expiry_idx').on(table.status, table.expiresAt),
+])
+
+/**
+ * A screenshot a device uploaded in answer to a `screenshot` command. The bytes live in R2
+ * (`SCREENSHOTS`), with no public access: the panel streams them through this Worker. Kept without
+ * expiry by decision, and deletable one by one — a client asking for an image of their customers to
+ * be removed is a request that has to be answerable.
+ */
+const screenshots = sqliteTable('screenshots', {
+  id: text('id').primaryKey(),
+  installationId: text('installation_id').notNull().references(() => installations.id, { onDelete: 'cascade' }),
+  appId: text('app_id').notNull(),
+  commandId: text('command_id'),
+  objectKey: text('object_key').notNull(),
+  contentType: text('content_type').notNull(),
+  sizeBytes: integer('size_bytes').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [index('screenshots_installation_created_idx').on(table.installationId, table.createdAt)])
+
+/**
+ * A feature flag: a boolean, a variant name or a number, aimed at the whole app, one channel or one
+ * installation. Several rows can share a key at different scopes; the most specific one that applies
+ * to a device wins (`resolveFlags`). `scope_value` is `''` for the app scope rather than null, so the
+ * unique index can see the duplicate — SQLite treats every null as distinct.
+ */
+const flags = sqliteTable('flags', {
+  id: text('id').primaryKey(),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  key: text('key').notNull(),
+  description: text('description'),
+  /** `TARGET_SCOPES`. */
+  scope: text('scope').notNull().default('app'),
+  /** The channel or the installation id; `''` for the app scope. */
+  scopeValue: text('scope_value').notNull().default(''),
+  /** JSON: `true`, `"variant-b"`, `3`. */
+  value: text('value').notNull(),
+  ...authorship,
+  ...timestamps,
+}, (table) => [uniqueIndex('flags_app_key_scope_unique').on(table.appId, table.key, table.scope, table.scopeValue)])
+
+/**
+ * The remote config document of an app, versioned: every save is a new row, and the current
+ * document is the highest version. Restoring an old one saves it again as the next version, so the
+ * history only ever grows and always says what each device could have read.
+ */
+const configVersions = sqliteTable('config_versions', {
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  version: integer('version').notNull(),
+  /** JSON object. */
+  document: text('document').notNull(),
+  note: text('note'),
+  createdBy: text('created_by'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [primaryKey({ columns: [table.appId, table.version] })])
+
+/** An in-app message: a banner or a modal, shown between `starts_at` and `ends_at` to its target. */
+const messages = sqliteTable('messages', {
+  id: text('id').primaryKey(),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  /** `MESSAGE_SEVERITIES`. */
+  severity: text('severity').notNull().default('info'),
+  /** `MESSAGE_DISPLAYS`. */
+  display: text('display').notNull().default('banner'),
+  /** `TARGET_SCOPES`, as for flags. */
+  scope: text('scope').notNull().default('app'),
+  scopeValue: text('scope_value').notNull().default(''),
+  startsAt: integer('starts_at', { mode: 'timestamp' }).notNull(),
+  /** Null for a message that stays until it is ended or deleted. */
+  endsAt: integer('ends_at', { mode: 'timestamp' }),
+  ...authorship,
+  ...timestamps,
+}, (table) => [index('messages_app_starts_idx').on(table.appId, table.startsAt)])
+
+/** That an installation showed a message. The device confirms; the panel counts. */
+const messageReceipts = sqliteTable('message_receipts', {
+  messageId: text('message_id').notNull().references(() => messages.id, { onDelete: 'cascade' }),
+  installationId: text('installation_id').notNull(),
+  seenAt: integer('seen_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [primaryKey({ columns: [table.messageId, table.installationId] })])
+
+/* ── Crashes and logs ──────────────────────────────────────────────────────── */
+
+/**
+ * Crashes grouped by the signature of their stack and the version that crashed. The group is what
+ * the panel lists and what an editor resolves; its counters are kept without expiry, while the
+ * individual reports behind it age out with the rest of the raw telemetry. `app_version` is `''`
+ * when the device did not say, for the same unique-index reason as `flags.scope_value`.
+ */
+const crashGroups = sqliteTable('crash_groups', {
+  id: text('id').primaryKey(),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  /** SHA-256 (hex) of the normalised top frames, or of the message for a report with no stack. */
+  signature: text('signature').notNull(),
+  appVersion: text('app_version').notNull().default(''),
+  /** The first report's exception type and message, as the group's title. */
+  title: text('title').notNull(),
+  /** `CRASH_STATUSES`. A new report on a `resolved` group reopens it; `ignored` stays ignored. */
+  status: text('status').notNull().default('open'),
+  occurrences: integer('occurrences').notNull().default(0),
+  firstSeenAt: integer('first_seen_at', { mode: 'timestamp' }).notNull(),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull(),
+  resolvedAt: integer('resolved_at', { mode: 'timestamp' }),
+  resolvedBy: text('resolved_by'),
+}, (table) => [
+  uniqueIndex('crash_groups_app_signature_version_unique').on(table.appId, table.signature, table.appVersion),
+  index('crash_groups_app_seen_idx').on(table.appId, table.lastSeenAt),
+])
+
+/** One crash as a device reported it, kept `TELEMETRY.rawRetentionDays`. */
+const crashReports = sqliteTable('crash_reports', {
+  installationId: text('installation_id').notNull(),
+  /** Device-minted, so a report sent twice is stored once. */
+  reportId: text('report_id').notNull(),
+  appId: text('app_id').notNull(),
+  groupId: text('group_id').notNull(),
+  appVersion: text('app_version'),
+  /** Exception type or signal, e.g. `panic`, `SIGSEGV`, `TypeError`. */
+  kind: text('kind'),
+  message: text('message'),
+  stack: text('stack'),
+  /** JSON object. */
+  context: text('context'),
+  /** Device time, unix milliseconds. */
+  occurredAt: integer('occurred_at').notNull(),
+  receivedAt: integer('received_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.installationId, table.reportId] }),
+  index('crash_reports_group_time_idx').on(table.groupId, table.occurredAt),
+  index('crash_reports_app_time_idx').on(table.appId, table.occurredAt),
+  index('crash_reports_occurred_idx').on(table.occurredAt),
+])
+
+/** Remote log entries at or above the effective level, kept `TELEMETRY.rawRetentionDays`. */
+const logEntries = sqliteTable('log_entries', {
+  installationId: text('installation_id').notNull(),
+  /** Device-minted and unique per installation, like a usage event's. */
+  entryId: text('entry_id').notNull(),
+  appId: text('app_id').notNull(),
+  /** `LOG_LEVELS`. */
+  level: text('level').notNull(),
+  /** The level's index in `LOG_LEVELS`, so "at least warning" is a comparison. */
+  severity: integer('severity').notNull(),
+  message: text('message').notNull(),
+  /** Module or subsystem that logged it. */
+  target: text('target'),
+  /** JSON object. */
+  context: text('context'),
+  occurredAt: integer('occurred_at').notNull(),
+  receivedAt: integer('received_at', { mode: 'timestamp' }).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.installationId, table.entryId] }),
+  index('log_entries_installation_time_idx').on(table.installationId, table.occurredAt),
+  index('log_entries_app_time_idx').on(table.appId, table.occurredAt),
+  index('log_entries_occurred_idx').on(table.occurredAt),
+])
+
+/* ── Alerts ────────────────────────────────────────────────────────────────── */
+
+/**
+ * What to watch (`ALERT_KINDS`), on one app or on every app (`app_id` null), and who to tell. The
+ * recipient is the account that created the rule — its `sub`, which is what the notifications
+ * Worker files a notification under.
+ */
+const alertRules = sqliteTable('alert_rules', {
+  id: text('id').primaryKey(),
+  appId: text('app_id').references(() => apps.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  /** `ALERT_KINDS`. */
+  kind: text('kind').notNull(),
+  /** Minutes offline, a percentage or a count, depending on `kind`. */
+  threshold: real('threshold').notNull(),
+  /** The window a rate or a sustained value is measured over. Unused by `installation_offline`. */
+  windowMinutes: integer('window_minutes').notNull().default(15),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  /** Alerts still open and resolve while silenced; only the notifications stop. */
+  silencedUntil: integer('silenced_until', { mode: 'timestamp' }),
+  notifyUserId: text('notify_user_id'),
+  notifyEmail: text('notify_email'),
+  ...authorship,
+  ...timestamps,
+}, (table) => [index('alert_rules_app_idx').on(table.appId)])
+
+/**
+ * One firing of a rule for one subject — an installation, or the app itself — kept for good. At most
+ * one unresolved alert exists per rule and subject (a partial unique index), so a condition that holds
+ * for an hour is one alert with an `occurrences` count, not twelve.
+ */
+const alerts = sqliteTable('alerts', {
+  id: text('id').primaryKey(),
+  ruleId: text('rule_id').notNull().references(() => alertRules.id, { onDelete: 'cascade' }),
+  appId: text('app_id').notNull(),
+  installationId: text('installation_id'),
+  /** `installation:<id>` or `app:<id>`: what the alert is about, for the uniqueness above. */
+  subject: text('subject').notNull(),
+  /** `ALERT_STATUSES`. */
+  status: text('status').notNull().default('open'),
+  /** The measurement that tripped it, last time it was evaluated. */
+  value: real('value'),
+  /** JSON with whatever the kind adds (alias, app name…), for the panel and the notification. */
+  details: text('details'),
+  occurrences: integer('occurrences').notNull().default(1),
+  openedAt: integer('opened_at', { mode: 'timestamp' }).notNull(),
+  lastTriggeredAt: integer('last_triggered_at', { mode: 'timestamp' }).notNull(),
+  acknowledgedAt: integer('acknowledged_at', { mode: 'timestamp' }),
+  acknowledgedBy: text('acknowledged_by'),
+  resolvedAt: integer('resolved_at', { mode: 'timestamp' }),
+  resolvedBy: text('resolved_by'),
+  notifiedAt: integer('notified_at', { mode: 'timestamp' }),
+}, (table) => [
+  uniqueIndex('alerts_rule_subject_unresolved_unique').on(table.ruleId, table.subject).where(sql`status != 'resolved'`),
+  index('alerts_status_opened_idx').on(table.status, table.openedAt),
+  index('alerts_app_idx').on(table.appId, table.openedAt),
+])
+
 /* ── Audit ─────────────────────────────────────────────────────────────────── */
 
 /**
@@ -363,16 +628,27 @@ const auditLogs = sqliteTable('audit_logs', {
 ])
 
 export {
+  alertRules,
+  alerts,
   apps,
   appKeys,
   auditLogs,
+  commands,
   companies,
   companyContacts,
+  configVersions,
   contacts,
+  crashGroups,
+  crashReports,
+  flags,
   heartbeatLog,
   installationDaily,
   installations,
+  logEntries,
+  messageReceipts,
+  messages,
   metricSamples,
+  screenshots,
   usageEvents,
   usageHourly,
 }

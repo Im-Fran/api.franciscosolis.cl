@@ -9,6 +9,7 @@ import { APP_STATES, type AppState } from '@/lib/config'
 import { parseJsonObject } from '@/lib/json'
 import { dateInput, paginationQuery, searchQuery } from '@/lib/validation'
 import { validate } from '@/lib/validate'
+import { unresolvedCount } from '@/services/alerts'
 import { toInstallationSummary } from '@/services/serialize'
 import { connectedSql, nowSeconds, page, panelErrors } from '@/panel/shared'
 
@@ -23,7 +24,7 @@ app.get(
   '/overview',
   describeRoute({
     description:
-      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, and the latest enrollments.',
+      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, and the latest enrollments.',
     tags: ['Overview'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'The overview' }, ...panelErrors },
@@ -34,7 +35,7 @@ app.get(
     const nowDate = new Date(now * 1000)
 
     const summaryColumns = { installation: installations, appName: apps.name, interval: apps.heartbeatIntervalSeconds }
-    const [[fleet], states, [counts], recent, review] = await Promise.all([
+    const [[fleet], states, [counts], recent, review, openAlerts] = await Promise.all([
       c.env.DB.prepare(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN i.status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -55,6 +56,7 @@ app.get(
         .where(and(eq(installations.needsReview, true), eq(installations.status, 'active')))
         .orderBy(asc(installations.enrolledAt), asc(installations.id))
         .limit(RECENT),
+      unresolvedCount(db),
     ])
 
     const byState = Object.fromEntries(APP_STATES.map((state) => [state, 0])) as Record<AppState, number>
@@ -79,6 +81,7 @@ app.get(
         apps: { total: Object.values(byState).reduce((sum, count) => sum + count, 0), by_state: byState },
         companies: { total: Number(counts?.companies ?? 0) },
         contacts: { total: Number(counts?.contacts ?? 0) },
+        alerts: { unresolved: openAlerts },
         recent_installations: recent.map(summary),
         needs_review: review.map(summary),
       },

@@ -29,14 +29,42 @@
       "zone_name": "franciscosolis.cl"
     }
   ],
-  // Hourly, for the same reason as the notifications digest: the daily roll-up is defined on
-  // Santiago's wall clock, and Chile moves its clocks twice a year. Each run purges raw telemetry
-  // past its retention, and the run that lands at `ROLLUP.hour` in Santiago also rolls up yesterday.
+  // Every five minutes, because alerts are evaluated on it: "offline for ten minutes" cannot wait for
+  // the top of the hour. The hourly work rides on the run in the first five minutes of each hour —
+  // purging raw telemetry past its retention, and at `ROLLUP.hour` in Santiago the daily roll-up,
+  // which is defined on Santiago's wall clock because Chile moves its clocks twice a year.
   "triggers": {
     "crons": [
-      "0 * * * *"
+      "*/5 * * * *"
     ]
   },
+  // Socket presence: one Durable Object per installation, named by its id, holding the WebSocket
+  // with the Hibernation API so an idle kiosk costs nothing between messages. Inherited by `env.dev`
+  // (the class is part of the code); the binding is not, and is restated there.
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "InstallationSocket"
+      ]
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PRESENCE",
+        "class_name": "InstallationSocket"
+      }
+    ]
+  },
+  // Screenshots asked for by command. No public access and no custom domain: the panel reads them
+  // through `GET /v1/screenshots/:id/image`, behind the same gate as everything else.
+  "r2_buckets": [
+    {
+      "binding": "SCREENSHOTS",
+      "bucket_name": "franciscosolis-custom-apps-screenshots"
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -54,6 +82,13 @@
       {
         "binding": "TELEMETRY_QUEUE",
         "queue": "franciscosolis-custom-apps-telemetry"
+      },
+      {
+        // Alerts, as one more producer of the notifications queue. A queue rather than a binding
+        // into `notifications`, like every other producer, so a notification outage never fails the
+        // cron that raised the alert.
+        "binding": "NOTIFICATIONS_QUEUE",
+        "queue": "franciscosolis-notifications"
       }
     ],
     "consumers": [
@@ -143,6 +178,20 @@
           "zone_name": "franciscosolis.cl"
         }
       ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "PRESENCE",
+            "class_name": "InstallationSocket"
+          }
+        ]
+      },
+      "r2_buckets": [
+        {
+          "binding": "SCREENSHOTS",
+          "bucket_name": "franciscosolis-custom-apps-screenshots-dev"
+        }
+      ],
       "d1_databases": [
         {
           "binding": "DB",
@@ -156,6 +205,10 @@
           {
             "binding": "TELEMETRY_QUEUE",
             "queue": "franciscosolis-custom-apps-telemetry-dev"
+          },
+          {
+            "binding": "NOTIFICATIONS_QUEUE",
+            "queue": "franciscosolis-notifications-dev"
           }
         ],
         "consumers": [
