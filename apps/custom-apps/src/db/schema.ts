@@ -710,6 +710,130 @@ const alerts = sqliteTable('alerts', {
   index('alerts_app_idx').on(table.appId, table.openedAt),
 ])
 
+/* ── Contracts and hours ───────────────────────────────────────────────────── */
+
+/**
+ * What a client pays for, and the hours of maintenance and support it includes per cycle.
+ *
+ * Dates are calendar days in Santiago (`YYYY-MM-DD`, `ends_on` inclusive) rather than instants:
+ * a contract ends on a day, whatever the hour. Hours are kept in whole minutes. `amount` and
+ * `overage_rate` are in `currency`; a UF amount is converted for display, never stored converted.
+ *
+ * The end of a contract drives the kill switch: the cron tells the client before it ends
+ * (`notice_sent_at`), and when it lapses without renewal puts every covered app in grace — or
+ * straight into suspension with no grace days — and records `lapsed_at`. Renewing clears both and
+ * reactivates the apps it had put in grace.
+ */
+const contracts = sqliteTable('contracts', {
+  id: text('id').primaryKey(),
+  companyId: text('company_id').notNull().references(() => companies.id, { onDelete: 'restrict' }),
+  /** The plan's name, as the client knows it. */
+  name: text('name').notNull(),
+  amount: real('amount').notNull().default(0),
+  /** `CURRENCIES`. */
+  currency: text('currency').notNull().default('CLP'),
+  /** `BILLING_PERIODS`: what `amount` is the price of. */
+  billingPeriod: text('billing_period').notNull().default('monthly'),
+  startsOn: text('starts_on').notNull(),
+  /** Inclusive. Null for an open-ended contract. */
+  endsOn: text('ends_on'),
+  autoRenew: integer('auto_renew', { mode: 'boolean' }).notNull().default(false),
+  renewalMonths: integer('renewal_months').notNull().default(12),
+  /** Days before `ends_on` the client is told the contract ends. */
+  noticeDays: integer('notice_days').notNull().default(30),
+  /** `CYCLE_PERIODS`. */
+  cyclePeriod: text('cycle_period').notNull().default('monthly'),
+  includedMinutes: integer('included_minutes').notNull().default(0),
+  rolloverEnabled: integer('rollover_enabled', { mode: 'boolean' }).notNull().default(false),
+  rolloverMaxMinutes: integer('rollover_max_minutes'),
+  rolloverMaxCycles: integer('rollover_max_cycles'),
+  /** Price of an hour beyond what a cycle includes, in `currency`. */
+  overageRate: real('overage_rate').notNull().default(0),
+  /** Days of grace after `ends_on` before the covered apps are suspended. 0 suspends at once. */
+  graceDays: integer('grace_days').notNull().default(0),
+  /** JSON array from `GRACE_ALLOWANCES`: what keeps working in grace besides the app. */
+  graceAllows: text('grace_allows').notNull().default('[]'),
+  /** What the covered apps show while in grace and once suspended. Null leaves it to each app. */
+  graceMessage: text('grace_message'),
+  noticeSentAt: integer('notice_sent_at', { mode: 'timestamp' }),
+  lapsedAt: integer('lapsed_at', { mode: 'timestamp' }),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  cancelledBy: text('cancelled_by'),
+  notes: text('notes'),
+  ...authorship,
+  ...timestamps,
+}, (table) => [index('contracts_company_idx').on(table.companyId), index('contracts_ends_idx').on(table.endsOn)])
+
+/** The apps a contract covers. An app may be covered by successive contracts, never two at once. */
+const contractApps = sqliteTable('contract_apps', {
+  contractId: text('contract_id').notNull().references(() => contracts.id, { onDelete: 'cascade' }),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+}, (table) => [primaryKey({ columns: [table.contractId, table.appId] }), index('contract_apps_app_idx').on(table.appId)])
+
+/**
+ * One period of a contract's included hours. Created as the calendar reaches it, closed when it
+ * ends: closing computes the balance once (`lib/hours.ts`) and the row is final from then on — the
+ * next cycle's carried hours were computed from it, so it cannot change underneath them.
+ */
+const contractCycles = sqliteTable('contract_cycles', {
+  id: text('id').primaryKey(),
+  contractId: text('contract_id').notNull().references(() => contracts.id, { onDelete: 'cascade' }),
+  startsOn: text('starts_on').notNull(),
+  /** Exclusive. */
+  endsOn: text('ends_on').notNull(),
+  includedMinutes: integer('included_minutes').notNull(),
+  /** JSON `CarriedBucket[]` carried into this cycle. */
+  carried: text('carried').notNull().default('[]'),
+  carriedMinutes: integer('carried_minutes').notNull().default(0),
+  /** `CYCLE_STATUSES`. */
+  status: text('status').notNull().default('open'),
+  /** Set when the cycle closes; while open, usage is summed from the work log. */
+  usedMinutes: integer('used_minutes'),
+  overageMinutes: integer('overage_minutes'),
+  /** Overage priced at the contract's rate when the cycle closed, in the contract's currency. */
+  overageAmount: real('overage_amount'),
+  expiredMinutes: integer('expired_minutes'),
+  closedAt: integer('closed_at', { mode: 'timestamp' }),
+  /** Null when the cron closed it. */
+  closedBy: text('closed_by'),
+  billedAt: integer('billed_at', { mode: 'timestamp' }),
+  billedBy: text('billed_by'),
+  /** Invoice number or any other reference to where the overage was charged. */
+  billingReference: text('billing_reference'),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('contract_cycles_contract_start_unique').on(table.contractId, table.startsOn),
+  index('contract_cycles_status_idx').on(table.status),
+])
+
+/**
+ * The work log (bitácora): hours Fran spent, entered by hand, against a company and optionally one
+ * of its apps. Each entry is filed under the contract covering it and the cycle its day falls in, so
+ * a cycle's usage is the sum of its entries. An entry with no contract is still kept — work outside
+ * any contract is still work, just not counted against included hours.
+ */
+const workLogs = sqliteTable('work_logs', {
+  id: text('id').primaryKey(),
+  companyId: text('company_id').notNull().references(() => companies.id, { onDelete: 'restrict' }),
+  appId: text('app_id').references(() => apps.id, { onDelete: 'set null' }),
+  contractId: text('contract_id').references(() => contracts.id, { onDelete: 'set null' }),
+  cycleId: text('cycle_id').references(() => contractCycles.id, { onDelete: 'set null' }),
+  /** Santiago calendar day the work was done. */
+  occurredOn: text('occurred_on').notNull(),
+  minutes: integer('minutes').notNull(),
+  /** `WORK_KINDS`. */
+  kind: text('kind').notNull(),
+  description: text('description').notNull(),
+  /** A commit, merge request or anything else the work can be traced to. */
+  linkUrl: text('link_url'),
+  ...authorship,
+  ...timestamps,
+}, (table) => [
+  index('work_logs_company_day_idx').on(table.companyId, table.occurredOn),
+  index('work_logs_app_day_idx').on(table.appId, table.occurredOn),
+  index('work_logs_cycle_idx').on(table.cycleId),
+])
+
 /* ── Audit ─────────────────────────────────────────────────────────────────── */
 
 /**
@@ -746,6 +870,9 @@ export {
   companyContacts,
   configVersions,
   contacts,
+  contractApps,
+  contractCycles,
+  contracts,
   crashGroups,
   crashReports,
   flags,
@@ -761,4 +888,5 @@ export {
   screenshots,
   usageEvents,
   usageHourly,
+  workLogs,
 }
