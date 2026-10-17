@@ -63,7 +63,9 @@ describe('commands', () => {
     const created = await panelJson(`/v1/installations/${device.installation_id}/commands`, { method: 'POST', body: { type: 'check_update', expires_in_seconds: 60 } })
     await env.DB.prepare('UPDATE commands SET expires_at = ? WHERE id = ?').bind(Math.floor(Date.now() / 1000) - 1, created.body.data.id).run()
     expect((await heartbeat(app.id, device.access_token)).commands).toEqual([])
-    const result = await runScheduled(env, new Date(Date.UTC(2026, 9, 16, 12, 10)))
+    // The cron's clock has to be the same one the expiry was set against: a fixed date here passes
+    // only until the real clock overtakes it.
+    const result = await runScheduled(env, new Date())
     expect(result.expired_commands).toBe(1)
     expect((await panelJson(`/v1/installations/${device.installation_id}/commands`)).body.data[0].status).toBe('expired')
   })
