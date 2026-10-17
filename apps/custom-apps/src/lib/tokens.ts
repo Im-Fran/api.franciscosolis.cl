@@ -8,13 +8,15 @@
  * leaked copy of the database cannot impersonate a device; the app key is the exception, being public.
  *
  * The prefixes make a credential recognisable in a log or a support message, and tell a secret
- * scanner what it found: `cak_` an app key, `cat_` an access token, `car_` a refresh token.
+ * scanner what it found: `cak_` an app key, `cat_` an access token, `car_` a refresh token, `cic_`
+ * a CI token that uploads releases.
  */
 
 const TOKEN_PREFIXES = {
   appKey: 'cak_',
   access: 'cat_',
   refresh: 'car_',
+  ci: 'cic_',
 } as const
 
 const base64Url = (bytes: Uint8Array): string => {

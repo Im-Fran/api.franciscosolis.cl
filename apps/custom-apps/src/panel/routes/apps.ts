@@ -25,6 +25,7 @@ import { readOptionalJson, validate } from '@/lib/validate'
 import { buildSdk } from '@/services/apps'
 import { auditRow, diff, getActorContext, recordAudit } from '@/services/audit'
 import { appUsage, usageHeatmap } from '@/services/series'
+import { parsePublicKey } from '@/services/releases'
 import { toApp, toAppKey, toAppSummary, toInstallationSummary, type AppRow } from '@/services/serialize'
 import { syncApp } from '@/services/socket'
 import {
@@ -75,6 +76,13 @@ const patchSchema = v.object({
   modules: v.optional(modulesInput),
   log_level: v.optional(v.picklist(LOG_LEVELS)),
   screenshots_enabled: v.optional(v.boolean()),
+  release_public_key: v.optional(
+    v.nullable(v.pipe(v.string(), v.trim(), v.check((value) => parsePublicKey(value) !== null, 'must be a raw 32-byte Ed25519 public key, base64'))),
+  ),
+  update_health_timeout_seconds: v.optional(v.pipe(v.number(), v.integer(), v.minValue(30), v.maxValue(86_400))),
+  update_max_failures: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(100))),
+  rollout_pause_rollback_percent: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(100))),
+  rollout_pause_crash_percent: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(100))),
 })
 
 /**
@@ -285,6 +293,11 @@ app.patch(
         ...(body.modules !== undefined && { modules: JSON.stringify(body.modules) }),
         ...(body.log_level !== undefined && { logLevel: body.log_level }),
         ...(body.screenshots_enabled !== undefined && { screenshotsEnabled: body.screenshots_enabled }),
+        ...(body.release_public_key !== undefined && { releasePublicKey: body.release_public_key }),
+        ...(body.update_health_timeout_seconds !== undefined && { updateHealthTimeoutSeconds: body.update_health_timeout_seconds }),
+        ...(body.update_max_failures !== undefined && { updateMaxFailures: body.update_max_failures }),
+        ...(body.rollout_pause_rollback_percent !== undefined && { rolloutPauseRollbackPercent: body.rollout_pause_rollback_percent }),
+        ...(body.rollout_pause_crash_percent !== undefined && { rolloutPauseCrashPercent: body.rollout_pause_crash_percent }),
         updatedBy: actor.actorEmail,
         updatedAt: new Date(),
       })

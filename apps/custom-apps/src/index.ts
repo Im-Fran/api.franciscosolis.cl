@@ -9,6 +9,7 @@ import {
   APP_KINDS,
   APP_MODULES,
   APP_STATES,
+  ARCHES,
   CHANNELS,
   COMMAND_STATUSES,
   COMMAND_TYPES,
@@ -21,12 +22,16 @@ import {
   MESSAGE_SEVERITIES,
   PLATFORMS,
   PRESENCE_MODES,
+  RELEASE_STATUSES,
+  RELEASES,
   ROLLUP,
   SCREENSHOTS,
   TARGET_SCOPES,
   TELEMETRY,
+  UPDATE_REPORT_STATUSES,
 } from '@/lib/config'
 import { ingest } from '@/ingest/index'
+import { ci } from '@/panel/ci'
 import { panel } from '@/panel/index'
 import { runScheduled } from '@/services/maintenance'
 import { InstallationSocket } from '@/services/socket'
@@ -102,6 +107,10 @@ const rootResponseSchema = v.object({
     crash_statuses: v.array(v.string()),
     alert_kinds: v.array(v.string()),
     alert_statuses: v.array(v.string()),
+    release_statuses: v.array(v.string()),
+    update_report_statuses: v.array(v.string()),
+    arches: v.array(v.string()),
+    release_max_bytes: v.number(),
     grace_max_days: v.number(),
     screenshot_max_bytes: v.number(),
     heartbeat_interval: v.object({ min: v.number(), max: v.number(), default: v.number() }),
@@ -141,6 +150,10 @@ panelApp.get(
         crash_statuses: [...CRASH_STATUSES],
         alert_kinds: [...ALERT_KINDS],
         alert_statuses: [...ALERT_STATUSES],
+        release_statuses: [...RELEASE_STATUSES],
+        update_report_statuses: [...UPDATE_REPORT_STATUSES],
+        arches: [...ARCHES],
+        release_max_bytes: RELEASES.maxArtifactBytes,
         grace_max_days: GRACE_MAX_DAYS,
         screenshot_max_bytes: SCREENSHOTS.maxBytes,
         heartbeat_interval: { min: HEARTBEAT.min, max: HEARTBEAT.max, default: HEARTBEAT.default },
@@ -152,6 +165,9 @@ panelApp.get(
   },
 )
 
+// CI uploads go first: the route takes a CI token rather than a panel one, so it has to answer before
+// the `/v1` gate would refuse it. See `src/panel/ci.ts`.
+panelApp.route('/v1', ci)
 panelApp.route('/v1', panel)
 
 panelApp.get(

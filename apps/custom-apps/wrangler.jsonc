@@ -63,6 +63,12 @@
     {
       "binding": "SCREENSHOTS",
       "bucket_name": "franciscosolis-custom-apps-screenshots"
+    },
+    {
+      // Release artifacts. Private as well: a device downloads one through
+      // `GET /downloads/:ticket` on the ingest host, against a short-lived signed ticket.
+      "binding": "RELEASES",
+      "bucket_name": "franciscosolis-custom-apps-releases"
     }
   ],
   "d1_databases": [
@@ -190,6 +196,10 @@
         {
           "binding": "SCREENSHOTS",
           "bucket_name": "franciscosolis-custom-apps-screenshots-dev"
+        },
+        {
+          "binding": "RELEASES",
+          "bucket_name": "franciscosolis-custom-apps-releases-dev"
         }
       ],
       "d1_databases": [

@@ -8,6 +8,7 @@ import { modulesOf } from '@/services/apps'
 import { takeOutstanding } from '@/services/commands'
 import { activeMessages } from '@/services/messages'
 import { effectiveState, heartbeatCredit, hourlyStatements } from '@/services/presence'
+import { offerFor, toOfferSummary } from '@/services/releases'
 import { effectiveLogLevel, etagOf, resolveConfig } from '@/services/remote-config'
 import type { AppRow, InstallationRow } from '@/services/serialize'
 import { heartbeatLogStatement, heartbeatSampleStatement, snapshotSchema } from '@/services/telemetry'
@@ -18,8 +19,8 @@ import { heartbeatLogStatement, heartbeatSampleStatement, snapshotSchema } from 
  * Two transports carry heartbeats — `POST /heartbeat` in ping mode, a message down the socket in
  * socket mode — and both land here, so a device's presence, usage hours and audit row are written by
  * the same code whichever way it reports. The answer is the device's to-do list: the state to obey,
- * the presence settings, the commands it has not acknowledged yet, and the version tags of its config
- * and messages, so it refetches those only when they changed.
+ * the presence settings, the commands it has not acknowledged yet, the version tags of its config and
+ * messages, so it refetches those only when they changed, and the update waiting for it, if any.
  */
 
 const heartbeatBodySchema = v.object({
@@ -50,10 +51,11 @@ const directivesFor = async (env: Env, appRow: AppRow, installation: Installatio
   const modules = modulesOf(appRow)
   const db = getDb(env)
   const device = { id: installation.id, channel: installation.channel }
-  const [outstanding, config, messageList] = await Promise.all([
+  const [outstanding, config, messageList, offer] = await Promise.all([
     modules.includes('commands') ? takeOutstanding(db, installation.id, now) : Promise.resolve([]),
     modules.includes('config') ? resolveConfig(db, appRow.id, device) : Promise.resolve(null),
     modules.includes('messages') ? activeMessages(db, appRow.id, device, now) : Promise.resolve(null),
+    modules.includes('updates') ? offerFor(db, { app: appRow, installation }) : Promise.resolve(null),
   ])
   return {
     state: stateFor(appRow, installation),
@@ -65,6 +67,8 @@ const directivesFor = async (env: Env, appRow: AppRow, installation: Installatio
       messages_etag: messageList ? await etagOf(messageList) : null,
       log_level: modules.includes('logs') ? effectiveLogLevel(appRow, installation) : null,
     },
+    /** The release to install, in short — `GET /updates/latest` has the rest. Null with nothing to do. */
+    update: toOfferSummary(offer),
   }
 }
 
@@ -139,7 +143,8 @@ const recordHeartbeat = async (env: Env, input: HeartbeatInput): Promise<Directi
   // for the hour, a sample with no heartbeat behind it, or the reverse.
   await env.DB.batch(statements)
 
-  return directivesFor(env, appRow, installation, now)
+  // The version this heartbeat reported is the one an update is measured against.
+  return directivesFor(env, appRow, versionChanged ? { ...installation, appVersion: body.app_version ?? installation.appVersion } : installation, now)
 }
 
 export { directivesFor, heartbeatBodySchema, loadDevice, presenceFor, recordHeartbeat, stateFor }

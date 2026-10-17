@@ -14,6 +14,8 @@ export default defineConfig({
       miniflare: {
         bindings: {
           TEST_MIGRATIONS: migrations,
+          // Test-only: signs nothing outside the suite. Production and dev each have their own secret.
+          UPDATE_DOWNLOAD_SECRET: 'test-update-download-secret',
         },
         serviceBindings: {
           // Loud by default. A test that needs the key set stubs it with `stubJwks`.

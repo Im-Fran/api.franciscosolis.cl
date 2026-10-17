@@ -1,16 +1,17 @@
 import { and, eq, lte } from 'drizzle-orm'
 import { getDb } from '@/db/client'
-import { apps, auditLogs } from '@/db/schema'
+import { apps, auditLogs, releases } from '@/db/schema'
 import type { Env } from '@/env'
 import { evaluateAlerts } from '@/services/alerts'
 import { auditRow } from '@/services/audit'
 import { expireCommands } from '@/services/commands'
+import { pauseReason, releaseStats } from '@/services/releases'
 import { runHourly } from '@/services/rollup'
 import { syncApp } from '@/services/socket'
 
 /**
- * The cron, every five minutes. Each run expires stale commands, ends grace periods that ran out and
- * evaluates the alert rules; the first run of each hour also does the hourly work (purge, and the
+ * The cron, every five minutes. Each run expires stale commands, ends grace periods that ran out,
+ * pauses rollouts that are going wrong and evaluates the alert rules; the first run of each hour also does the hourly work (purge, and the
  * daily roll-up at its hour). The minute check is on UTC, which is the same as Santiago's: Chile's
  * offset is a whole number of hours.
  */
@@ -48,12 +49,52 @@ const endGracePeriods = async (env: Env, now: Date) => {
   return due.length
 }
 
+/**
+ * A published release whose devices are rolling back or crashing past the app's thresholds pauses
+ * itself: nobody new is offered it, and the devices already on it stay there. Paused rather than
+ * withdrawn, because withdrawing sends every device back down — that is a person's call. Recorded with
+ * no actor and pushed to the sockets like any other change to what a device is offered.
+ */
+const evaluateRollouts = async (env: Env, now: Date) => {
+  const db = getDb(env)
+  const rows = await db
+    .select({ release: releases, app: apps })
+    .from(releases)
+    .innerJoin(apps, eq(apps.id, releases.appId))
+    .where(eq(releases.status, 'published'))
+  let paused = 0
+  for (const { release, app } of rows) {
+    const stats = await releaseStats(env.DB, release)
+    const reason = pauseReason(stats, app)
+    if (!reason) continue
+    const statusReason = { automatic: true, ...reason }
+    const [updated] = await db
+      .update(releases)
+      .set({ status: 'paused', statusChangedAt: now, statusReason: JSON.stringify(statusReason), updatedAt: now })
+      .where(and(eq(releases.id, release.id), eq(releases.status, 'published')))
+      .returning()
+    if (!updated) continue
+    paused += 1
+    await db.insert(auditLogs).values(
+      auditRow({
+        event: 'release.paused',
+        resourceType: 'app',
+        resourceId: app.id,
+        metadata: { release_id: release.id, version: release.version, channel: release.channel, platform: release.platform, arch: release.arch, ...statusReason, stats },
+      }),
+    )
+    await syncApp(env, app.id)
+  }
+  return paused
+}
+
 const runScheduled = async (env: Env, now: Date) => {
   const expiredCommands = await expireCommands(env.DB, now)
   const suspended = await endGracePeriods(env, now)
+  const pausedReleases = await evaluateRollouts(env, now)
   const alerts = await evaluateAlerts(env, now)
   const hourly = now.getUTCMinutes() < 5 ? await runHourly(env, now) : null
-  return { expired_commands: expiredCommands, suspended_apps: suspended, alerts, hourly }
+  return { expired_commands: expiredCommands, suspended_apps: suspended, paused_releases: pausedReleases, alerts, hourly }
 }
 
-export { endGracePeriods, runScheduled }
+export { endGracePeriods, evaluateRollouts, runScheduled }

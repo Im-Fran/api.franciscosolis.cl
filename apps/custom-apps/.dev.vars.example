@@ -1,4 +1,5 @@
-# Copy to `.dev.vars` (gitignored) for local development. This Worker holds no secrets.
+# Copy to `.dev.vars` (gitignored) for local development. The one secret is the update download
+# key below; any random string will do locally.
 #
 # Trust tokens minted by a local auth Worker. The issuer must match the `AUTH_ISSUER` auth itself is
 # running with, or every token is refused for a bad `iss`.
@@ -8,3 +9,7 @@ AUTH_ISSUER=http://localhost:8787/auth
 # the client apps, `localhost` (or the gateway on :8787) for the panel. A device under test then
 # enrolls at http://127.0.0.1:8796/custom-apps/v1/<appId>/enroll.
 INGEST_PUBLIC_URL=http://127.0.0.1:8796/custom-apps/v1
+
+# Signs the short-lived links devices download release artifacts from. In each deployed environment
+# it is a secret of its own: `wrangler secret put UPDATE_DOWNLOAD_SECRET [--env dev]`.
+UPDATE_DOWNLOAD_SECRET=local-only-change-me

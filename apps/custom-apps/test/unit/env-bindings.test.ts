@@ -20,13 +20,14 @@ describe('the Worker configuration', () => {
     expect(String(value).length).toBeGreaterThan(0)
   })
 
-  it('binds the database, the auth service, both queues, the sockets, the bucket and the three rate limiters', () => {
+  it('binds the database, the auth service, both queues, the sockets, both buckets and the three rate limiters', () => {
     expect(env.DB).toBeDefined()
     expect(env.AUTH).toBeDefined()
     expect(env.TELEMETRY_QUEUE).toBeDefined()
     expect(env.NOTIFICATIONS_QUEUE).toBeDefined()
     expect(typeof env.PRESENCE.idFromName).toBe('function')
     expect(typeof env.SCREENSHOTS.put).toBe('function')
+    expect(typeof env.RELEASES.put).toBe('function')
     expect(typeof env.ENROLL_IP_LIMITER.limit).toBe('function')
     expect(typeof env.ENROLL_APP_LIMITER.limit).toBe('function')
     expect(typeof env.INGEST_LIMITER.limit).toBe('function')

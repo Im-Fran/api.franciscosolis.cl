@@ -24,7 +24,7 @@ app.get(
   '/overview',
   describeRoute({
     description:
-      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, and the latest enrollments.',
+      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, and the latest enrollments.',
     tags: ['Overview'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'The overview' }, ...panelErrors },
@@ -35,7 +35,7 @@ app.get(
     const nowDate = new Date(now * 1000)
 
     const summaryColumns = { installation: installations, appName: apps.name, interval: apps.heartbeatIntervalSeconds }
-    const [[fleet], states, [counts], recent, review, openAlerts] = await Promise.all([
+    const [[fleet], states, [counts], recent, review, openAlerts, [rollouts]] = await Promise.all([
       c.env.DB.prepare(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN i.status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -57,6 +57,12 @@ app.get(
         .orderBy(asc(installations.enrolledAt), asc(installations.id))
         .limit(RECENT),
       unresolvedCount(db),
+      c.env.DB.prepare(
+        `SELECT SUM(CASE WHEN status = 'published' AND rollout_percent < 100 THEN 1 ELSE 0 END) AS rolling_out,
+                SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END) AS paused,
+                SUM(CASE WHEN status = 'draft' THEN 1 ELSE 0 END) AS drafts
+         FROM releases`,
+      ).all<Record<string, number | null>>().then((result) => result.results),
     ])
 
     const byState = Object.fromEntries(APP_STATES.map((state) => [state, 0])) as Record<AppState, number>
@@ -82,6 +88,7 @@ app.get(
         companies: { total: Number(counts?.companies ?? 0) },
         contacts: { total: Number(counts?.contacts ?? 0) },
         alerts: { unresolved: openAlerts },
+        releases: { rolling_out: Number(rollouts?.rolling_out ?? 0), paused: Number(rollouts?.paused ?? 0), drafts: Number(rollouts?.drafts ?? 0) },
         recent_installations: recent.map(summary),
         needs_review: review.map(summary),
       },
