@@ -49,7 +49,10 @@ together seven Cloudflare Workers, all living directly in this repo:
   installation of them, presence, telemetry and the kill switch, and their **remote operation**:
   socket presence on a Durable Object per installation, commands from a closed catalogue,
   screenshots in R2, feature flags and a versioned remote config, in-app messages, remote logs,
-  grouped crash reports and alerts delivered through the notification centre. It is the one module
+  grouped crash reports and alerts delivered through the notification centre, and their **releases**:
+  Ed25519-signed builds uploaded from CI with a token of their own, channels and staged rollout, a
+  minimum version, the offer an A/B updater installs from (downloaded through short-lived signed
+  links), its reports, an automatic pause and rollback. It is the one module
   with **two front doors**: the panel API through `apps/api` at `/custom-apps/*` (one account, holding
   `custom-apps:admin` under its own client application, `franciscosolis-custom-apps`), and an
   **ingest** surface the client apps report to at `ingest.franciscosolis.cl/custom-apps/v1/:appId`,
@@ -492,7 +495,11 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   writes are pushed to it from `waitUntil`; everything else a device must be told travels in the
   answer to its next heartbeat. Commands are a closed catalogue, screenshots are off until a client's
   contract allows them, and alerts go to the rule creator through `apps/notifications` like any other
-  producer's events. See `apps/custom-apps/CLAUDE.md`.
+  producer's events. Releases add a third credential and one route outside the panel gate: CI
+  uploads a build with a `cic_` token of one app, streamed into the `RELEASES` bucket and verified
+  against the app's Ed25519 public key before it is recorded (the private key stays in CI), and
+  devices download through HMAC-signed links minted with `UPDATE_DOWNLOAD_SECRET`, a secret per
+  environment. See `apps/custom-apps/CLAUDE.md`.
 - **Nothing in this repo renders HTML.** `api.franciscosolis.cl` is a backend end to end: every
   Worker answers JSON, a redirect or a binary asset (`apps/api/src/brand.ts`), and nothing else.
   The one place that used to break the rule was `apps/auth`'s built-in sign-in screen; it is gone,

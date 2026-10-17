@@ -23,6 +23,8 @@ type Env = {
   PRESENCE: DurableObjectNamespace<InstallationSocket>
   /** Screenshots, private: the panel streams them through this Worker. */
   SCREENSHOTS: R2Bucket
+  /** Release artifacts, private: devices download them against a signed ticket. */
+  RELEASES: R2Bucket
 
   /** Enrollments per client IP. */
   ENROLL_IP_LIMITER: RateLimiter
@@ -42,6 +44,11 @@ type Env = {
    * host is what `src/index.ts` dispatches on.
    */
   INGEST_PUBLIC_URL: string
+  /**
+   * **Secret.** HMAC key the update download tickets are signed with. Unset, no ticket can be minted
+   * and `GET /updates/:releaseId/download` answers 503 rather than handing out forgeable links.
+   */
+  UPDATE_DOWNLOAD_SECRET?: string
 }
 
 /** The editor behind a panel request, set on the context by `requireAdmin`. */

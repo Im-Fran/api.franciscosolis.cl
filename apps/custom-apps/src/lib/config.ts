@@ -35,8 +35,8 @@ const APP_STATES = ['active', 'grace', 'maintenance', 'suspended'] as const
 type AppState = (typeof APP_STATES)[number]
 
 /**
- * Release channels an installation follows. Nothing is released yet (that is phase 3), but flags and
- * messages can already target a channel.
+ * Release channels an installation follows: which releases it is offered, and what flags and
+ * messages aimed at a channel reach it.
  */
 const CHANNELS = ['stable', 'beta'] as const
 type Channel = (typeof CHANNELS)[number]
@@ -66,8 +66,10 @@ type PresenceMode = (typeof PRESENCE_MODES)[number]
  * - `config`: feature flags and the remote config document, read from `GET /config`.
  * - `messages`: in-app banners and modals.
  * - `commands`: remote commands from the closed catalogue in `COMMAND_TYPES`, screenshots included.
+ * - `updates`: remote updates — the release a device is offered, its signed download, and the
+ *   reports that tell a rollout whether it is working.
  */
-const APP_MODULES = ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands'] as const
+const APP_MODULES = ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands', 'updates'] as const
 type AppModule = (typeof APP_MODULES)[number]
 
 /** What a contact is to a company. A contact may hold several at once. */
@@ -186,10 +188,13 @@ const LOGS = {
  * - `enrollment_spike`: at least `threshold` new installations in the last `window_minutes` — the
  *   alarm on auto-approved enrollment.
  *
- * Site uptime, certificates, rollbacks, contracts and hours arrive with the phases that bring the
- * data they would watch.
+ * - `release_rollbacks`: at least `threshold` rollbacks of an update reported in the last
+ *   `window_minutes`, across the app's releases.
+ *
+ * Site uptime, certificates, contracts and hours arrive with the phases that bring the data they
+ * would watch.
  */
-const ALERT_KINDS = ['installation_offline', 'cpu_high', 'memory_high', 'crash_spike', 'error_log_spike', 'enrollment_spike'] as const
+const ALERT_KINDS = ['installation_offline', 'cpu_high', 'memory_high', 'crash_spike', 'error_log_spike', 'enrollment_spike', 'release_rollbacks'] as const
 type AlertKind = (typeof ALERT_KINDS)[number]
 
 /** `open` until somebody acknowledges it or its condition clears; `resolved` either way at the end. */
@@ -204,6 +209,49 @@ const ALERTS = {
   reopenWithinMinutes: 30,
   /** Most alert rules in total. Evaluation is a handful of queries per rule every few minutes. */
   maxRules: 100,
+} as const
+
+/**
+ * A release's lifecycle.
+ *
+ * - `draft`: uploaded, offered to nobody.
+ * - `published`: offered to the devices its rollout reaches.
+ * - `paused`: offered to nobody new; devices that installed it keep it. By hand, or automatically
+ *   when its rollback or crash rate crosses the app's thresholds.
+ * - `withdrawn`: pulled. Devices running it are offered the newest earlier version as a rollback.
+ */
+const RELEASE_STATUSES = ['draft', 'published', 'paused', 'withdrawn'] as const
+type ReleaseStatus = (typeof RELEASE_STATUSES)[number]
+
+/**
+ * What a device reports while it updates, in the order it happens. `health_ok` is the only success:
+ * an update counts once the new version has started, reached the API and passed its own checks.
+ */
+const UPDATE_REPORT_STATUSES = ['downloaded', 'installed', 'health_ok', 'rolled_back', 'failed'] as const
+type UpdateReportStatus = (typeof UPDATE_REPORT_STATUSES)[number]
+
+/** What an artifact is built for. `any` fits every architecture of its platform (a JAR, an APK bundle). */
+const ARCHES = ['x86_64', 'aarch64', 'x86', 'armv7', 'universal', 'any'] as const
+type Arch = (typeof ARCHES)[number]
+
+const RELEASES = {
+  /**
+   * Largest artifact accepted. A Workers limit before it is a policy: the body a Worker may read is
+   * capped at 100 MB, and this leaves room for the request around it. The same cap as the
+   * marketplace's builds, for the same reason.
+   */
+  maxArtifactBytes: 96 * 1024 * 1024,
+  /** Lifetime of a download link, in seconds. Long enough for a slow kiosk to start, short enough to be worth nothing shared. */
+  downloadTtlSeconds: 15 * 60,
+  /** Defaults for the per-app update settings. */
+  defaultHealthTimeoutSeconds: 600,
+  defaultMaxFailures: 3,
+  defaultPauseRollbackPercent: 20,
+  defaultPauseCrashPercent: 20,
+  /** Reports a rate needs before it may pause a rollout: one bad kiosk out of two is not a trend. */
+  pauseMinSample: 3,
+  /** Notes on a release. */
+  maxNotesLength: 10_000,
 } as const
 
 /** Grace before suspension is a contract term, capped at a month. */
@@ -276,6 +324,7 @@ export {
   ALERT_STATUSES,
   ALERTS,
   APP_KINDS,
+  ARCHES,
   APP_MODULES,
   APP_STATES,
   CHANNELS,
@@ -298,6 +347,8 @@ export {
   PAGINATION,
   PLATFORMS,
   PRESENCE_MODES,
+  RELEASE_STATUSES,
+  RELEASES,
   REMOTE_CONFIG,
   ROLLUP,
   SCREENSHOTS,
@@ -305,6 +356,7 @@ export {
   TARGET_SCOPES,
   TELEMETRY,
   TOKENS,
+  UPDATE_REPORT_STATUSES,
   WEEKDAYS,
 }
 export type {
@@ -313,6 +365,7 @@ export type {
   AppKind,
   AppModule,
   AppState,
+  Arch,
   Channel,
   CommandStatus,
   CommandType,
@@ -326,6 +379,8 @@ export type {
   MessageSeverity,
   Platform,
   PresenceMode,
+  ReleaseStatus,
   TargetScope,
+  UpdateReportStatus,
   Weekday,
 }

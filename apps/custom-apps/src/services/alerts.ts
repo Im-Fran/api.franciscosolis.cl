@@ -132,6 +132,8 @@ const detect = (db: D1Database, rule: RuleRow, now: Date): Promise<Finding[]> =>
       return detectCount(db, rule, 'log_entries', 'occurred_at', windowStart.getTime(), ` AND t.severity >= ${LOG_LEVELS.indexOf('error')}`)
     case 'enrollment_spike':
       return detectCount(db, rule, 'installations', 'enrolled_at', Math.floor(windowStart.getTime() / 1000))
+    case 'release_rollbacks':
+      return detectCount(db, rule, 'release_reports', 'created_at', Math.floor(windowStart.getTime() / 1000), " AND t.status = 'rolled_back'")
     default:
       return Promise.resolve([])
   }

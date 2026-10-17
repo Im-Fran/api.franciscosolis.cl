@@ -120,7 +120,9 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   telemetry kept 30 days raw and summarised daily forever, a usage heatmap to plan maintenance on,
   and a kill switch every installation obeys — plus their remote operation: socket presence, remote
   commands and screenshots, feature flags and a versioned remote config, in-app messages, remote logs,
-  grouped crash reports, and alerts sent through the notification centre. The panel API sits behind the gateway at
+  grouped crash reports, and alerts sent through the notification centre — and their releases:
+  Ed25519-signed builds uploaded from CI, channels, staged rollout, a minimum version, the offer an
+  A/B updater installs from, its reports, the automatic pause and rollback. The panel API sits behind the gateway at
   `/custom-apps/*`, for one account holding `custom-apps:admin`; the client apps report to
   `ingest.franciscosolis.cl/custom-apps/v1/<appId>`, a route of its own straight to the Worker, which
   tells the two apart by hostname. Enrollment is auto-approved for anybody holding an app's public
@@ -373,7 +375,7 @@ There are two full stacks of these Workers on the account, and they share nothin
 | Modules | `landing`, `auth`, `cms`, `marketplace`, `notifications`, `custom-apps` | `landing-dev`, `auth-dev`, `cms-dev`, `marketplace-dev`, `notifications-dev`, `custom-apps-dev` |
 | Front-end | `franciscosolis` → `franciscosolis.cl` | `franciscosolis-dev` → `dev.franciscosolis.cl` |
 | Databases | `franciscosolis_auth`, `_cms`, `_marketplace`, `_notifications`, `_custom_apps` | the same five with a `_dev` suffix |
-| Buckets | `franciscosolis-avatars`, `franciscosolis-app-releases`, `franciscosolis-custom-apps-screenshots` | the same three with a `-dev` suffix |
+| Buckets | `franciscosolis-avatars`, `franciscosolis-app-releases`, `franciscosolis-custom-apps-screenshots`, `franciscosolis-custom-apps-releases` | the same four with a `-dev` suffix |
 | Queues | `franciscosolis-notifications`, `franciscosolis-custom-apps-telemetry` | the same two with a `-dev` suffix |
 | Deployed by | Cloudflare's Git integration (dashboard) | `.github/workflows/deploy-dev.yml` |
 
@@ -452,6 +454,9 @@ cd ../marketplace
 pnpm exec wrangler secret put MERCADOPAGO_ACCESS_TOKEN --env dev   # a TEST credential
 pnpm exec wrangler secret put MERCADOPAGO_WEBHOOK_SECRET --env dev
 pnpm exec wrangler secret put DOWNLOAD_SIGNING_KEY --env dev
+
+cd ../custom-apps
+openssl rand -base64 48 | pnpm exec wrangler secret put UPDATE_DOWNLOAD_SECRET --env dev
 ```
 
 The Google OAuth client also needs `https://api-dev.franciscosolis.cl/auth/callback/google` among
@@ -497,11 +502,13 @@ node scripts/generate-vapid-keys.mjs | pnpm exec wrangler secret put VAPID_PRIVA
 node scripts/generate-vapid-keys.mjs | pnpm exec wrangler secret put VAPID_PRIVATE_KEY --env dev  # a different pair
 ```
 
-**The custom-apps database, queue, bucket and ingest host.** `apps/custom-apps` owns
+**The custom-apps database, queue, buckets and ingest host.** `apps/custom-apps` owns
 `franciscosolis_custom_apps` and `franciscosolis_custom_apps_dev`, which were created with the commands
 below; their ids are committed in `apps/custom-apps/wrangler.jsonc`, so a new account only needs this
 to recreate them. It also owns its telemetry queue, which it both produces to and consumes, and the
-private bucket its screenshots are kept in (no public access, no custom domain). Its socket
+private buckets its screenshots and release artifacts are kept in (no public access, no custom
+domain), and it signs the download links devices fetch releases through with `UPDATE_DOWNLOAD_SECRET`
+— one per environment, set like the other secrets above. Its socket
 presence is a Durable Object class of the Worker itself, created by the deploy — nothing to make. Run them
 from inside an app (`cd apps/custom-apps`): Wrangler is a dependency of each app, not of the root. Its
 ingest surface is a zone route, so `ingest` and `ingest-dev` need proxied DNS records in the
@@ -515,6 +522,9 @@ pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry
 pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry-dev
 pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-screenshots
 pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-screenshots-dev
+pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-releases
+pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-releases-dev
+openssl rand -base64 48 | pnpm exec wrangler secret put UPDATE_DOWNLOAD_SECRET
 ```
 
 The `CLOUDFLARE_API_TOKEN` behind `deploy-dev.yml` also needs **Queues:Edit** on top of `D1:Edit`,
@@ -710,7 +720,7 @@ pnpm run cf-typegen
 | `apps/marketplace/migrations/` | D1 migrations for `franciscosolis_marketplace` |
 | `apps/notifications/wrangler.jsonc` | Worker name/config for the `notifications` service: D1, email sending, `AUTH` binding, the queue consumer, the hourly digest cron, VAPID and site vars |
 | `apps/notifications/migrations/` | D1 migrations for `franciscosolis_notifications` |
-| `apps/custom-apps/wrangler.jsonc` | Worker name/config for the `custom-apps` service: the ingest zone route, D1, the telemetry queue (producer and consumer), the notifications queue producer, the `InstallationSocket` Durable Object, the screenshots bucket, the three rate limiters, `AUTH` binding, the five-minute cron |
+| `apps/custom-apps/wrangler.jsonc` | Worker name/config for the `custom-apps` service: the ingest zone route, D1, the telemetry queue (producer and consumer), the notifications queue producer, the `InstallationSocket` Durable Object, the screenshots and releases buckets, the three rate limiters, `AUTH` binding, the five-minute cron |
 | `apps/custom-apps/migrations/` | D1 migrations for `franciscosolis_custom_apps` |
 | `pnpm-workspace.yaml` | Workspace packages (`apps/*`, `packages/*`) and shared dependency catalog |
 | `apps/*/vitest.config.ts` | Test runtime for that app — bindings, D1 migrations and service-binding stubs |

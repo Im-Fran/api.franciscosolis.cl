@@ -70,9 +70,11 @@ describe('the two front doors', () => {
     expect(body.data).toMatchObject({
       ingest_base_url: 'https://ingest.franciscosolis.cl/custom-apps/v1',
       presence_modes: ['ping', 'socket'],
-      modules: ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands'],
+      modules: ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands', 'updates'],
       offline_after_intervals: 3,
       timezone: 'America/Santiago',
+      release_statuses: ['draft', 'published', 'paused', 'withdrawn'],
+      arches: ['x86_64', 'aarch64', 'x86', 'armv7', 'universal', 'any'],
     })
     expect(response.headers.get('Content-Type')).toBe('application/json; charset=UTF-8')
   })

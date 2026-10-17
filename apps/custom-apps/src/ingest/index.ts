@@ -6,9 +6,10 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, generateSpecs, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
-import { apps, appKeys, commands, installations, messageReceipts, messages, screenshots } from '@/db/schema'
+import { apps, appKeys, commands, installations, messageReceipts, messages, releaseReports, releases, screenshots } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { CRASHES, LOG_LEVELS, LOGS, SCREENSHOTS, TELEMETRY, type AppModule } from '@/lib/config'
+import { CRASHES, LOG_LEVELS, LOGS, PLATFORMS, RELEASES, SCREENSHOTS, TELEMETRY, UPDATE_REPORT_STATUSES, type AppModule } from '@/lib/config'
+import { mintDownloadTicket, verifyDownloadTicket } from '@/lib/download-tickets'
 import { validate } from '@/lib/validate'
 import { isUuid } from '@/lib/validation'
 import { invalidToken, requireInstallation } from '@/middleware/installation'
@@ -17,6 +18,7 @@ import { acknowledgeCommand, commandAckSchema } from '@/services/commands'
 import { enroll, enrollBodySchema, refresh, refreshBodySchema, type IssuedTokens } from '@/services/enrollment'
 import { heartbeatBodySchema, presenceFor, recordHeartbeat, stateFor } from '@/services/heartbeat'
 import { activeMessages } from '@/services/messages'
+import { offerFor, toDeviceOffer } from '@/services/releases'
 import { effectiveLogLevel, etagOf, resolveConfig } from '@/services/remote-config'
 import type { AppRow, InstallationRow } from '@/services/serialize'
 import { ingestUrls } from '@/services/serialize'
@@ -129,6 +131,7 @@ const directivesSchema = v.object({
   server_time: v.string(),
   commands: v.array(commandSchema),
   sync: v.object({ config_etag: v.nullable(v.string()), messages_etag: v.nullable(v.string()), log_level: v.nullable(v.string()) }),
+  update: v.nullable(v.object({ release_id: v.string(), version: v.string(), mandatory: v.boolean(), rollback: v.boolean() })),
 })
 const tokensSchema = v.object({
   installation_id: v.string(),
@@ -700,6 +703,196 @@ app.post(
   },
 )
 
+/* ── Updates ───────────────────────────────────────────────────────────────── */
+
+const offerSchema = v.object({
+  release_id: v.string(),
+  version: v.string(),
+  channel: v.string(),
+  platform: v.string(),
+  arch: v.string(),
+  filename: v.string(),
+  size_bytes: v.number(),
+  sha256: v.string(),
+  signature: v.string(),
+  notes: v.nullable(v.string()),
+  min_version: v.nullable(v.string()),
+  mandatory: v.boolean(),
+  rollback: v.boolean(),
+  published_at: v.nullable(v.string()),
+  health_check_timeout_seconds: v.number(),
+  max_failures: v.number(),
+})
+
+app.get(
+  '/:appId/updates/latest',
+  describeRoute({
+    operationId: 'latestUpdate',
+    summary: 'Ask which release to install',
+    description:
+      'The release this device should install now, or `null`. Computed from the device\'s channel, platform and architecture (from enrollment; `platform`, `arch` and `version` in the query override them when the device knows better) and its place in the rollout. `mandatory` means the running version is below the release\'s `min_version`: show the notice and do not carry on until updated. `rollback` means the running version was withdrawn and this is the earlier one to return to. Nothing is offered while the app is in grace or suspended.\n\nThe updater, in order: get a link from `/updates/{releaseId}/download`; download it; compute its SHA-256 and compare with `sha256`; verify `signature` — Ed25519 over the **raw 32-byte SHA-256 digest**, base64 — against the public key built into the app; keep the current version as `previous` (A/B); install and restart; report `installed`, then `health_ok` once the new version has started, reached this API and passed its own checks. If that does not happen within `health_check_timeout_seconds`, or the new version crashes `max_failures` times in a row, go back to `previous` and report `rolled_back`.',
+    tags: ['Updates'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: { description: 'The release to install, or null', content: json(v.object({ code: v.literal(200), data: v.nullable(offerSchema) })) },
+      403: { description: 'The updates module is not enabled for this app' },
+    },
+  }),
+  requireInstallation,
+  validate(
+    'query',
+    v.object({
+      platform: v.optional(v.picklist(PLATFORMS)),
+      arch: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(32))),
+      version: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(64))),
+    }),
+  ),
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    const appRow = await requireApp(c, appId)
+    requireModule(appRow, 'updates')
+    const installation = await loadInstallation(c, installationId)
+    const query = c.req.valid('query')
+    const offer = await offerFor(getDb(c.env), { app: appRow, installation, platform: query.platform, arch: query.arch, version: query.version })
+    return c.json({ code: 200 as const, data: offer ? toDeviceOffer(offer, appRow) : null })
+  },
+)
+
+/** A release of the app that may still be downloaded: published, or paused mid-rollout. */
+const requireDownloadable = async (c: { env: AppEnv['Bindings'] }, appId: string, releaseId: string | undefined) => {
+  const [row] = releaseId && isUuid(releaseId)
+    ? await getDb(c.env).select().from(releases).where(and(eq(releases.id, releaseId), eq(releases.appId, appId))).limit(1)
+    : []
+  if (!row || (row.status !== 'published' && row.status !== 'paused')) {
+    throw new HTTPException(404, { message: 'Release not found' })
+  }
+  return row
+}
+
+app.get(
+  '/:appId/updates/:releaseId/download',
+  describeRoute({
+    operationId: 'updateDownload',
+    summary: 'Get a download link',
+    description: `A link to the artifact that works without the bearer token — hand it to the platform's downloader — for ${RELEASES.downloadTtlSeconds / 60} minutes. It answers \`Range\` requests, so an interrupted download can resume. Ask for a new link once it expires.`,
+    tags: ['Updates'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      200: {
+        description: 'The link',
+        content: json(v.object({ code: v.literal(200), data: v.object({ url: v.string(), expires_at: v.string(), size_bytes: v.number(), sha256: v.string() }) })),
+      },
+      403: { description: 'The updates module is not enabled for this app' },
+      404: { description: 'No downloadable release with that id' },
+      503: { description: 'Downloads are not configured on this server' },
+    },
+  }),
+  requireInstallation,
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'updates')
+    const release = await requireDownloadable(c, appId, c.req.param('releaseId'))
+    if (!c.env.UPDATE_DOWNLOAD_SECRET) {
+      throw new HTTPException(503, { message: 'Downloads are not configured on this server' })
+    }
+    const { ticket, expiresAt } = await mintDownloadTicket(c.env.UPDATE_DOWNLOAD_SECRET, { r: release.id, a: appId, i: installationId })
+    return c.json({
+      code: 200 as const,
+      data: { url: `${ingestUrls(c.env.INGEST_PUBLIC_URL, appId).base_url}/downloads/${ticket}`, expires_at: expiresAt.toISOString(), size_bytes: release.sizeBytes, sha256: release.sha256 },
+    })
+  },
+)
+
+/** `bytes=start-end` against a known size, as an R2 range. Null for no header; 'invalid' for one that cannot be served. */
+const parseRange = (header: string | undefined, size: number): { offset: number; length: number } | null | 'invalid' => {
+  if (!header) return null
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
+  if (!match || (!match[1] && !match[2])) return 'invalid'
+  if (!match[1]) {
+    const suffix = Math.min(Number(match[2]), size)
+    return suffix > 0 ? { offset: size - suffix, length: suffix } : 'invalid'
+  }
+  const start = Number(match[1])
+  const end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
+  return start < size && start <= end ? { offset: start, length: end - start + 1 } : 'invalid'
+}
+
+app.get(
+  '/:appId/downloads/:ticket',
+  describeRoute({
+    operationId: 'download',
+    summary: 'Download an artifact',
+    description: 'The bytes, against a link from `/updates/{releaseId}/download`. No bearer token: the link is the permission. Supports `Range`.',
+    tags: ['Updates'],
+    responses: { 200: { description: 'The artifact' }, 206: { description: 'Part of it' }, 404: { description: 'The link is invalid or has expired' }, 416: { description: 'The range cannot be served' } },
+  }),
+  async (c) => {
+    const appId = c.req.param('appId')
+    const claims = c.env.UPDATE_DOWNLOAD_SECRET ? await verifyDownloadTicket(c.env.UPDATE_DOWNLOAD_SECRET, c.req.param('ticket')) : null
+    if (!claims || claims.a !== appId) {
+      throw new HTTPException(404, { message: 'This download link is invalid or has expired; ask for a new one' })
+    }
+    const [release] = await getDb(c.env).select().from(releases).where(and(eq(releases.id, claims.r), eq(releases.appId, appId))).limit(1)
+    if (!release) throw new HTTPException(404, { message: 'This download link is invalid or has expired; ask for a new one' })
+
+    const range = parseRange(c.req.header('Range'), release.sizeBytes)
+    if (range === 'invalid') {
+      return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${release.sizeBytes}` } })
+    }
+    const object = await c.env.RELEASES.get(release.objectKey, range ? { range } : undefined)
+    if (!object) throw new HTTPException(404, { message: 'This download link is invalid or has expired; ask for a new one' })
+
+    const headers = new Headers({
+      'Content-Type': release.contentType,
+      'Content-Disposition': `attachment; filename="${release.filename.replace(/["\\]/g, '')}"`,
+      'Accept-Ranges': 'bytes',
+      ETag: `"${release.sha256}"`,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    if (range) {
+      headers.set('Content-Length', String(range.length))
+      headers.set('Content-Range', `bytes ${range.offset}-${range.offset + range.length - 1}/${release.sizeBytes}`)
+      return new Response(object.body, { status: 206, headers })
+    }
+    headers.set('Content-Length', String(release.sizeBytes))
+    return new Response(object.body, { status: 200, headers })
+  },
+)
+
+app.post(
+  '/:appId/updates/:releaseId/report',
+  describeRoute({
+    operationId: 'updateReport',
+    summary: 'Report how an update went',
+    description:
+      'One report per step: `downloaded`, `installed`, `health_ok` (the only success), `rolled_back`, or `failed` (it never got installed). `from_version` is the version updated from; `detail` says why something failed or which check rolled it back. These are what the panel counts and what pauses a rollout on its own when too many devices roll back or crash.',
+    tags: ['Updates'],
+    security: [{ bearerAuth: [] }],
+    responses: { 202: { description: 'Recorded' }, 403: { description: 'The updates module is not enabled for this app' }, 404: { description: 'No such release for this app' } },
+  }),
+  requireInstallation,
+  validate(
+    'json',
+    v.object({
+      status: v.picklist(UPDATE_REPORT_STATUSES),
+      from_version: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(64)))),
+      detail: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(2000)))),
+    }),
+  ),
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'updates')
+    const releaseId = c.req.param('releaseId') ?? ''
+    const db = getDb(c.env)
+    const [release] = isUuid(releaseId) ? await db.select({ id: releases.id }).from(releases).where(and(eq(releases.id, releaseId), eq(releases.appId, appId))).limit(1) : []
+    if (!release) throw new HTTPException(404, { message: 'Release not found' })
+    const body = c.req.valid('json')
+    await db.insert(releaseReports).values({ releaseId, appId, installationId, status: body.status, fromVersion: body.from_version ?? null, detail: body.detail ?? null })
+    return c.json({ code: 202 as const, data: { release_id: releaseId, status: body.status } }, 202)
+  },
+)
+
 /* ── Documents ─────────────────────────────────────────────────────────────── */
 
 /**
@@ -714,6 +907,8 @@ const MODULE_OF_SEGMENT: Record<string, AppModule> = {
   config: 'config',
   messages: 'messages',
   commands: 'commands',
+  updates: 'updates',
+  downloads: 'updates',
 }
 
 /** Socket presence is listed only for apps in socket mode: a ping app would be refused it. */

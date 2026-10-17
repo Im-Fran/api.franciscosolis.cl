@@ -10,6 +10,7 @@ import contacts from '@/panel/routes/contacts'
 import diagnostics from '@/panel/routes/diagnostics'
 import installations from '@/panel/routes/installations'
 import overview from '@/panel/routes/overview'
+import releases from '@/panel/routes/releases'
 import remote from '@/panel/routes/remote'
 import { dataSchema, jsonContent, panelErrors } from '@/panel/shared'
 
@@ -65,5 +66,6 @@ app.route('/', installations)
 app.route('/', remote)
 app.route('/', diagnostics)
 app.route('/', alerts)
+app.route('/', releases)
 
 export { app as panel }

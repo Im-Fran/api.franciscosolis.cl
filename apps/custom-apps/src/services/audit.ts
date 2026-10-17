@@ -46,6 +46,18 @@ type AuditEvent =
   | 'alert_rule.deleted'
   | 'alert.acknowledged'
   | 'alert.resolved'
+  | 'ci_token.created'
+  | 'ci_token.revoked'
+  /** Written by the CI upload route, with no actor: the CI token is in the metadata. */
+  | 'release.uploaded'
+  | 'release.updated'
+  | 'release.published'
+  | 'release.rollout_changed'
+  | 'release.paused'
+  | 'release.resumed'
+  | 'release.withdrawn'
+  | 'release.rolled_back'
+  | 'release.deleted'
 
 type AuditInput = {
   event: AuditEvent
