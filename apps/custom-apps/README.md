@@ -27,11 +27,12 @@ database**, and which one a request came through is decided by its hostname:
   never through the gateway. It accepts installation tokens and nothing else; the panel accepts
   access tokens and nothing else.
 
-Phases 1 and 2 of the plan are here: the CRM, the inventory of apps and installations, enrollment,
-presence, telemetry and the kill switch, and then remote operation — socket presence, commands and
-screenshots, feature flags and remote config, in-app messages, remote logs, crash reports and alerts.
-Releases and remote updates (phase 3), maintenance windows, contracts and the secrets vault (phase 4)
-build on the same model and are not here yet.
+Phases 1 to 3 of the plan are here: the CRM, the inventory of apps and installations, enrollment,
+presence, telemetry and the kill switch; remote operation — socket presence, commands and
+screenshots, feature flags and remote config, in-app messages, remote logs, crash reports and alerts;
+and releases — signed builds uploaded from CI, channels, staged rollout, a minimum version, the
+offer an A/B updater installs from, its reports, the automatic pause and rollback. Maintenance
+windows, contracts and the secrets vault (phase 4) build on the same model and are not here yet.
 
 ---
 
@@ -109,6 +110,25 @@ build on the same model and are not here yet.
   flaps, resolved on its own when the condition clears. The rule's creator is told through the
   notification centre (`apps/notifications`), in the bell, by push and by email as their preferences
   say; a silenced rule keeps recording and stops telling.
+- **Signed releases from CI** — CI uploads a build with a token of its own (`cic_…`, one app, the
+  upload route and nothing else), the artifact as the request body and an Ed25519 signature over
+  its SHA-256 digest in a header. The body is streamed into a private R2 bucket and through SHA-256
+  at once, the signature is checked against the app's release public key, and a build that fails is
+  deleted before it is ever recorded. It lands as a draft; a person publishes it.
+- **Channels, lines and staged rollout** — a release is one artifact for one channel, platform and
+  architecture (`arm64` and `aarch64` are the same line; `universal` builds fit all). Publishing
+  starts at a percentage and can name devices to reach first; a device's bucket is stable across
+  releases, so the same kiosks are always the canaries. A minimum version makes the update
+  mandatory for devices below it.
+- **An offer the updater can trust** — every heartbeat answer says whether there is an update;
+  `/updates/latest` carries the hash, the signature, the health-check timeout and the failure budget
+  the A/B updater needs, and downloads go through a 15-minute signed link that serves ranges, so a
+  platform downloader without the bearer token can fetch and resume them. The device reports
+  `downloaded`, `installed`, `health_ok`, `rolled_back` or `failed`.
+- **Pause and rollback** — the cron pauses a release whose devices roll back or crash past the app's
+  thresholds (with a minimum sample, so one kiosk is not a trend); withdrawing a release sends every
+  device on it back to the previous version as a mandatory rollback, and rolling a line back
+  withdraws everything newer in one step. A `release_rollbacks` alert rule tells somebody.
 - **Per-app documents** — each app gets its own `openapi.json`, filtered to the modules it has
   enabled, and websites get a generated `sdk.js` with the app's id, key and modules baked in — which,
   with the matching modules, also reports uncaught errors as crashes, sends logs, keeps the flags and
@@ -145,8 +165,11 @@ account and in `apps/auth` rather than in this directory — twice, once per env
   exist and their ids are in `wrangler.jsonc`; recreating one means replacing its id there.
 - A **queue**: `franciscosolis-custom-apps-telemetry` (and `franciscosolis-custom-apps-telemetry-dev`).
   It also produces to `franciscosolis-notifications` (and `-dev`), which `apps/notifications` owns.
-- An **R2 bucket**: `franciscosolis-custom-apps-screenshots` (and `-dev`), with no public access and
-  no custom domain.
+- Two **R2 buckets**: `franciscosolis-custom-apps-screenshots` and
+  `franciscosolis-custom-apps-releases` (and their `-dev` copies), with no public access and no custom
+  domain.
+- A **secret**: `UPDATE_DOWNLOAD_SECRET`, per environment, which signs download links. Without it
+  devices get a 503 when they ask for one.
 - A **proxied DNS record** for `ingest` (and `ingest-dev`) in the `franciscosolis.cl` zone, so the
   zone routes have a hostname to match.
 - The **`franciscosolis-custom-apps` client application** and the `custom-apps:admin` permission,
@@ -223,7 +246,42 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `PATCH` / `DELETE` | `/v1/alert-rules/:ruleId` | Edit, disable, silence; delete |
 | `GET` | `/v1/alerts` · `/v1/alerts/:alertId` | `?status` (`unresolved` for the inbox), `?app_id`, `?rule_id` |
 | `POST` | `/v1/alerts/:alertId/ack` · `/resolve` | Acknowledge, or close by hand |
+| `GET` / `POST` | `/v1/apps/:appId/ci-tokens` | CI tokens; create one (the token is shown once) |
+| `POST` | `/v1/ci-tokens/:tokenId/revoke` | Retire a CI token |
+| `GET` | `/v1/apps/:appId/releases` | Releases (`?channel`, `?platform`, `?arch`, `?status`) with installed / healthy / rolled-back counts |
+| `GET` / `PATCH` / `DELETE` | `/v1/releases/:releaseId` | One release with its stats and reach; notes, minimum version, named devices; delete a draft |
+| `POST` | `/v1/releases/:releaseId/publish` · `/rollout` | Publish at a percentage; widen or narrow it |
+| `POST` | `/v1/releases/:releaseId/pause` · `/resume` · `/withdraw` · `/rollback` | Stop offering it; offer it again; pull it; roll the line back to it |
+| `GET` | `/v1/releases/:releaseId/artifact` · `/reports` | The artifact; what devices reported |
+| `GET` | `/v1/installations/:installationId/updates` | What it would be offered now, and its update reports |
 | `GET` | `/v1/audit-log` | `?event` (a trailing `.` matches a family), `?resource_type`, `?resource_id`, `?actor`, `?from`, `?to` |
+
+### CI (Bearer CI token of the app)
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/v1/apps/:appId/releases/upload` | The artifact as the body (≤ 96 MB, `Content-Length` required); `version`, `platform`, `arch`, `filename` and optionally `channel`, `min_version`, `notes` in the query; `X-Signature` (and optionally `X-Sha256`) in the headers |
+
+Publishing from GitHub Actions, with the private key in a secret as a PEM:
+
+```bash
+# Ed25519 over the raw SHA-256 digest of the artifact, base64.
+openssl dgst -sha256 -binary dist/pos-setup.msi > digest.bin
+printf '%s' "$RELEASE_SIGNING_KEY" > key.pem
+openssl pkeyutl -sign -rawin -inkey key.pem -in digest.bin | base64 -w0 > signature.txt
+curl --fail-with-body -X POST \
+  "https://api.franciscosolis.cl/custom-apps/v1/apps/$APP_ID/releases/upload?version=$VERSION&platform=windows&arch=x86_64&filename=pos-setup.msi&channel=stable" \
+  -H "Authorization: Bearer $CUSTOM_APPS_CI_TOKEN" \
+  -H "X-Signature: $(cat signature.txt)" \
+  -H "X-Sha256: $(sha256sum dist/pos-setup.msi | cut -d' ' -f1)" \
+  -H 'Content-Type: application/x-msi' \
+  --data-binary @dist/pos-setup.msi
+```
+
+The key pair comes from `openssl genpkey -algorithm ed25519 -out key.pem`; the app's
+`release_public_key` is the raw 32 bytes of its public half in base64
+(`openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`), and the same bytes are
+built into the app so the updater can verify what it downloads.
 
 The full, always-current description is the OpenAPI spec at
 `https://api.franciscosolis.cl/openapi.json`, where this document is merged under `/custom-apps`.
@@ -251,10 +309,23 @@ by decision: each integrates the routes it needs from its app's own `openapi.jso
 | `GET` | `/messages` · `POST /messages/:messageId/seen` | Running messages; confirm one was shown (module `messages`) |
 | `POST` | `/commands/:commandId/ack` | A command's result (module `commands`) |
 | `POST` | `/commands/:commandId/screenshot` | The image a `screenshot` command asked for, as the body |
+| `GET` | `/updates/latest` | The release to install, or null (module `updates`); `?platform`, `?arch`, `?version` override what enrollment said |
+| `GET` | `/updates/:releaseId/download` | A 15-minute link to the artifact, usable without the token |
+| `GET` | `/downloads/:ticket` | The artifact itself; public, answers `Range` |
+| `POST` | `/updates/:releaseId/report` | `downloaded`, `installed`, `health_ok`, `rolled_back` or `failed` |
 
 A device should keep its tokens in the platform's secure store, ask `/status` on start-up, queue
 metrics, events and logs locally while offline and send them when the network is back, deduplicate
 commands by `id`, and refetch `/config` or `/messages` only when their tag in `sync` changes.
+
+An updater, when `update` in a heartbeat answer is not null: read `/updates/latest`, get a link,
+download it, check its SHA-256 and verify the signature over that digest against the key built into
+the app, keep the running version as the fallback slot, install and restart into the new one, and
+report `installed`. Report `health_ok` once the new version has started, reached this API and passed
+its own checks; if that has not happened within `health_check_timeout_seconds`, or it crashes
+`max_failures` times in a row, switch back to the fallback and report `rolled_back`. An offer marked
+`mandatory` must be installed before the app carries on; one marked `rollback` is the way back from
+a withdrawn version.
 
 ---
 
@@ -270,9 +341,11 @@ commands by `id`, and refetch `/config` or `/messages` only when their tag in `s
 
 Bindings: `DB` (D1), `AUTH` (service binding, read for its JWKS only), `TELEMETRY_QUEUE` (producer
 and consumer of the same queue), `NOTIFICATIONS_QUEUE` (producer, for alerts), `PRESENCE` (the
-`InstallationSocket` Durable Object), `SCREENSHOTS` (R2), `ENROLL_IP_LIMITER`, `ENROLL_APP_LIMITER`
-and `INGEST_LIMITER` (rate limits), the ingest zone route and a cron every five minutes. There are no
-secrets.
+`InstallationSocket` Durable Object), `SCREENSHOTS` and `RELEASES` (R2), `ENROLL_IP_LIMITER`,
+`ENROLL_APP_LIMITER` and `INGEST_LIMITER` (rate limits), the ingest zone route and a cron every five
+minutes. One secret: `UPDATE_DOWNLOAD_SECRET` (`wrangler secret put UPDATE_DOWNLOAD_SECRET`, and again
+with `--env dev`), any long random string; rotating it invalidates the links already handed out,
+which live 15 minutes anyway.
 
 ---
 
@@ -283,12 +356,14 @@ cd apps/custom-apps
 pnpm exec wrangler d1 create franciscosolis_custom_apps                # and _dev; ids into wrangler.jsonc
 pnpm exec wrangler queues create franciscosolis-custom-apps-telemetry  # and -dev
 pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-screenshots  # and -dev
+pnpm exec wrangler r2 bucket create franciscosolis-custom-apps-releases     # and -dev
+openssl rand -base64 48 | pnpm exec wrangler secret put UPDATE_DOWNLOAD_SECRET  # and --env dev
 pnpm run deploy
 ```
 
 The Worker must be deployed as `custom-apps` for the gateway's `CUSTOM_APPS` binding to resolve —
 **before** the gateway change that binds it — and after `auth`, which it binds. The screenshots
-bucket must exist before the deploy that binds it, and so must the notifications queue. The Durable
+and releases buckets must exist before the deploy that binds them, and so must the notifications queue. The Durable
 Object class is created by the `v1` migration in `wrangler.jsonc` on the first deploy. Migrations are
 applied by the repository's `Migrate` workflow on a push to `dev`; `pnpm run db:migrate:remote` is
 the manual fallback.

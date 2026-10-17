@@ -15,17 +15,19 @@ D1 database**, chosen by hostname in `src/index.ts`:
 - **Panel API** — reached through the gateway's `CUSTOM_APPS` binding at
   `api.franciscosolis.cl/custom-apps`, every route under `/v1`. Companies, contacts, apps, app keys,
   installations, telemetry views, commands and screenshots, flags and remote config, messages,
-  crashes and logs, alert rules and alerts, audit log. Used by the panel at
-  `franciscosolis.cl/custom-apps`.
+  crashes and logs, alert rules and alerts, releases and CI tokens, audit log. Used by the panel at
+  `franciscosolis.cl/custom-apps`. One route on this host takes no panel token: CI uploading a
+  release (`src/panel/ci.ts`), mounted ahead of the `/v1` gate and accepting only a CI token.
 - **Ingest** — `ingest.franciscosolis.cl/custom-apps/v1/:appId/*`, a zone route straight to this
   Worker. Enrollment, token refresh, heartbeat, the socket, status, metrics, events, logs, crashes,
-  config, messages, command acknowledgements and screenshot uploads, the per-app `openapi.json` and
-  `sdk.js`. Used by client apps only.
+  config, messages, command acknowledgements and screenshot uploads, the update offer, download
+  links and update reports, the per-app `openapi.json` and `sdk.js`. Used by client apps only.
 
-Phases 1 (CRM, inventory, enrollment, presence, telemetry, kill switch) and 2 (remote operation:
+Phases 1 (CRM, inventory, enrollment, presence, telemetry, kill switch), 2 (remote operation:
 socket presence, commands and screenshots, flags and config, messages, logs, crashes, alerts,
-automatic grace expiry) of the custom-apps plan. Releases/updates (phase 3), maintenance windows,
-contracts, tickets, uptime and the secrets vault (phase 4) build on this schema.
+automatic grace expiry) and 3 (releases: signed uploads from CI, channels and staged rollout, minimum
+version, the A/B updater's offer and reports, automatic pause, rollback) of the custom-apps plan.
+Maintenance windows, contracts, tickets, uptime and the secrets vault (phase 4) build on this schema.
 
 ## Stack
 
@@ -36,7 +38,7 @@ contracts, tickets, uptime and the secrets vault (phase 4) build on this schema.
 - **Cloudflare Queues**, producer *and* consumer of `franciscosolis-custom-apps-telemetry`, and a
   producer of `franciscosolis-notifications` for alerts.
 - **Durable Objects** (`InstallationSocket`, one per installation, WebSocket Hibernation) for socket
-  presence, and **R2** (`SCREENSHOTS`) for screenshots.
+  presence, and **R2** for screenshots (`SCREENSHOTS`) and release artifacts (`RELEASES`).
 - **Workers Rate Limiting** (`ratelimits`), a **cron trigger** every five minutes.
 - No runtime dependency beyond the catalog's Hono/valibot/Drizzle; versions via `catalog:`.
 
@@ -56,7 +58,8 @@ contracts, tickets, uptime and the secrets vault (phase 4) build on this schema.
 - `src/panel/` — `index.ts` (the `/v1` gate and `/me`), `shared.ts`, `routes/` (`companies`,
   `contacts`, `apps` — keys, status, sdk, installations list, usage — `installations`, `overview` —
   overview and audit log — `remote` — commands, screenshots, flags, config, messages —
-  `diagnostics` — crashes and logs — `alerts`).
+  `diagnostics` — crashes and logs — `alerts`, `releases` — CI tokens, releases, rollout, reports),
+  `ci.ts` (the CI upload, outside the gate).
 - `src/ingest/index.ts` — every device route and the per-app documents.
 - `src/middleware/` — `admin.ts` (`requireAdmin`), `installation.ts` (`requireInstallation`).
 - `src/services/` — `enrollment.ts`, `presence.ts` (connected rule, heartbeat credit),
@@ -68,10 +71,11 @@ contracts, tickets, uptime and the secrets vault (phase 4) build on this schema.
   consumer), `alerts.ts` (rule evaluation), `notify.ts` (the notifications-queue contract),
   `maintenance.ts` (the five-minute cron), `rollup.ts` (daily roll-up, purge — the hourly half),
   `series.ts` (what the panel charts), `sdk.ts` (the `sdk.js` template), `apps.ts` (modules, current
-  key, `buildSdk`), `serialize.ts` (rows → JSON), `audit.ts`.
+  key, `buildSdk`), `releases.ts` (the offer, rollout buckets, release stats, the pause rule, signature
+  verification), `serialize.ts` (rows → JSON), `audit.ts`.
 - `src/lib/` — `config.ts` (every vocabulary and limit), `json-schema.ts` (the config schema
-  subset), `rut.ts`, `tokens.ts`, `time.ts` (Santiago wall clock), `validation.ts`, `validate.ts`,
-  `jwks.ts`, `json.ts`, `errors.ts`.
+  subset), `rut.ts`, `tokens.ts`, `time.ts` (Santiago wall clock), `semver.ts`, `download-tickets.ts`,
+  `validation.ts`, `validate.ts`, `jwks.ts`, `json.ts`, `errors.ts`.
 
 ## Architecture notes (non-obvious)
 
@@ -159,6 +163,41 @@ contracts, tickets, uptime and the secrets vault (phase 4) build on this schema.
   resources they created.
 - **`sdk.js` is deterministic** — no dates, no build ids — so `GET /v1/apps/:appId/sdk` can quote a
   stable SRI hash. Anything added to the template must keep that property.
+- **A release is one artifact on one line.** The line is (app, channel, platform, arch) and the
+  version is unique on it. CI uploads a **draft**; only a person publishes.
+  `draft → published ⇄ paused → withdrawn`, and only a draft is ever deleted — anything that was
+  published may be installed somewhere and is history.
+- **The upload is streamed, never buffered.** The body is the artifact (`curl --data-binary`), split
+  with `tee()` into R2 (through a `FixedLengthStream` of the declared `Content-Length`, which R2
+  needs) and `crypto.DigestStream`. A 96 MB installer never sits in the isolate's memory. Any refusal
+  after the bytes landed deletes the object before answering.
+- **The signature is over the SHA-256 digest, not the bytes**: Ed25519, base64, raw 32-byte digest,
+  verified against the app's `release_public_key` (raw 32 bytes, base64) before the row exists. The
+  private key never reaches this Worker — CI holds it — and a device verifies the same way after
+  downloading, against the key built into the app. The server's check exists so a build the devices
+  would refuse is never offered; it is not what the devices trust.
+- **CI tokens are a third credential** (`cic_…`, SHA-256 stored like device tokens), scoped to one
+  app and to the upload route only. Neither a panel token nor a device token can reach that route,
+  and a CI token can reach nothing else.
+- **The offer is computed, never stored** (`offerFor`): the newest published release of the device's
+  line that its rollout reaches and that is newer than what it runs; `mandatory` below `min_version`;
+  a device running a *withdrawn* version gets the newest earlier live one as a mandatory `rollback`,
+  whatever that one's rollout says. Nothing during grace or suspension. The heartbeat answer carries
+  only the summary (`directives.update`); the device asks `/updates/latest` for the rest. The
+  architecture is normalised (`arm64` = `aarch64`) and `universal` / `any` builds match every arch.
+- **Rollout buckets are stable**: SHA-256 of `appId:installationId`, mod 100. The devices in the first
+  10 % of one release are the first 10 % of the next — known canaries, not a random handful each time.
+  `rollout_installations` names devices reached whatever the percentage.
+- **Downloads go through a signed ticket**, not the bearer token, because what fetches the bytes is
+  often a platform downloader that will not carry an `Authorization` header. HMAC over the claims with
+  `UPDATE_DOWNLOAD_SECRET`, 15 minutes, nothing stored. Without the secret the link route answers 503.
+  The download answers `Range`.
+- **The automatic pause is a pause, not a withdrawal.** The cron computes per-release stats (distinct
+  devices per report status, devices that crashed on that version since publication) and pauses a
+  published release whose rollback or crash rate passes the app's thresholds, with at least
+  `RELEASES.pauseMinSample` devices behind the rate. Withdrawing would send every device back down;
+  that is a person's decision. Resuming a release that is still past a threshold pauses it again on the
+  next run, by design.
 - **A website always pings.** A browser cannot set the `Authorization` header on a WebSocket upgrade,
   so socket mode is for native apps and `sdk.js` never opens one.
 
