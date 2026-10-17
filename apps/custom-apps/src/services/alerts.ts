@@ -4,6 +4,8 @@ import { alertRules, alerts, apps, installations } from '@/db/schema'
 import type { Env } from '@/env'
 import { ALERTS, HEARTBEAT, LOG_LEVELS, type AlertKind } from '@/lib/config'
 import { iso, parseJsonObject } from '@/lib/json'
+import { addDays } from '@/lib/hours'
+import { zonedDay } from '@/lib/time'
 import { publishNotification } from '@/services/notify'
 import { MEMORY_PERCENT } from '@/services/rollup'
 
@@ -116,6 +118,81 @@ const detectCount = async (db: D1Database, rule: RuleRow, table: string, timeCol
   }))
 }
 
+/**
+ * The app a contract alert is filed under: the rule's own app when it has one, otherwise the first
+ * app the contract covers by name. A contract covering no app has nowhere to be filed and is skipped.
+ */
+const contractAppSql = (column: 'id' | 'name') =>
+  `(SELECT a.${column} FROM contract_apps ca JOIN apps a ON a.id = ca.app_id WHERE ca.contract_id = c.id ORDER BY a.name, a.id LIMIT 1)`
+
+/** The app columns of a contract alert's query, and their bindings. */
+const contractAppColumns = (rule: RuleRow) =>
+  rule.appId
+    ? { sql: '? AS app_id, (SELECT name FROM apps WHERE id = ?) AS app_name', bindings: [rule.appId, rule.appId] }
+    : { sql: `${contractAppSql('id')} AS app_id, ${contractAppSql('name')} AS app_name`, bindings: [] as string[] }
+
+/** `AND` the contract covers the rule's app, when the rule is about one app. */
+const contractFilter = (rule: RuleRow) =>
+  rule.appId ? { sql: ' AND EXISTS (SELECT 1 FROM contract_apps x WHERE x.contract_id = c.id AND x.app_id = ?)', bindings: [rule.appId] } : { sql: '', bindings: [] as string[] }
+
+const detectContractExpiring = async (db: D1Database, rule: RuleRow, now: Date): Promise<Finding[]> => {
+  const day = zonedDay(now)
+  const filter = contractFilter(rule)
+  const columns = contractAppColumns(rule)
+  const { results } = await db
+    .prepare(
+      `SELECT c.id, c.name, c.ends_on, co.legal_name, co.trade_name, ${columns.sql}
+       FROM contracts c JOIN companies co ON co.id = c.company_id
+       WHERE c.cancelled_at IS NULL AND c.auto_renew = 0 AND c.ends_on IS NOT NULL AND c.ends_on >= ? AND c.ends_on <= ?${filter.sql}`,
+    )
+    .bind(...columns.bindings, day, addDays(day, Math.floor(rule.threshold)), ...filter.bindings)
+    .all<{ id: string; name: string; ends_on: string; legal_name: string; trade_name: string | null; app_id: string | null; app_name: string | null }>()
+  return results
+    .filter((row) => row.app_id)
+    .map((row) => ({
+      subject: `contract:${row.id}`,
+      appId: row.app_id!,
+      installationId: null,
+      value: Math.round((Date.parse(`${row.ends_on}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 86_400_000),
+      details: { contract_id: row.id, contract_name: row.name, company_name: row.trade_name || row.legal_name, ends_on: row.ends_on, app_name: row.app_name },
+    }))
+}
+
+const detectCycleHoursLow = async (db: D1Database, rule: RuleRow): Promise<Finding[]> => {
+  const filter = contractFilter(rule)
+  const columns = contractAppColumns(rule)
+  const { results } = await db
+    .prepare(
+      `SELECT y.id AS cycle_id, c.id AS contract_id, c.name, co.legal_name, co.trade_name, y.ends_on,
+              y.included_minutes + y.carried_minutes AS available,
+              (SELECT COALESCE(SUM(w.minutes), 0) FROM work_logs w WHERE w.cycle_id = y.id) AS used,
+              ${columns.sql}
+       FROM contract_cycles y JOIN contracts c ON c.id = y.contract_id JOIN companies co ON co.id = c.company_id
+       WHERE y.status = 'open' AND c.cancelled_at IS NULL AND y.included_minutes + y.carried_minutes > 0${filter.sql}`,
+    )
+    .bind(...columns.bindings, ...filter.bindings)
+    .all<{ cycle_id: string; contract_id: string; name: string; legal_name: string; trade_name: string | null; ends_on: string; available: number; used: number; app_id: string | null; app_name: string | null }>()
+  return results
+    .filter((row) => row.app_id)
+    .map((row) => ({ ...row, left: Math.round(((row.available - row.used) / row.available) * 1000) / 10 }))
+    .filter((row) => row.left <= rule.threshold)
+    .map((row) => ({
+      subject: `cycle:${row.cycle_id}`,
+      appId: row.app_id!,
+      installationId: null,
+      value: row.left,
+      details: {
+        contract_id: row.contract_id,
+        contract_name: row.name,
+        company_name: row.trade_name || row.legal_name,
+        cycle_id: row.cycle_id,
+        available_minutes: Number(row.available),
+        used_minutes: Number(row.used),
+        app_name: row.app_name,
+      },
+    }))
+}
+
 /** The subjects a rule's condition holds for at `now`. */
 const detect = (db: D1Database, rule: RuleRow, now: Date): Promise<Finding[]> => {
   const windowStart = minutesAgo(now, rule.windowMinutes)
@@ -134,6 +211,10 @@ const detect = (db: D1Database, rule: RuleRow, now: Date): Promise<Finding[]> =>
       return detectCount(db, rule, 'installations', 'enrolled_at', Math.floor(windowStart.getTime() / 1000))
     case 'release_rollbacks':
       return detectCount(db, rule, 'release_reports', 'created_at', Math.floor(windowStart.getTime() / 1000), " AND t.status = 'rolled_back'")
+    case 'contract_expiring':
+      return detectContractExpiring(db, rule, now)
+    case 'cycle_hours_low':
+      return detectCycleHoursLow(db, rule)
     default:
       return Promise.resolve([])
   }
@@ -143,13 +224,14 @@ const detect = (db: D1Database, rule: RuleRow, now: Date): Promise<Finding[]> =>
 const formatValue = (kind: string, value: number | null) => {
   if (value === null) return null
   if (kind === 'installation_offline') return `${value} min`
-  if (kind === 'cpu_high' || kind === 'memory_high') return `${value} %`
+  if (kind === 'cpu_high' || kind === 'memory_high' || kind === 'cycle_hours_low') return `${value} %`
+  if (kind === 'contract_expiring') return `${value} d`
   return String(value)
 }
 
 const subjectName = (alert: Pick<AlertRow, 'details'>) => {
   const details = parseJsonObject<Record<string, unknown>>(alert.details) ?? {}
-  return String(details.installation_name ?? details.app_name ?? '')
+  return String(details.installation_name ?? details.contract_name ?? details.app_name ?? '')
 }
 
 const notifyRecipient = async (env: Env, rule: RuleRow, alert: AlertRow, type: 'custom_apps.alert_opened' | 'custom_apps.alert_resolved', now: Date) => {

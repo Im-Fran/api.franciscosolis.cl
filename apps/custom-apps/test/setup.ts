@@ -1,5 +1,6 @@
 import { applyD1Migrations, env } from 'cloudflare:test'
 import { beforeAll, beforeEach } from 'vitest'
+import { captureEmail } from './helpers/email'
 import { captureNotifications } from './helpers/notifications'
 import { captureTelemetry } from './helpers/telemetry'
 
@@ -20,10 +21,15 @@ beforeAll(async () => {
  * this same Worker's consumer in the background, writing rows while a test is asserting on them.
  * Tests that want the rows written hand the captured messages to the consumer explicitly. The
  * notifications queue is captured the same way: its consumer is another Worker, so what was
- * published is only ever read back from the capture.
+ * published is only ever read back from the capture. `EMAIL` is replaced the same way, so no test
+ * sends mail and every test can read what would have been sent.
  */
 beforeEach(async () => {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM work_logs'),
+    env.DB.prepare('DELETE FROM contract_cycles'),
+    env.DB.prepare('DELETE FROM contract_apps'),
+    env.DB.prepare('DELETE FROM contracts'),
     env.DB.prepare('DELETE FROM release_reports'),
     env.DB.prepare('DELETE FROM releases'),
     env.DB.prepare('DELETE FROM ci_tokens'),
@@ -52,4 +58,5 @@ beforeEach(async () => {
   ])
   captureTelemetry()
   captureNotifications()
+  captureEmail()
 })

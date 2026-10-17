@@ -52,7 +52,9 @@ together seven Cloudflare Workers, all living directly in this repo:
   grouped crash reports and alerts delivered through the notification centre, and their **releases**:
   Ed25519-signed builds uploaded from CI with a token of their own, channels and staged rollout, a
   minimum version, the offer an A/B updater installs from (downloaded through short-lived signed
-  links), its reports, an automatic pause and rollback. It is the one module
+  links), its reports, an automatic pause and rollback, and their **contracts**: hours included per
+  cycle with rollover and overage, the hand-kept work log, and contract ends that warn the client and
+  put the covered apps in grace. It is the one module
   with **two front doors**: the panel API through `apps/api` at `/custom-apps/*` (one account, holding
   `custom-apps:admin` under its own client application, `franciscosolis-custom-apps`), and an
   **ingest** surface the client apps report to at `ingest.franciscosolis.cl/custom-apps/v1/:appId`,
@@ -61,15 +63,17 @@ together seven Cloudflare Workers, all living directly in this repo:
 **Support is plain email, not a Worker.** There used to be an `apps/support` ticket system with a
 help centre; it was retired, and help is now asked for and answered at `soporte@franciscosolis.cl`,
 a Google Group. Nothing in this repository sits on that path — do not reintroduce a ticket Worker,
-a `support` notification category or a `SUPPORT` binding. `apps/auth` keeps
+a `support` notification category or a `SUPPORT` binding. `apps/custom-apps`' in-app support form
+is this rule applied, not an exception to it: it emails the request to that inbox with the device's
+context attached and keeps nothing as a ticket. `apps/auth` keeps
 `0010_support_application.sql` as history and `0012_remove_support_application.sql` undoes it;
 `apps/notifications`' `0001_drop_support_category.sql` clears the old bell entries.
 
 Alongside them, `packages/` holds the shared code the Workers import:
 
 - `packages/emails` (`@franciscosolis/emails`) — every email body in the monorepo, written as
-  react-email components. Imported by `apps/auth`, `apps/cms`, `apps/marketplace` and
-  `apps/notifications`; no Worker builds mail markup itself.
+  react-email components. Imported by `apps/auth`, `apps/cms`, `apps/marketplace`,
+  `apps/notifications` and `apps/custom-apps`; no Worker builds mail markup itself.
 - `packages/translate` (`@franciscosolis/translate`) — the one prompt behind every machine
   translation here, and the parsing of the model's answer. Imported by `apps/cms` and `apps/marketplace`;
   no Worker writes a translation prompt itself.
@@ -88,7 +92,8 @@ workspace/catalog, root scripts).
   those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/marketplace`,
   and `apps/notifications` additionally use drizzle-orm/drizzle-kit, and those same
   four pull react + react-email through `@franciscosolis/emails`, all catalogued too.
-  `apps/custom-apps` uses drizzle as well and sends no mail. `apps/cms` and `apps/marketplace`
+  `apps/custom-apps` uses drizzle as well, and the emails package for two messages: the notice that
+  a contract is ending and in-app support requests. `apps/cms` and `apps/marketplace`
   use **Workers AI** through `@franciscosolis/translate`. `apps/marketplace` talks to MercadoPago over
   plain `fetch` rather than through an SDK — a handful of functions in `src/lib/mercadopago.ts`
   against a dependency that assumes Node.
@@ -499,7 +504,9 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   uploads a build with a `cic_` token of one app, streamed into the `RELEASES` bucket and verified
   against the app's Ed25519 public key before it is recorded (the private key stays in CI), and
   devices download through HMAC-signed links minted with `UPDATE_DOWNLOAD_SECRET`, a secret per
-  environment. See `apps/custom-apps/CLAUDE.md`.
+  environment. Contracts drive the same kill switch: the cron emails the client before one ends and,
+  when it lapses unrenewed, puts the apps it covers in grace; renewing brings them back. See
+  `apps/custom-apps/CLAUDE.md`.
 - **Nothing in this repo renders HTML.** `api.franciscosolis.cl` is a backend end to end: every
   Worker answers JSON, a redirect or a binary asset (`apps/api/src/brand.ts`), and nothing else.
   The one place that used to break the rule was `apps/auth`'s built-in sign-in screen; it is gone,

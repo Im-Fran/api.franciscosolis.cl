@@ -30,6 +30,8 @@ const THRESHOLDS: Record<AlertKind, { min: number; max: number; unit: string }> 
   error_log_spike: { min: 1, max: 1_000_000, unit: 'error entries' },
   enrollment_spike: { min: 1, max: 100_000, unit: 'new installations' },
   release_rollbacks: { min: 1, max: 100_000, unit: 'rollbacks reported' },
+  contract_expiring: { min: 1, max: 365, unit: 'days before the end' },
+  cycle_hours_low: { min: 0, max: 100, unit: 'percent of the cycle left' },
 }
 
 const windowInput = v.pipe(v.number(), v.integer(), v.minValue(5), v.maxValue(24 * 60))

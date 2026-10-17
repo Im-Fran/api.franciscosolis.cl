@@ -11,6 +11,10 @@ const REQUIRED_VARS = [
   'CUSTOM_APPS_ALLOWED_AUDIENCES',
   'CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS',
   'INGEST_PUBLIC_URL',
+  'MAIL_FROM_EMAIL',
+  'MAIL_FROM_NAME',
+  'SUPPORT_EMAIL',
+  'PANEL_PUBLIC_URL',
 ] as const
 
 describe('the Worker configuration', () => {
@@ -20,7 +24,7 @@ describe('the Worker configuration', () => {
     expect(String(value).length).toBeGreaterThan(0)
   })
 
-  it('binds the database, the auth service, both queues, the sockets, both buckets and the three rate limiters', () => {
+  it('binds the database, the auth service, both queues, the sockets, both buckets, the mail binding and the three rate limiters', () => {
     expect(env.DB).toBeDefined()
     expect(env.AUTH).toBeDefined()
     expect(env.TELEMETRY_QUEUE).toBeDefined()
@@ -28,6 +32,7 @@ describe('the Worker configuration', () => {
     expect(typeof env.PRESENCE.idFromName).toBe('function')
     expect(typeof env.SCREENSHOTS.put).toBe('function')
     expect(typeof env.RELEASES.put).toBe('function')
+    expect(typeof env.EMAIL.send).toBe('function')
     expect(typeof env.ENROLL_IP_LIMITER.limit).toBe('function')
     expect(typeof env.ENROLL_APP_LIMITER.limit).toBe('function')
     expect(typeof env.INGEST_LIMITER.limit).toBe('function')

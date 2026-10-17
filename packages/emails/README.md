@@ -12,11 +12,12 @@
 
 ## 📖 Overview
 
-Four Workers in this monorepo send mail — [`apps/auth`](../../apps/auth/README.md) (sign-in links,
+Five Workers in this monorepo send mail — [`apps/auth`](../../apps/auth/README.md) (sign-in links,
 invitations and account access notices), [`apps/cms`](../../apps/cms/README.md) (editorial messages),
 [`apps/notifications`](../../apps/notifications/README.md) (notices and digests) and
 [`apps/marketplace`](../../apps/marketplace/README.md) (the voucher for a sale, and the notice that one was
-refunded). Before this package they each assembled their own HTML with template literals, which
+refunded) and [`apps/custom-apps`](../../apps/custom-apps/README.md) (the notice that a contract is ending,
+and in-app support requests). Before this package they each assembled their own HTML with template literals, which
 meant hand-escaping every interpolated value, hand-writing a plain-text twin of each body, and subtly
 different visual identities arriving from the same domain.
 
@@ -59,6 +60,8 @@ esbuild, so a build step here would only add an artifact to keep in sync.
 | `renderContentEmail` | Wrapper around an editor-authored body. Used by `apps/cms`. |
 | `renderSaleReceiptEmail` | The voucher: the receipt for a sale, whether it was paid by card, in cash, by transfer, or given away. Used by `apps/marketplace`. |
 | `renderSaleRefundEmail` | Notice that a payment was refunded, with the reason. Used by `apps/marketplace`. Deliberately not sent for a chargeback. |
+| `renderContractNoticeEmail` | Notice to a client that a contract which does not renew itself is ending, and what happens to the apps it covers. Used by `apps/custom-apps`. |
+| `renderSupportRequestEmail` | A support request typed into a client's app, with the device's facts, recent logs and open crashes, for the support inbox. Used by `apps/custom-apps`. |
 | `renderEmail` | The primitive every one of the above is built on: element in, `{ subject, html, text }` out. |
 | `EmailLayout`, `ActionLink`, `Paragraph`, `DetailRows` | The building blocks a new template is assembled from. |
 | `formatMoney` | An amount as a receipt prints it — no fraction digits on a currency that has no minor unit. |

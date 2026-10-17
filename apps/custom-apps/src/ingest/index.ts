@@ -1,4 +1,5 @@
-import { and, eq } from 'drizzle-orm'
+import { renderSupportRequestEmail } from '@franciscosolis/emails'
+import { and, desc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
@@ -6,18 +7,22 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, generateSpecs, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
-import { apps, appKeys, commands, installations, messageReceipts, messages, releaseReports, releases, screenshots } from '@/db/schema'
+import { apps, appKeys, commands, companies, crashGroups, installations, logEntries, messageReceipts, messages, releaseReports, releases, screenshots } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { CRASHES, LOG_LEVELS, LOGS, PLATFORMS, RELEASES, SCREENSHOTS, TELEMETRY, UPDATE_REPORT_STATUSES, type AppModule } from '@/lib/config'
+import { CRASHES, LOG_LEVELS, LOGS, PLATFORMS, RELEASES, SCREENSHOTS, SUPPORT, TELEMETRY, UPDATE_REPORT_STATUSES, type AppModule } from '@/lib/config'
 import { mintDownloadTicket, verifyDownloadTicket } from '@/lib/download-tickets'
 import { validate } from '@/lib/validate'
 import { isUuid } from '@/lib/validation'
 import { invalidToken, requireInstallation } from '@/middleware/installation'
 import { buildSdk, modulesOf } from '@/services/apps'
+import { recordAudit } from '@/services/audit'
+import { graceAllows } from '@/services/contracts'
 import { acknowledgeCommand, commandAckSchema } from '@/services/commands'
 import { enroll, enrollBodySchema, refresh, refreshBodySchema, type IssuedTokens } from '@/services/enrollment'
 import { heartbeatBodySchema, presenceFor, recordHeartbeat, stateFor } from '@/services/heartbeat'
+import { sendMail } from '@/services/mail'
 import { activeMessages } from '@/services/messages'
+import { effectiveState } from '@/services/presence'
 import { offerFor, toDeviceOffer } from '@/services/releases'
 import { effectiveLogLevel, etagOf, resolveConfig } from '@/services/remote-config'
 import type { AppRow, InstallationRow } from '@/services/serialize'
@@ -893,6 +898,115 @@ app.post(
   },
 )
 
+/* ── Support ───────────────────────────────────────────────────────────────── */
+
+const supportBodySchema = v.object({
+  subject: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(SUPPORT.maxSubjectLength)),
+  message: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(SUPPORT.maxMessageLength)),
+  name: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))),
+  email: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.email(), v.maxLength(254)))),
+  /** Whether to attach recent logs and open crashes. The device facts are always attached. */
+  include_diagnostics: v.optional(v.boolean(), true),
+})
+
+const formatInstant = (date: Date | null) => (date ? date.toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '—')
+
+app.post(
+  '/:appId/support',
+  describeRoute({
+    operationId: 'supportRequest',
+    summary: 'Ask for support',
+    description: `Sends what the user typed in the app's support form to the support inbox, by email, with the device attached: app and version, channel, system, last contact and, unless \`include_diagnostics\` is false, the latest log lines and the open crashes of the running version. \`email\` becomes the reply address, so the answer reaches the user directly; without it the support team answers through the client. Nothing is kept here as a ticket. At most ${SUPPORT.maxPerHour} requests per installation per hour. Paused while the app is in grace unless the client's contract keeps support running, and while it is suspended.`,
+    tags: ['Support'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      202: { description: 'Sent', content: json(v.object({ code: v.literal(202), data: v.object({ sent: v.literal(true) }) })) },
+      403: { description: 'The support module is not enabled, or support is paused for this app' },
+      429: { description: 'Too many requests from this installation' },
+      502: { description: 'The email could not be sent; try again later' },
+    },
+  }),
+  requireInstallation,
+  validate('json', supportBodySchema),
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    const appRow = await requireApp(c, appId)
+    requireModule(appRow, 'support')
+    const installation = await loadInstallation(c, installationId)
+    const db = getDb(c.env)
+    const state = effectiveState(appRow.state, installation.stateOverride)
+    if (state === 'suspended' || (state === 'grace' && (installation.stateOverride === 'grace' || !(await graceAllows(db, appId, 'support'))))) {
+      throw new HTTPException(403, { message: 'Support is paused for this app' })
+    }
+    const since = Math.floor(Date.now() / 1000) - 3600
+    const recent = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE event = 'support.requested' AND resource_type = 'installation' AND resource_id = ? AND created_at >= ?")
+      .bind(installationId, since)
+      .first<{ n: number }>()
+    if (Number(recent?.n ?? 0) >= SUPPORT.maxPerHour) throw new HTTPException(429, { message: `At most ${SUPPORT.maxPerHour} support requests per hour from one installation` })
+
+    const body = c.req.valid('json')
+    const modules = modulesOf(appRow)
+    const [company] = await db.select({ legalName: companies.legalName, tradeName: companies.tradeName }).from(companies).where(eq(companies.id, appRow.companyId)).limit(1)
+    let logs: string[] = []
+    let crashes: string[] = []
+    if (body.include_diagnostics) {
+      if (modules.includes('logs')) {
+        const rows = await db
+          .select({ level: logEntries.level, message: logEntries.message, target: logEntries.target, occurredAt: logEntries.occurredAt })
+          .from(logEntries)
+          .where(eq(logEntries.installationId, installationId))
+          .orderBy(desc(logEntries.occurredAt))
+          .limit(SUPPORT.attachedLogs)
+        logs = rows.reverse().map((row) => `${new Date(row.occurredAt).toISOString().slice(11, 19)} ${row.level.padEnd(7)} ${row.target ? `${row.target}: ` : ''}${row.message}`)
+      }
+      if (modules.includes('crashes')) {
+        const rows = await db
+          .select({ title: crashGroups.title, occurrences: crashGroups.occurrences })
+          .from(crashGroups)
+          .where(and(eq(crashGroups.appId, appId), eq(crashGroups.status, 'open'), eq(crashGroups.appVersion, installation.appVersion ?? '')))
+          .orderBy(desc(crashGroups.lastSeenAt))
+          .limit(SUPPORT.attachedCrashes)
+        crashes = rows.map((row) => `${row.title} (×${row.occurrences})`)
+      }
+    }
+    const locale = 'es' as const
+    const rendered = await renderSupportRequestEmail({
+      subject: body.subject,
+      message: body.message,
+      requesterName: body.name || null,
+      requesterEmail: body.email || null,
+      companyName: company?.tradeName || company?.legalName || '',
+      appName: appRow.name,
+      device: [
+        { label: 'Instalación', value: installation.alias || installation.hostname || installation.deviceId },
+        { label: 'Versión', value: `${installation.appVersion ?? '—'} (${installation.channel})` },
+        { label: 'Sistema', value: [installation.osName, installation.osVersion, installation.arch].filter(Boolean).join(' · ') || installation.platform },
+        { label: 'Último contacto', value: formatInstant(installation.lastSeenAt) },
+        { label: 'Estado', value: state },
+      ],
+      logs,
+      crashes,
+      panelUrl: `${c.env.PANEL_PUBLIC_URL.replace(/\/+$/, '')}/installations/${installationId}`,
+      locale,
+      brandName: c.env.MAIL_FROM_NAME,
+    })
+    try {
+      await sendMail(c.env, { to: [c.env.SUPPORT_EMAIL], ...rendered, replyTo: body.email || null })
+    } catch (error) {
+      console.error('support request could not be emailed', installationId, error)
+      throw new HTTPException(502, { message: 'The request could not be sent; try again later' })
+    }
+    await recordAudit(db, {
+      event: 'support.requested',
+      resourceType: 'installation',
+      resourceId: installationId,
+      ip: c.req.header('CF-Connecting-IP') ?? null,
+      metadata: { app_id: appId, subject: body.subject, has_reply_address: Boolean(body.email), diagnostics: body.include_diagnostics },
+    })
+    return c.json({ code: 202 as const, data: { sent: true as const } }, 202)
+  },
+)
+
 /* ── Documents ─────────────────────────────────────────────────────────────── */
 
 /**
@@ -909,6 +1023,7 @@ const MODULE_OF_SEGMENT: Record<string, AppModule> = {
   commands: 'commands',
   updates: 'updates',
   downloads: 'updates',
+  support: 'support',
 }
 
 /** Socket presence is listed only for apps in socket mode: a ping app would be refused it. */
