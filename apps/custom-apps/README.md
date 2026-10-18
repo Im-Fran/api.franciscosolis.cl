@@ -33,7 +33,7 @@ screenshots, feature flags and remote config, in-app messages, remote logs, cras
 and releases — signed builds uploaded from CI, channels, staged rollout, a minimum version, the
 offer an A/B updater installs from, its reports, the automatic pause and rollback. From phase 4,
 contracts are here — hours per cycle with rollover and overage, the work log, the end of a contract
-driving the kill switch — and the in-app support form. Maintenance windows, site uptime and the
+driving the kill switch — and support tickets opened from inside the apps. Maintenance windows, site uptime and the
 secrets vault build on the same model and are not here yet.
 
 ---
@@ -146,11 +146,12 @@ secrets vault build on the same model and are not here yet.
   only what the contract keeps running — updates or support — besides the app itself. Renewing
   brings them back at once; a contract that renews itself is simply extended. `contract_expiring`
   and `cycle_hours_low` alert rules watch both.
-- **In-app support, by email** — the `support` module adds a form (`POST /support`, and
-  `FSCustomApps.support()` on websites) that emails the support inbox with the device attached:
-  version, system, last contact, recent logs and open crashes, with the user's address as the reply
-  address. Nothing is kept as a ticket — support is plain email — and an installation may send five
-  an hour.
+- **Support tickets** — the `support` module lets an app open a ticket from its own support screen
+  (`POST /tickets`, and `FSCustomApps.openTicket()` on websites) with the device attached: version,
+  system, last contact, recent logs and open crashes. The conversation lives in the panel's inbox and
+  goes both ways — the app reads the answers and can write again, and a heartbeat tells it how many
+  answers it has not read. Whoever turned support on (or took it over) is told about new tickets and
+  messages in the website's bell; nothing is emailed. Work logged against a ticket shows on it.
 - **Per-app documents** — each app gets its own `openapi.json`, filtered to the modules it has
   enabled, and websites get a generated `sdk.js` with the app's id, key and modules baked in — which,
   with the matching modules, also reports uncaught errors as crashes, sends logs, keeps the flags and
@@ -173,7 +174,7 @@ secrets vault build on the same model and are not here yet.
 | Telemetry writes, alert notifications | [Cloudflare Queues](https://developers.cloudflare.com/queues/) |
 | Socket presence | [Durable Objects](https://developers.cloudflare.com/durable-objects/) with WebSocket Hibernation |
 | Screenshots, release artifacts | [Cloudflare R2](https://developers.cloudflare.com/r2/) |
-| Contract notices, support requests | [Cloudflare Email Sending](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/) + [`@franciscosolis/emails`](../../packages/emails/README.md) |
+| Contract notices | [Cloudflare Email Sending](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/) + [`@franciscosolis/emails`](../../packages/emails/README.md) |
 | Abuse limits | [Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) |
 | Tooling | [Wrangler](https://developers.cloudflare.com/workers/wrangler/) + [Vitest](https://vitest.dev) |
 
@@ -285,6 +286,9 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `POST` | `/v1/cycles/:cycleId/close` · `/bill` | Close one whose period ended; mark its overage billed |
 | `GET` / `POST` | `/v1/work-logs` · `/v1/apps/:appId/work-logs` | The work log (`?company_id`, `?app_id`, `?contract_id`, `?cycle_id`, `?kind`, `?from`, `?to`) with the total minutes; log work |
 | `PATCH` / `DELETE` | `/v1/work-logs/:workLogId` | Edit or delete an entry while its cycle is open |
+| `GET` | `/v1/tickets` · `/v1/tickets/:ticketId` | The support inbox (`?status`, `active` for what needs somebody; `?app_id`, `?company_id`, `?installation_id`, `?search`, `#42` included); one ticket with its conversation, device context and logged work |
+| `POST` / `PATCH` | `/v1/tickets/:ticketId/replies` · `/v1/tickets/:ticketId` | Answer (it becomes `pending`, or `resolved`/`closed`); change its status or subject |
+| `POST` | `/v1/apps/:appId/support/assignee` | Take over an app's tickets: you are notified of them |
 | `GET` | `/v1/audit-log` | `?event` (a trailing `.` matches a family), `?resource_type`, `?resource_id`, `?actor`, `?from`, `?to` |
 
 ### CI (Bearer CI token of the app)
@@ -344,7 +348,9 @@ by decision: each integrates the routes it needs from its app's own `openapi.jso
 | `GET` | `/updates/:releaseId/download` | A 15-minute link to the artifact, usable without the token |
 | `GET` | `/downloads/:ticket` | The artifact itself; public, answers `Range` |
 | `POST` | `/updates/:releaseId/report` | `downloaded`, `installed`, `health_ok`, `rolled_back` or `failed` |
-| `POST` | `/support` | `subject`, `message`, optionally `name` and `email` (the reply address): emailed to the support inbox with the device attached (module `support`) |
+| `POST` | `/tickets` | Open a ticket: `subject`, `message`, optionally `name` and `email`; the device is attached (module `support`) |
+| `GET` | `/tickets` · `/tickets/:ticketId` | This installation's tickets with their unread answers; one with its conversation (marks the answers read) |
+| `POST` | `/tickets/:ticketId/messages` | Write on a ticket again (reopens it; a closed one refuses) |
 
 A device should keep its tokens in the platform's secure store, ask `/status` on start-up, queue
 metrics, events and logs locally while offline and send them when the network is back, deduplicate
@@ -370,9 +376,7 @@ a withdrawn version.
 | `CUSTOM_APPS_ALLOWED_AUDIENCES` | Client ids whose tokens may use the panel — its own only |
 | `CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS` | Domains allowed in, under the permission |
 | `INGEST_PUBLIC_URL` | Base of the ingest surface; its host is what requests are dispatched on |
-| `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Sender of the contract notices and support requests; must be allowed by the `EMAIL` binding |
-| `SUPPORT_EMAIL` | Where in-app support requests are delivered (`soporte@franciscosolis.cl`) |
-| `PANEL_PUBLIC_URL` | The panel on the website, for the links a support request carries |
+| `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Sender of the contract notices; must be allowed by the `EMAIL` binding |
 
 Bindings: `DB` (D1), `AUTH` (service binding, read for its JWKS only), `TELEMETRY_QUEUE` (producer
 and consumer of the same queue), `NOTIFICATIONS_QUEUE` (producer, for alerts), `PRESENCE` (the

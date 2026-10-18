@@ -54,7 +54,8 @@ together seven Cloudflare Workers, all living directly in this repo:
   minimum version, the offer an A/B updater installs from (downloaded through short-lived signed
   links), its reports, an automatic pause and rollback, and their **contracts**: hours included per
   cycle with rollover and overage, the hand-kept work log, and contract ends that warn the client and
-  put the covered apps in grace. It is the one module
+  put the covered apps in grace, and their **support tickets**, opened from inside a client's app and
+  answered from the panel. It is the one module
   with **two front doors**: the panel API through `apps/api` at `/custom-apps/*` (one account, holding
   `custom-apps:admin` under its own client application, `franciscosolis-custom-apps`), and an
   **ingest** surface the client apps report to at `ingest.franciscosolis.cl/custom-apps/v1/:appId`,
@@ -63,9 +64,11 @@ together seven Cloudflare Workers, all living directly in this repo:
 **Support is plain email, not a Worker.** There used to be an `apps/support` ticket system with a
 help centre; it was retired, and help is now asked for and answered at `soporte@franciscosolis.cl`,
 a Google Group. Nothing in this repository sits on that path — do not reintroduce a ticket Worker,
-a `support` notification category or a `SUPPORT` binding. `apps/custom-apps`' in-app support form
-is this rule applied, not an exception to it: it emails the request to that inbox with the device's
-context attached and keeps nothing as a ticket. `apps/auth` keeps
+a `support` notification category or a `SUPPORT` binding. The one deliberate exception is
+`apps/custom-apps`' **support tickets**, decided by the owner: they belong to the bespoke apps built
+for clients, are opened from inside those apps, and live in that internal panel next to the
+contracts and hours they are billed against — they are not the website's support and must not grow
+into it. Their notifications go to the existing `custom_apps` category. `apps/auth` keeps
 `0010_support_application.sql` as history and `0012_remove_support_application.sql` undoes it;
 `apps/notifications`' `0001_drop_support_category.sql` clears the old bell entries.
 
@@ -92,8 +95,8 @@ workspace/catalog, root scripts).
   those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/marketplace`,
   and `apps/notifications` additionally use drizzle-orm/drizzle-kit, and those same
   four pull react + react-email through `@franciscosolis/emails`, all catalogued too.
-  `apps/custom-apps` uses drizzle as well, and the emails package for two messages: the notice that
-  a contract is ending and in-app support requests. `apps/cms` and `apps/marketplace`
+  `apps/custom-apps` uses drizzle as well, and the emails package for one message: the notice that a
+  contract is ending. `apps/cms` and `apps/marketplace`
   use **Workers AI** through `@franciscosolis/translate`. `apps/marketplace` talks to MercadoPago over
   plain `fetch` rather than through an SDK — a handful of functions in `src/lib/mercadopago.ts`
   against a dependency that assumes Node.
@@ -505,7 +508,9 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   against the app's Ed25519 public key before it is recorded (the private key stays in CI), and
   devices download through HMAC-signed links minted with `UPDATE_DOWNLOAD_SECRET`, a secret per
   environment. Contracts drive the same kill switch: the cron emails the client before one ends and,
-  when it lapses unrenewed, puts the apps it covers in grace; renewing brings them back. See
+  when it lapses unrenewed, puts the apps it covers in grace; renewing brings them back. Support
+  tickets opened from a client's app stay in the panel — nothing is mailed — and their assignee hears
+  about them in the website's bell. See
   `apps/custom-apps/CLAUDE.md`.
 - **Nothing in this repo renders HTML.** `api.franciscosolis.cl` is a backend end to end: every
   Worker answers JSON, a redirect or a binary asset (`apps/api/src/brand.ts`), and nothing else.
