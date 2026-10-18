@@ -56,6 +56,4 @@ export { renderSaleReceiptEmail, SaleReceiptEmail } from './templates/sale-recei
 export type { SaleReceiptEmailProps, SaleSource } from './templates/sale-receipt'
 export { renderSaleRefundEmail, SaleRefundEmail } from './templates/sale-refund'
 export type { RefundReason, SaleRefundEmailProps } from './templates/sale-refund'
-export { renderSupportRequestEmail, SupportRequestEmail } from './templates/support-request'
-export type { SupportRequestEmailProps } from './templates/support-request'
 export { palette, theme } from './theme'
