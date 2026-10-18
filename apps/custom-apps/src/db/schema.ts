@@ -119,6 +119,13 @@ const apps = sqliteTable('apps', {
   /** JSON Schema (the subset in `lib/json-schema.ts`) the remote config document must satisfy. */
   configSchema: text('config_schema'),
   /**
+   * Who is told about this app's support tickets (an auth `sub` and its address): whoever turned the
+   * `support` module on, or took the tickets over from the panel. Null tells nobody — the tickets
+   * still wait in the inbox.
+   */
+  supportAssigneeId: text('support_assignee_id'),
+  supportAssigneeEmail: text('support_assignee_email'),
+  /**
    * The Ed25519 public key (32 bytes, base64) releases are signed against — the same key every build
    * of the app embeds to check what it downloads. The private half lives only in CI. An upload whose
    * signature this key does not verify is refused, so a release in the bucket is always one the
@@ -710,6 +717,58 @@ const alerts = sqliteTable('alerts', {
   index('alerts_app_idx').on(table.appId, table.openedAt),
 ])
 
+/* ── Support ───────────────────────────────────────────────────────────────── */
+
+/**
+ * A support ticket, opened from inside a client's app. Kept here, in the panel, rather than mailed
+ * anywhere: the conversation, the device's context at the moment it was opened and the hours spent
+ * answering it all live in one place. `number` is the short reference a person quotes ("ticket 42"),
+ * assigned in the insert itself so two tickets can never share one.
+ */
+const tickets = sqliteTable('tickets', {
+  id: text('id').primaryKey(),
+  number: integer('number').notNull(),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  companyId: text('company_id').notNull(),
+  installationId: text('installation_id').notNull(),
+  subject: text('subject').notNull(),
+  /** `TICKET_STATUSES`. */
+  status: text('status').notNull().default('open'),
+  /** Who wrote it, as they typed it in the app. */
+  requesterName: text('requester_name'),
+  requesterEmail: text('requester_email'),
+  /** JSON: the device's facts, recent logs and open crashes when the ticket was opened. */
+  context: text('context').notNull().default('{}'),
+  lastMessageAt: integer('last_message_at', { mode: 'timestamp' }).notNull(),
+  /** `requester` or `staff`: whose turn it is is the other one. */
+  lastMessageBy: text('last_message_by').notNull().default('requester'),
+  resolvedAt: integer('resolved_at', { mode: 'timestamp' }),
+  resolvedBy: text('resolved_by'),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('tickets_number_unique').on(table.number),
+  index('tickets_status_activity_idx').on(table.status, table.lastMessageAt),
+  index('tickets_app_idx').on(table.appId, table.lastMessageAt),
+  index('tickets_installation_idx').on(table.installationId, table.lastMessageAt),
+])
+
+/**
+ * One message of a ticket's conversation. `seen_at` is when the other side read it: the device
+ * fetching the ticket for a staff reply, the panel opening it for a requester's message — which is
+ * what the unread counts on both sides are.
+ */
+const ticketMessages = sqliteTable('ticket_messages', {
+  id: text('id').primaryKey(),
+  ticketId: text('ticket_id').notNull().references(() => tickets.id, { onDelete: 'cascade' }),
+  /** `requester` or `staff`. */
+  author: text('author').notNull(),
+  authorName: text('author_name'),
+  authorEmail: text('author_email'),
+  body: text('body').notNull(),
+  seenAt: integer('seen_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [index('ticket_messages_ticket_idx').on(table.ticketId, table.createdAt)])
+
 /* ── Contracts and hours ───────────────────────────────────────────────────── */
 
 /**
@@ -826,6 +885,8 @@ const workLogs = sqliteTable('work_logs', {
   description: text('description').notNull(),
   /** A commit, merge request or anything else the work can be traced to. */
   linkUrl: text('link_url'),
+  /** The support ticket the work answered, when it did. */
+  ticketId: text('ticket_id').references(() => tickets.id, { onDelete: 'set null' }),
   ...authorship,
   ...timestamps,
 }, (table) => [
@@ -887,6 +948,8 @@ export {
   releases,
   screenshots,
   usageEvents,
+  ticketMessages,
+  tickets,
   usageHourly,
   workLogs,
 }
