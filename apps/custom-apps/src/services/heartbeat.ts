@@ -9,6 +9,7 @@ import { takeOutstanding } from '@/services/commands'
 import { activeMessages } from '@/services/messages'
 import { effectiveState, heartbeatCredit, hourlyStatements } from '@/services/presence'
 import { offerFor, toOfferSummary } from '@/services/releases'
+import { unreadForInstallation } from '@/services/tickets'
 import { effectiveLogLevel, etagOf, resolveConfig } from '@/services/remote-config'
 import type { AppRow, InstallationRow } from '@/services/serialize'
 import { heartbeatLogStatement, heartbeatSampleStatement, snapshotSchema } from '@/services/telemetry'
@@ -51,11 +52,12 @@ const directivesFor = async (env: Env, appRow: AppRow, installation: Installatio
   const modules = modulesOf(appRow)
   const db = getDb(env)
   const device = { id: installation.id, channel: installation.channel }
-  const [outstanding, config, messageList, offer] = await Promise.all([
+  const [outstanding, config, messageList, offer, supportUnread] = await Promise.all([
     modules.includes('commands') ? takeOutstanding(db, installation.id, now) : Promise.resolve([]),
     modules.includes('config') ? resolveConfig(db, appRow.id, device) : Promise.resolve(null),
     modules.includes('messages') ? activeMessages(db, appRow.id, device, now) : Promise.resolve(null),
     modules.includes('updates') ? offerFor(db, { app: appRow, installation }) : Promise.resolve(null),
+    modules.includes('support') ? unreadForInstallation(env.DB, installation.id) : Promise.resolve(null),
   ])
   return {
     state: stateFor(appRow, installation),
@@ -66,6 +68,8 @@ const directivesFor = async (env: Env, appRow: AppRow, installation: Installatio
       config_etag: config ? await etagOf(config) : null,
       messages_etag: messageList ? await etagOf(messageList) : null,
       log_level: modules.includes('logs') ? effectiveLogLevel(appRow, installation) : null,
+      /** Replies from support this installation has not read yet; fetch its tickets when it grows. */
+      support_unread: supportUnread,
     },
     /** The release to install, in short — `GET /updates/latest` has the rest. Null with nothing to do. */
     update: toOfferSummary(offer),

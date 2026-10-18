@@ -232,6 +232,8 @@ app.post(
         heartbeatIntervalSeconds: body.heartbeat_interval_seconds ?? HEARTBEAT.default,
         operatingHours: body.operating_hours ? JSON.stringify(body.operating_hours) : null,
         modules: JSON.stringify(body.modules ?? []),
+        // Whoever turns support on hears about the tickets, until somebody takes them over.
+        ...((body.modules ?? []).includes('support') && { supportAssigneeId: actor.actorId, supportAssigneeEmail: actor.actorEmail }),
         createdBy: actor.actorEmail,
         updatedBy: actor.actorEmail,
       }),
@@ -278,6 +280,7 @@ app.patch(
     if (body.company_id !== undefined) {
       await requireCompany(db, body.company_id)
     }
+    const takesSupport = body.modules?.includes('support') && !before.modules.includes('support') && !before.support_assignee_email
     await db
       .update(apps)
       .set({
@@ -293,6 +296,7 @@ app.patch(
         ...(body.modules !== undefined && { modules: JSON.stringify(body.modules) }),
         ...(body.log_level !== undefined && { logLevel: body.log_level }),
         ...(body.screenshots_enabled !== undefined && { screenshotsEnabled: body.screenshots_enabled }),
+        ...(takesSupport && { supportAssigneeId: actor.actorId, supportAssigneeEmail: actor.actorEmail }),
         ...(body.release_public_key !== undefined && { releasePublicKey: body.release_public_key }),
         ...(body.update_health_timeout_seconds !== undefined && { updateHealthTimeoutSeconds: body.update_health_timeout_seconds }),
         ...(body.update_max_failures !== undefined && { updateMaxFailures: body.update_max_failures }),

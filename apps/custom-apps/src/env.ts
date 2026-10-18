@@ -25,6 +25,8 @@ type Env = {
   SCREENSHOTS: R2Bucket
   /** Release artifacts, private: devices download them against a signed ticket. */
   RELEASES: R2Bucket
+  /** Cloudflare Email Sending, for one message: the notice to a client that a contract is ending. */
+  EMAIL: SendEmail
 
   /** Enrollments per client IP. */
   ENROLL_IP_LIMITER: RateLimiter
@@ -44,6 +46,9 @@ type Env = {
    * host is what `src/index.ts` dispatches on.
    */
   INGEST_PUBLIC_URL: string
+  /** The address mail is sent from. Must be listed in the binding's `allowed_sender_addresses`. */
+  MAIL_FROM_EMAIL: string
+  MAIL_FROM_NAME: string
   /**
    * **Secret.** HMAC key the update download tickets are signed with. Unset, no ticket can be minted
    * and `GET /updates/:releaseId/download` answers 503 rather than handing out forgeable links.

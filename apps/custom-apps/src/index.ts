@@ -10,11 +10,17 @@ import {
   APP_MODULES,
   APP_STATES,
   ARCHES,
+  BILLING_PERIODS,
   CHANNELS,
   COMMAND_STATUSES,
   COMMAND_TYPES,
   CONTACT_ROLES,
+  CONTRACTS,
   CRASH_STATUSES,
+  CURRENCIES,
+  CYCLE_PERIODS,
+  CYCLE_STATUSES,
+  GRACE_ALLOWANCES,
   GRACE_MAX_DAYS,
   HEARTBEAT,
   LOG_LEVELS,
@@ -28,11 +34,14 @@ import {
   SCREENSHOTS,
   TARGET_SCOPES,
   TELEMETRY,
+  TICKET_STATUSES,
   UPDATE_REPORT_STATUSES,
+  WORK_KINDS,
 } from '@/lib/config'
 import { ingest } from '@/ingest/index'
 import { ci } from '@/panel/ci'
 import { panel } from '@/panel/index'
+import { CONTRACT_STATUSES } from '@/services/contracts'
 import { runScheduled } from '@/services/maintenance'
 import { InstallationSocket } from '@/services/socket'
 import { consumeTelemetry } from '@/services/telemetry'
@@ -60,9 +69,9 @@ const withConventions = (app: Hono<AppEnv>) => {
       if (err.res) {
         return err.getResponse()
       }
-      if (err.status < 500) {
-        return c.json({ code: err.status, error: err.message || 'Error' }, err.status)
-      }
+      // Raised on purpose, so its message is written for the caller — a 502 or 503 included, which
+      // tell a device to retry later rather than that something broke here.
+      return c.json({ code: err.status, error: err.message || 'Error' }, err.status)
     }
     // Logged, never returned: a Drizzle failure message carries the statement and its parameters,
     // which here are clients' names, addresses and phone numbers.
@@ -111,6 +120,15 @@ const rootResponseSchema = v.object({
     update_report_statuses: v.array(v.string()),
     arches: v.array(v.string()),
     release_max_bytes: v.number(),
+    currencies: v.array(v.string()),
+    billing_periods: v.array(v.string()),
+    cycle_periods: v.array(v.string()),
+    cycle_statuses: v.array(v.string()),
+    contract_statuses: v.array(v.string()),
+    grace_allowances: v.array(v.string()),
+    work_kinds: v.array(v.string()),
+    ticket_statuses: v.array(v.string()),
+    contract_limits: v.object({ max_grace_days: v.number(), max_notice_days: v.number(), default_notice_days: v.number(), max_work_log_minutes: v.number() }),
     grace_max_days: v.number(),
     screenshot_max_bytes: v.number(),
     heartbeat_interval: v.object({ min: v.number(), max: v.number(), default: v.number() }),
@@ -154,6 +172,20 @@ panelApp.get(
         update_report_statuses: [...UPDATE_REPORT_STATUSES],
         arches: [...ARCHES],
         release_max_bytes: RELEASES.maxArtifactBytes,
+        currencies: [...CURRENCIES],
+        billing_periods: [...BILLING_PERIODS],
+        cycle_periods: [...CYCLE_PERIODS],
+        cycle_statuses: [...CYCLE_STATUSES],
+        contract_statuses: [...CONTRACT_STATUSES],
+        grace_allowances: [...GRACE_ALLOWANCES],
+        work_kinds: [...WORK_KINDS],
+        ticket_statuses: [...TICKET_STATUSES],
+        contract_limits: {
+          max_grace_days: CONTRACTS.maxGraceDays,
+          max_notice_days: CONTRACTS.maxNoticeDays,
+          default_notice_days: CONTRACTS.defaultNoticeDays,
+          max_work_log_minutes: CONTRACTS.maxWorkLogMinutes,
+        },
         grace_max_days: GRACE_MAX_DAYS,
         screenshot_max_bytes: SCREENSHOTS.maxBytes,
         heartbeat_interval: { min: HEARTBEAT.min, max: HEARTBEAT.max, default: HEARTBEAT.default },

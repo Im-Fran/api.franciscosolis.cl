@@ -28,6 +28,9 @@ export default defineConfig({
     alias: {
       // Wrangler reads this from tsconfig when it bundles; Vite does not, so it has to be restated.
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // Mirrors the `alias` block in wrangler.jsonc, so the suite exercises the bundle as it ships.
+      'prettier/standalone': fileURLToPath(new URL('../../packages/emails/src/prettier-stub.ts', import.meta.url)),
+      'prettier/plugins/html': fileURLToPath(new URL('../../packages/emails/src/prettier-stub.ts', import.meta.url)),
     },
   },
   test: {

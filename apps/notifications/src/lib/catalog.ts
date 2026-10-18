@@ -124,6 +124,25 @@ const CATALOG = {
       es: { title: 'Resuelta: {rule_name}', body: '{subject} en {app_name} volvió a la normalidad.' },
     },
   },
+  // Produced by `apps/custom-apps` when a client's app opens a support ticket, or its requester writes
+  // again, for the account the app's tickets are assigned to. The tickets live in that panel; this is
+  // only the heads-up.
+  'custom_apps.ticket_opened': {
+    category: 'custom_apps',
+    emailable: true,
+    copy: {
+      en: { title: 'Ticket #{number}: {subject}', body: '{app_name} · {company_name}: {excerpt}' },
+      es: { title: 'Ticket #{number}: {subject}', body: '{app_name} · {company_name}: {excerpt}' },
+    },
+  },
+  'custom_apps.ticket_message': {
+    category: 'custom_apps',
+    emailable: true,
+    copy: {
+      en: { title: 'New message on ticket #{number}', body: '{subject} ({app_name}): {excerpt}' },
+      es: { title: 'Nuevo mensaje en el ticket #{number}', body: '{subject} ({app_name}): {excerpt}' },
+    },
+  },
 } as const satisfies Record<string, CatalogEntry>
 
 type NotificationType = keyof typeof CATALOG

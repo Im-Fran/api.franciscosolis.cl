@@ -119,6 +119,13 @@ const apps = sqliteTable('apps', {
   /** JSON Schema (the subset in `lib/json-schema.ts`) the remote config document must satisfy. */
   configSchema: text('config_schema'),
   /**
+   * Who is told about this app's support tickets (an auth `sub` and its address): whoever turned the
+   * `support` module on, or took the tickets over from the panel. Null tells nobody — the tickets
+   * still wait in the inbox.
+   */
+  supportAssigneeId: text('support_assignee_id'),
+  supportAssigneeEmail: text('support_assignee_email'),
+  /**
    * The Ed25519 public key (32 bytes, base64) releases are signed against — the same key every build
    * of the app embeds to check what it downloads. The private half lives only in CI. An upload whose
    * signature this key does not verify is refused, so a release in the bucket is always one the
@@ -710,6 +717,184 @@ const alerts = sqliteTable('alerts', {
   index('alerts_app_idx').on(table.appId, table.openedAt),
 ])
 
+/* ── Support ───────────────────────────────────────────────────────────────── */
+
+/**
+ * A support ticket, opened from inside a client's app. Kept here, in the panel, rather than mailed
+ * anywhere: the conversation, the device's context at the moment it was opened and the hours spent
+ * answering it all live in one place. `number` is the short reference a person quotes ("ticket 42"),
+ * assigned in the insert itself so two tickets can never share one.
+ */
+const tickets = sqliteTable('tickets', {
+  id: text('id').primaryKey(),
+  number: integer('number').notNull(),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  companyId: text('company_id').notNull(),
+  installationId: text('installation_id').notNull(),
+  subject: text('subject').notNull(),
+  /** `TICKET_STATUSES`. */
+  status: text('status').notNull().default('open'),
+  /** Who wrote it, as they typed it in the app. */
+  requesterName: text('requester_name'),
+  requesterEmail: text('requester_email'),
+  /** JSON: the device's facts, recent logs and open crashes when the ticket was opened. */
+  context: text('context').notNull().default('{}'),
+  lastMessageAt: integer('last_message_at', { mode: 'timestamp' }).notNull(),
+  /** `requester` or `staff`: whose turn it is is the other one. */
+  lastMessageBy: text('last_message_by').notNull().default('requester'),
+  resolvedAt: integer('resolved_at', { mode: 'timestamp' }),
+  resolvedBy: text('resolved_by'),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('tickets_number_unique').on(table.number),
+  index('tickets_status_activity_idx').on(table.status, table.lastMessageAt),
+  index('tickets_app_idx').on(table.appId, table.lastMessageAt),
+  index('tickets_installation_idx').on(table.installationId, table.lastMessageAt),
+])
+
+/**
+ * One message of a ticket's conversation. `seen_at` is when the other side read it: the device
+ * fetching the ticket for a staff reply, the panel opening it for a requester's message — which is
+ * what the unread counts on both sides are.
+ */
+const ticketMessages = sqliteTable('ticket_messages', {
+  id: text('id').primaryKey(),
+  ticketId: text('ticket_id').notNull().references(() => tickets.id, { onDelete: 'cascade' }),
+  /** `requester` or `staff`. */
+  author: text('author').notNull(),
+  authorName: text('author_name'),
+  authorEmail: text('author_email'),
+  body: text('body').notNull(),
+  seenAt: integer('seen_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [index('ticket_messages_ticket_idx').on(table.ticketId, table.createdAt)])
+
+/* ── Contracts and hours ───────────────────────────────────────────────────── */
+
+/**
+ * What a client pays for, and the hours of maintenance and support it includes per cycle.
+ *
+ * Dates are calendar days in Santiago (`YYYY-MM-DD`, `ends_on` inclusive) rather than instants:
+ * a contract ends on a day, whatever the hour. Hours are kept in whole minutes. `amount` and
+ * `overage_rate` are in `currency`; a UF amount is converted for display, never stored converted.
+ *
+ * The end of a contract drives the kill switch: the cron tells the client before it ends
+ * (`notice_sent_at`), and when it lapses without renewal puts every covered app in grace — or
+ * straight into suspension with no grace days — and records `lapsed_at`. Renewing clears both and
+ * reactivates the apps it had put in grace.
+ */
+const contracts = sqliteTable('contracts', {
+  id: text('id').primaryKey(),
+  companyId: text('company_id').notNull().references(() => companies.id, { onDelete: 'restrict' }),
+  /** The plan's name, as the client knows it. */
+  name: text('name').notNull(),
+  amount: real('amount').notNull().default(0),
+  /** `CURRENCIES`. */
+  currency: text('currency').notNull().default('CLP'),
+  /** `BILLING_PERIODS`: what `amount` is the price of. */
+  billingPeriod: text('billing_period').notNull().default('monthly'),
+  startsOn: text('starts_on').notNull(),
+  /** Inclusive. Null for an open-ended contract. */
+  endsOn: text('ends_on'),
+  autoRenew: integer('auto_renew', { mode: 'boolean' }).notNull().default(false),
+  renewalMonths: integer('renewal_months').notNull().default(12),
+  /** Days before `ends_on` the client is told the contract ends. */
+  noticeDays: integer('notice_days').notNull().default(30),
+  /** `CYCLE_PERIODS`. */
+  cyclePeriod: text('cycle_period').notNull().default('monthly'),
+  includedMinutes: integer('included_minutes').notNull().default(0),
+  rolloverEnabled: integer('rollover_enabled', { mode: 'boolean' }).notNull().default(false),
+  rolloverMaxMinutes: integer('rollover_max_minutes'),
+  rolloverMaxCycles: integer('rollover_max_cycles'),
+  /** Price of an hour beyond what a cycle includes, in `currency`. */
+  overageRate: real('overage_rate').notNull().default(0),
+  /** Days of grace after `ends_on` before the covered apps are suspended. 0 suspends at once. */
+  graceDays: integer('grace_days').notNull().default(0),
+  /** JSON array from `GRACE_ALLOWANCES`: what keeps working in grace besides the app. */
+  graceAllows: text('grace_allows').notNull().default('[]'),
+  /** What the covered apps show while in grace and once suspended. Null leaves it to each app. */
+  graceMessage: text('grace_message'),
+  noticeSentAt: integer('notice_sent_at', { mode: 'timestamp' }),
+  lapsedAt: integer('lapsed_at', { mode: 'timestamp' }),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  cancelledBy: text('cancelled_by'),
+  notes: text('notes'),
+  ...authorship,
+  ...timestamps,
+}, (table) => [index('contracts_company_idx').on(table.companyId), index('contracts_ends_idx').on(table.endsOn)])
+
+/** The apps a contract covers. An app may be covered by successive contracts, never two at once. */
+const contractApps = sqliteTable('contract_apps', {
+  contractId: text('contract_id').notNull().references(() => contracts.id, { onDelete: 'cascade' }),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+}, (table) => [primaryKey({ columns: [table.contractId, table.appId] }), index('contract_apps_app_idx').on(table.appId)])
+
+/**
+ * One period of a contract's included hours. Created as the calendar reaches it, closed when it
+ * ends: closing computes the balance once (`lib/hours.ts`) and the row is final from then on — the
+ * next cycle's carried hours were computed from it, so it cannot change underneath them.
+ */
+const contractCycles = sqliteTable('contract_cycles', {
+  id: text('id').primaryKey(),
+  contractId: text('contract_id').notNull().references(() => contracts.id, { onDelete: 'cascade' }),
+  startsOn: text('starts_on').notNull(),
+  /** Exclusive. */
+  endsOn: text('ends_on').notNull(),
+  includedMinutes: integer('included_minutes').notNull(),
+  /** JSON `CarriedBucket[]` carried into this cycle. */
+  carried: text('carried').notNull().default('[]'),
+  carriedMinutes: integer('carried_minutes').notNull().default(0),
+  /** `CYCLE_STATUSES`. */
+  status: text('status').notNull().default('open'),
+  /** Set when the cycle closes; while open, usage is summed from the work log. */
+  usedMinutes: integer('used_minutes'),
+  overageMinutes: integer('overage_minutes'),
+  /** Overage priced at the contract's rate when the cycle closed, in the contract's currency. */
+  overageAmount: real('overage_amount'),
+  expiredMinutes: integer('expired_minutes'),
+  closedAt: integer('closed_at', { mode: 'timestamp' }),
+  /** Null when the cron closed it. */
+  closedBy: text('closed_by'),
+  billedAt: integer('billed_at', { mode: 'timestamp' }),
+  billedBy: text('billed_by'),
+  /** Invoice number or any other reference to where the overage was charged. */
+  billingReference: text('billing_reference'),
+  ...timestamps,
+}, (table) => [
+  uniqueIndex('contract_cycles_contract_start_unique').on(table.contractId, table.startsOn),
+  index('contract_cycles_status_idx').on(table.status),
+])
+
+/**
+ * The work log (bitácora): hours Fran spent, entered by hand, against a company and optionally one
+ * of its apps. Each entry is filed under the contract covering it and the cycle its day falls in, so
+ * a cycle's usage is the sum of its entries. An entry with no contract is still kept — work outside
+ * any contract is still work, just not counted against included hours.
+ */
+const workLogs = sqliteTable('work_logs', {
+  id: text('id').primaryKey(),
+  companyId: text('company_id').notNull().references(() => companies.id, { onDelete: 'restrict' }),
+  appId: text('app_id').references(() => apps.id, { onDelete: 'set null' }),
+  contractId: text('contract_id').references(() => contracts.id, { onDelete: 'set null' }),
+  cycleId: text('cycle_id').references(() => contractCycles.id, { onDelete: 'set null' }),
+  /** Santiago calendar day the work was done. */
+  occurredOn: text('occurred_on').notNull(),
+  minutes: integer('minutes').notNull(),
+  /** `WORK_KINDS`. */
+  kind: text('kind').notNull(),
+  description: text('description').notNull(),
+  /** A commit, merge request or anything else the work can be traced to. */
+  linkUrl: text('link_url'),
+  /** The support ticket the work answered, when it did. */
+  ticketId: text('ticket_id').references(() => tickets.id, { onDelete: 'set null' }),
+  ...authorship,
+  ...timestamps,
+}, (table) => [
+  index('work_logs_company_day_idx').on(table.companyId, table.occurredOn),
+  index('work_logs_app_day_idx').on(table.appId, table.occurredOn),
+  index('work_logs_cycle_idx').on(table.cycleId),
+])
+
 /* ── Audit ─────────────────────────────────────────────────────────────────── */
 
 /**
@@ -746,6 +931,9 @@ export {
   companyContacts,
   configVersions,
   contacts,
+  contractApps,
+  contractCycles,
+  contracts,
   crashGroups,
   crashReports,
   flags,
@@ -760,5 +948,8 @@ export {
   releases,
   screenshots,
   usageEvents,
+  ticketMessages,
+  tickets,
   usageHourly,
+  workLogs,
 }

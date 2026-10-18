@@ -31,8 +31,10 @@ Phases 1 to 3 of the plan are here: the CRM, the inventory of apps and installat
 presence, telemetry and the kill switch; remote operation — socket presence, commands and
 screenshots, feature flags and remote config, in-app messages, remote logs, crash reports and alerts;
 and releases — signed builds uploaded from CI, channels, staged rollout, a minimum version, the
-offer an A/B updater installs from, its reports, the automatic pause and rollback. Maintenance
-windows, contracts and the secrets vault (phase 4) build on the same model and are not here yet.
+offer an A/B updater installs from, its reports, the automatic pause and rollback. From phase 4,
+contracts are here — hours per cycle with rollover and overage, the work log, the end of a contract
+driving the kill switch — and support tickets opened from inside the apps. Maintenance windows, site uptime and the
+secrets vault build on the same model and are not here yet.
 
 ---
 
@@ -129,6 +131,27 @@ windows, contracts and the secrets vault (phase 4) build on the same model and a
   thresholds (with a minimum sample, so one kiosk is not a trend); withdrawing a release sends every
   device on it back to the previous version as a mandatory rollback, and rolling a line back
   withdraws everything newer in one step. A `release_rollbacks` alert rule tells somebody.
+- **Contracts and hours** — a contract belongs to a company and covers some of its apps (one
+  contract per app at a time), priced in CLP or UF. It includes minutes of maintenance and support
+  per cycle — daily, weekly or monthly, anchored on its start date — and, if it says so, unused
+  minutes roll over, with a cap in minutes and in cycles; what is used beyond everything available
+  is overage, priced at the contract's hourly rate and charged in the next cycle. Cycles open and
+  close with the calendar, and a closed cycle is final.
+- **The work log (bitácora)** — hours entered by hand against a company and optionally one of its
+  apps, each filed under the contract and cycle of its day, with a link to the commit or merge
+  request. Work outside any contract is still logged; a day in a closed cycle is refused.
+- **The end of a contract drives the kill switch** — before a contract that does not renew itself
+  ends, the client's billing contacts are emailed and the covered apps show a notice; when it
+  lapses, the apps go into grace for the contract's grace days (or straight to suspension), with
+  only what the contract keeps running — updates or support — besides the app itself. Renewing
+  brings them back at once; a contract that renews itself is simply extended. `contract_expiring`
+  and `cycle_hours_low` alert rules watch both.
+- **Support tickets** — the `support` module lets an app open a ticket from its own support screen
+  (`POST /tickets`, and `FSCustomApps.openTicket()` on websites) with the device attached: version,
+  system, last contact, recent logs and open crashes. The conversation lives in the panel's inbox and
+  goes both ways — the app reads the answers and can write again, and a heartbeat tells it how many
+  answers it has not read. Whoever turned support on (or took it over) is told about new tickets and
+  messages in the website's bell; nothing is emailed. Work logged against a ticket shows on it.
 - **Per-app documents** — each app gets its own `openapi.json`, filtered to the modules it has
   enabled, and websites get a generated `sdk.js` with the app's id, key and modules baked in — which,
   with the matching modules, also reports uncaught errors as crashes, sends logs, keeps the flags and
@@ -150,7 +173,8 @@ windows, contracts and the secrets vault (phase 4) build on the same model and a
 | Database | [Cloudflare D1](https://developers.cloudflare.com/d1/) via [Drizzle ORM](https://orm.drizzle.team) |
 | Telemetry writes, alert notifications | [Cloudflare Queues](https://developers.cloudflare.com/queues/) |
 | Socket presence | [Durable Objects](https://developers.cloudflare.com/durable-objects/) with WebSocket Hibernation |
-| Screenshots | [Cloudflare R2](https://developers.cloudflare.com/r2/) |
+| Screenshots, release artifacts | [Cloudflare R2](https://developers.cloudflare.com/r2/) |
+| Contract notices | [Cloudflare Email Sending](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/) + [`@franciscosolis/emails`](../../packages/emails/README.md) |
 | Abuse limits | [Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) |
 | Tooling | [Wrangler](https://developers.cloudflare.com/workers/wrangler/) + [Vitest](https://vitest.dev) |
 
@@ -254,6 +278,17 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `POST` | `/v1/releases/:releaseId/pause` · `/resume` · `/withdraw` · `/rollback` | Stop offering it; offer it again; pull it; roll the line back to it |
 | `GET` | `/v1/releases/:releaseId/artifact` · `/reports` | The artifact; what devices reported |
 | `GET` | `/v1/installations/:installationId/updates` | What it would be offered now, and its update reports |
+| `GET` / `POST` | `/v1/contracts` | Contracts (`?company_id`, `?app_id`, `?status`); create one |
+| `GET` / `PATCH` / `DELETE` | `/v1/contracts/:contractId` | One contract with its current cycle and usage per app; edit (`app_ids` replaces the covered apps); delete one with no history |
+| `POST` | `/v1/contracts/:contractId/renew` · `/cancel` | Renew until a new end (reactivating apps a lapse switched off); cancel |
+| `GET` | `/v1/contracts/:contractId/cycles` | Its cycles, newest first, with their balance |
+| `GET` | `/v1/cycles/:cycleId` | One cycle and the work logged in it |
+| `POST` | `/v1/cycles/:cycleId/close` · `/bill` | Close one whose period ended; mark its overage billed |
+| `GET` / `POST` | `/v1/work-logs` · `/v1/apps/:appId/work-logs` | The work log (`?company_id`, `?app_id`, `?contract_id`, `?cycle_id`, `?kind`, `?from`, `?to`) with the total minutes; log work |
+| `PATCH` / `DELETE` | `/v1/work-logs/:workLogId` | Edit or delete an entry while its cycle is open |
+| `GET` | `/v1/tickets` · `/v1/tickets/:ticketId` | The support inbox (`?status`, `active` for what needs somebody; `?app_id`, `?company_id`, `?installation_id`, `?search`, `#42` included); one ticket with its conversation, device context and logged work |
+| `POST` / `PATCH` | `/v1/tickets/:ticketId/replies` · `/v1/tickets/:ticketId` | Answer (it becomes `pending`, or `resolved`/`closed`); change its status or subject |
+| `POST` | `/v1/apps/:appId/support/assignee` | Take over an app's tickets: you are notified of them |
 | `GET` | `/v1/audit-log` | `?event` (a trailing `.` matches a family), `?resource_type`, `?resource_id`, `?actor`, `?from`, `?to` |
 
 ### CI (Bearer CI token of the app)
@@ -313,6 +348,9 @@ by decision: each integrates the routes it needs from its app's own `openapi.jso
 | `GET` | `/updates/:releaseId/download` | A 15-minute link to the artifact, usable without the token |
 | `GET` | `/downloads/:ticket` | The artifact itself; public, answers `Range` |
 | `POST` | `/updates/:releaseId/report` | `downloaded`, `installed`, `health_ok`, `rolled_back` or `failed` |
+| `POST` | `/tickets` | Open a ticket: `subject`, `message`, optionally `name` and `email`; the device is attached (module `support`) |
+| `GET` | `/tickets` · `/tickets/:ticketId` | This installation's tickets with their unread answers; one with its conversation (marks the answers read) |
+| `POST` | `/tickets/:ticketId/messages` | Write on a ticket again (reopens it; a closed one refuses) |
 
 A device should keep its tokens in the platform's secure store, ask `/status` on start-up, queue
 metrics, events and logs locally while offline and send them when the network is back, deduplicate
@@ -338,10 +376,12 @@ a withdrawn version.
 | `CUSTOM_APPS_ALLOWED_AUDIENCES` | Client ids whose tokens may use the panel — its own only |
 | `CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS` | Domains allowed in, under the permission |
 | `INGEST_PUBLIC_URL` | Base of the ingest surface; its host is what requests are dispatched on |
+| `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Sender of the contract notices; must be allowed by the `EMAIL` binding |
 
 Bindings: `DB` (D1), `AUTH` (service binding, read for its JWKS only), `TELEMETRY_QUEUE` (producer
 and consumer of the same queue), `NOTIFICATIONS_QUEUE` (producer, for alerts), `PRESENCE` (the
-`InstallationSocket` Durable Object), `SCREENSHOTS` and `RELEASES` (R2), `ENROLL_IP_LIMITER`,
+`InstallationSocket` Durable Object), `SCREENSHOTS` and `RELEASES` (R2), `EMAIL` (Cloudflare Email
+Sending, from `hola@mail.franciscosolis.cl`), `ENROLL_IP_LIMITER`,
 `ENROLL_APP_LIMITER` and `INGEST_LIMITER` (rate limits), the ingest zone route and a cron every five
 minutes. One secret: `UPDATE_DOWNLOAD_SECRET` (`wrangler secret put UPDATE_DOWNLOAD_SECRET`, and again
 with `--env dev`), any long random string; rotating it invalidates the links already handed out,

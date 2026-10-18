@@ -25,6 +25,8 @@ import type { AppModule } from '@/lib/config'
  * the running messages for the page to show, and confirms the ones it marks seen (`messages`); and
  * answers commands (`commands`) — `reload_config` and `restart_app` (a page reload) it runs itself,
  * anything else goes to the page's `onCommand` handler, and fails as unsupported when there is none.
+ * With `support`, `FSCustomApps.openTicket({ subject, message, name, email })` opens a support
+ * ticket, and `tickets()`, `ticket(id)` and `replyTicket(id, message)` read and continue them.
  * A website always reports by ping: browsers cannot set the header a socket would need.
  */
 
@@ -124,6 +126,15 @@ const RUNTIME = String.raw`
       return call(path, body, true, keepalive, headers).then(function (response) {
         if (response.status !== 401 || keepalive) return response;
         return refresh().then(function () { return call(path, body, true, false, headers); });
+      });
+    });
+  }
+  function supportCall(path, body) {
+    if (!has('support')) return Promise.reject(new Error('the support module is not enabled for this app'));
+    return authed(path, body).then(function (response) {
+      return response.json().then(function (json) {
+        if (!response.ok) throw new Error(json && json.error ? json.error : 'support request failed');
+        return json.data;
       });
     });
   }
@@ -294,7 +305,11 @@ const RUNTIME = String.raw`
         for (var i = 0; i < messageList.length; i++) if (messageList[i].id === id) messageList[i].seen = true;
       }).catch(function () {});
     },
-    onCommand: function (listener) { listeners.command.push(listener); }
+    onCommand: function (listener) { listeners.command.push(listener); },
+    openTicket: function (request) { return supportCall('/tickets', request || {}); },
+    tickets: function () { return supportCall('/tickets'); },
+    ticket: function (id) { return supportCall('/tickets/' + id); },
+    replyTicket: function (id, message, name) { return supportCall('/tickets/' + id + '/messages', { message: message, name: name || null }); }
   };
 
   event('session_start', null, null);

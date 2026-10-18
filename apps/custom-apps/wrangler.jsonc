@@ -11,6 +11,13 @@
   "placement": {
     "mode": "smart"
   },
+  // `@react-email/render` imports Prettier at the top of its module for an option nothing here uses,
+  // which drags ~1.5 MB of formatter into the bundle. The stub throws if anything calls it. Not
+  // restated under `env.dev`: `alias` is inherited, and Wrangler rejects it inside an environment.
+  "alias": {
+    "prettier/standalone": "../../packages/emails/src/prettier-stub.ts",
+    "prettier/plugins/html": "../../packages/emails/src/prettier-stub.ts"
+  },
   // The ingest surface, and the one public route of an internal module in this repository.
   //
   // The panel half of this Worker is reached like every other module, through the gateway's
@@ -69,6 +76,16 @@
       // `GET /downloads/:ticket` on the ingest host, against a short-lived signed ticket.
       "binding": "RELEASES",
       "bucket_name": "franciscosolis-custom-apps-releases"
+    }
+  ],
+  // One kind of mail: the notice to a client that a contract is ending. Support tickets stay in the
+  // panel and are never mailed.
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": [
+        "hola@mail.franciscosolis.cl"
+      ]
     }
   ],
   "d1_databases": [
@@ -156,7 +173,10 @@
     "CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
     // Public base of the ingest surface, up to and including the version. Its host is what
     // `src/index.ts` dispatches on, and the panel quotes it so a client app can be configured.
-    "INGEST_PUBLIC_URL": "https://ingest.franciscosolis.cl/custom-apps/v1"
+    "INGEST_PUBLIC_URL": "https://ingest.franciscosolis.cl/custom-apps/v1",
+    // Sender of the contract notices.
+    "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+    "MAIL_FROM_NAME": "FranciscoSolis"
   },
   "observability": {
     "enabled": true,
@@ -200,6 +220,14 @@
         {
           "binding": "RELEASES",
           "bucket_name": "franciscosolis-custom-apps-releases-dev"
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": [
+            "hola@mail.franciscosolis.cl"
+          ]
         }
       ],
       "d1_databases": [
@@ -267,7 +295,9 @@
         "AUTH_ISSUER": "https://api-dev.franciscosolis.cl/auth",
         "CUSTOM_APPS_ALLOWED_AUDIENCES": "franciscosolis-custom-apps",
         "CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
-        "INGEST_PUBLIC_URL": "https://ingest-dev.franciscosolis.cl/custom-apps/v1"
+        "INGEST_PUBLIC_URL": "https://ingest-dev.franciscosolis.cl/custom-apps/v1",
+        "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
+        "MAIL_FROM_NAME": "FranciscoSolis (dev)"
       }
     }
   }

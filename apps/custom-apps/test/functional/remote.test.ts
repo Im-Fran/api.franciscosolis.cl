@@ -214,7 +214,7 @@ describe('flags and remote config', () => {
     const created = await createApp({ modules: ['metrics'] })
     const device = await enrollDevice(created.id, created.key.key)
     expect((await ingest(created.id, '/config', { token: device.access_token })).status).toBe(403)
-    expect((await heartbeat(created.id, device.access_token)).sync).toEqual({ config_etag: null, messages_etag: null, log_level: null })
+    expect((await heartbeat(created.id, device.access_token)).sync).toEqual({ config_etag: null, messages_etag: null, log_level: null, support_unread: null })
   })
 })
 

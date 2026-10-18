@@ -235,7 +235,7 @@ app.patch(
 app.delete(
   '/companies/:companyId',
   describeRoute({
-    description: 'Deletes a company and its contact links (the contacts themselves stay). Refused with a 409 while the company still has apps: removing a client must never take its fleet with it.',
+    description: 'Deletes a company and its contact links (the contacts themselves stay). Refused with a 409 while the company still has apps — removing a client must never take its fleet with it — or has contracts or logged work, which are billing history.',
     tags: ['Companies'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Deleted' }, 404: { description: 'Not found' }, 409: { description: 'The company still has apps' }, ...panelErrors },
@@ -247,6 +247,13 @@ app.delete(
     const before = await loadCompany(db, id)
     if (before.app_count > 0) {
       throw new HTTPException(409, { message: `This company still has ${before.app_count} app(s); move or delete them first` })
+    }
+    // Contracts and logged work are billing history, and the foreign keys refuse to lose them.
+    const history = await c.env.DB.prepare('SELECT (SELECT COUNT(*) FROM contracts WHERE company_id = ?) + (SELECT COUNT(*) FROM work_logs WHERE company_id = ?) AS n')
+      .bind(id, id)
+      .first<{ n: number }>()
+    if (Number(history?.n ?? 0) > 0) {
+      throw new HTTPException(409, { message: 'This company has contracts or logged work; that history cannot be deleted' })
     }
     await db.delete(companies).where(eq(companies.id, id))
     await recordAudit(db, { event: 'company.deleted', resourceType: 'company', resourceId: id, ...actor, metadata: { before } })

@@ -15,19 +15,24 @@ D1 database**, chosen by hostname in `src/index.ts`:
 - **Panel API** — reached through the gateway's `CUSTOM_APPS` binding at
   `api.franciscosolis.cl/custom-apps`, every route under `/v1`. Companies, contacts, apps, app keys,
   installations, telemetry views, commands and screenshots, flags and remote config, messages,
-  crashes and logs, alert rules and alerts, releases and CI tokens, audit log. Used by the panel at
+  crashes and logs, alert rules and alerts, releases and CI tokens, contracts, cycles and the work
+  log, support tickets, audit log. Used by the panel at
   `franciscosolis.cl/custom-apps`. One route on this host takes no panel token: CI uploading a
   release (`src/panel/ci.ts`), mounted ahead of the `/v1` gate and accepting only a CI token.
 - **Ingest** — `ingest.franciscosolis.cl/custom-apps/v1/:appId/*`, a zone route straight to this
   Worker. Enrollment, token refresh, heartbeat, the socket, status, metrics, events, logs, crashes,
   config, messages, command acknowledgements and screenshot uploads, the update offer, download
-  links and update reports, the per-app `openapi.json` and `sdk.js`. Used by client apps only.
+  links and update reports, support tickets, the per-app `openapi.json` and `sdk.js`. Used by client apps only.
 
 Phases 1 (CRM, inventory, enrollment, presence, telemetry, kill switch), 2 (remote operation:
 socket presence, commands and screenshots, flags and config, messages, logs, crashes, alerts,
 automatic grace expiry) and 3 (releases: signed uploads from CI, channels and staged rollout, minimum
-version, the A/B updater's offer and reports, automatic pause, rollback) of the custom-apps plan.
-Maintenance windows, contracts, tickets, uptime and the secrets vault (phase 4) build on this schema.
+version, the A/B updater's offer and reports, automatic pause, rollback) of the custom-apps plan,
+and the first part of phase 4: contracts with hours cycles, the work log, contract ends driving the
+kill switch, and support tickets opened from inside the apps. Maintenance windows, site uptime and
+the secrets vault (the rest of phase 4) build on this schema. The tickets are the owner's deliberate
+exception to the repository's "support is plain email" rule (see the root CLAUDE.md): they belong to
+the clients' apps and to this internal panel, never to the website.
 
 ## Stack
 
@@ -36,11 +41,14 @@ Maintenance windows, contracts, tickets, uptime and the secrets vault (phase 4) 
   upserts, or a query is an aggregate Drizzle would only obscure (`services/rollup.ts`,
   `services/series.ts`, `services/telemetry.ts`, the heartbeat).
 - **Cloudflare Queues**, producer *and* consumer of `franciscosolis-custom-apps-telemetry`, and a
-  producer of `franciscosolis-notifications` for alerts.
+  producer of `franciscosolis-notifications` for alerts and support tickets.
 - **Durable Objects** (`InstallationSocket`, one per installation, WebSocket Hibernation) for socket
   presence, and **R2** for screenshots (`SCREENSHOTS`) and release artifacts (`RELEASES`).
+- **Cloudflare Email Sending** (`EMAIL`) and `@franciscosolis/emails` for one message only: the
+  contract notice to a client. Prettier is aliased
+  out of the bundle in `wrangler.jsonc` and `vitest.config.ts`, as in every Worker that sends mail.
 - **Workers Rate Limiting** (`ratelimits`), a **cron trigger** every five minutes.
-- No runtime dependency beyond the catalog's Hono/valibot/Drizzle; versions via `catalog:`.
+- No runtime dependency beyond the catalog's Hono/valibot/Drizzle and the workspace's `@franciscosolis/emails`; versions via `catalog:`.
 
 ## Commands (run from this directory, `apps/custom-apps/`)
 
@@ -58,7 +66,8 @@ Maintenance windows, contracts, tickets, uptime and the secrets vault (phase 4) 
 - `src/panel/` — `index.ts` (the `/v1` gate and `/me`), `shared.ts`, `routes/` (`companies`,
   `contacts`, `apps` — keys, status, sdk, installations list, usage — `installations`, `overview` —
   overview and audit log — `remote` — commands, screenshots, flags, config, messages —
-  `diagnostics` — crashes and logs — `alerts`, `releases` — CI tokens, releases, rollout, reports),
+  `diagnostics` — crashes and logs — `alerts`, `releases` — CI tokens, releases, rollout, reports —
+  `contracts` — contracts, cycles, work log — `tickets` — the support inbox, replies, the assignee),
   `ci.ts` (the CI upload, outside the gate).
 - `src/ingest/index.ts` — every device route and the per-app documents.
 - `src/middleware/` — `admin.ts` (`requireAdmin`), `installation.ts` (`requireInstallation`).
@@ -72,9 +81,12 @@ Maintenance windows, contracts, tickets, uptime and the secrets vault (phase 4) 
   `maintenance.ts` (the five-minute cron), `rollup.ts` (daily roll-up, purge — the hourly half),
   `series.ts` (what the panel charts), `sdk.ts` (the `sdk.js` template), `apps.ts` (modules, current
   key, `buildSdk`), `releases.ts` (the offer, rollout buckets, release stats, the pause rule, signature
-  verification), `serialize.ts` (rows → JSON), `audit.ts`.
+  verification), `contracts.ts` (contract status, cycle sync, work log filing, notices, lapse and
+  renewal, the cron's share), `tickets.ts` (the context a ticket captures, serializers, unread counts,
+  the assignee's notifications), `mail.ts` (the `EMAIL` binding), `serialize.ts` (rows → JSON), `audit.ts`.
 - `src/lib/` — `config.ts` (every vocabulary and limit), `json-schema.ts` (the config schema
   subset), `rut.ts`, `tokens.ts`, `time.ts` (Santiago wall clock), `semver.ts`, `download-tickets.ts`,
+  `hours.ts` (cycle boundaries and the rollover arithmetic),
   `validation.ts`, `validate.ts`, `jwks.ts`, `json.ts`, `errors.ts`.
 
 ## Architecture notes (non-obvious)
@@ -198,6 +210,55 @@ Maintenance windows, contracts, tickets, uptime and the secrets vault (phase 4) 
   `RELEASES.pauseMinSample` devices behind the rate. Withdrawing would send every device back down;
   that is a person's decision. Resuming a release that is still past a threshold pauses it again on the
   next run, by design.
+- **Contract dates are Santiago calendar days, hours are whole minutes.** `starts_on` / `ends_on`
+  (inclusive) are `YYYY-MM-DD`, compared as strings; cycles are `[starts_on, ends_on)`. No float ever
+  holds hours. Amounts are in the contract's currency (CLP or UF) and never converted here.
+- **Cycles are anchored on the contract's start and synced lazily** (`syncCycles`): any read of a
+  contract — or the cron — closes every cycle whose period ended and opens the one containing today.
+  A monthly contract starting on the 31st renews on the last day of shorter months and comes back to
+  the 31st (`addMonths` always counts from the anchor). Inserts are keyed on the cycle's start and
+  closes on `status = 'open'`, so concurrent syncs are harmless. `starts_on` and `cycle_period` are
+  frozen once a cycle exists.
+- **A closed cycle is final.** Closing computes the balance once (`closeCycle`): usage is drawn from
+  the oldest carried minutes first, then the cycle's own; leftovers roll over only if the contract
+  says so, expire past `rollover_max_cycles`, and are trimmed oldest-first above `rollover_max_minutes`;
+  usage beyond everything available is overage, priced at `overage_rate` and charged in the next
+  cycle. The next cycle's carried buckets are recomputed from the closed row, which is why the work
+  log refuses (409) an entry dated inside a closed cycle — a late entry would change a balance another
+  cycle was derived from. Log it on the current cycle instead.
+- **A work log entry is filed, not assigned.** The contract covering its app (or, for company-wide
+  work, the one contract covering the company) on its day, and the cycle that day falls in. Several
+  candidates is a 422 asking for `contract_id`; none is valid — work outside any contract is kept,
+  just not counted.
+- **The end of a contract drives the kill switch, from the cron** (`runContracts`). Inside
+  `notice_days` the client's billing/owner contacts are emailed (falling back to the primary contact,
+  then anyone) and each covered app gets a warning message, once (`notice_sent_at`); a failed email
+  leaves it unset so the next run retries. Past `ends_on` the covered apps go into grace until the end
+  of the last grace day — or straight to suspension with no grace days — and the existing grace expiry
+  suspends them later; `lapsed_at` makes it once. Renewing (`/renew`, or moving `ends_on` later)
+  reactivates the apps in grace or suspended, ends the notices (`created_by = contract:<id>`) and lets
+  the client be warned again. A contract with `auto_renew` is extended by `renewal_months` and never
+  lapses. Cancelling stops new cycles and notices and leaves the apps alone.
+- **Grace pauses updates and support unless the contract says otherwise** (`grace_allows`). The offer
+  and the ticket routes check the lapsed contract of the app; an installation put in grace by hand has
+  no contract behind it and gets neither.
+- **Contract alerts are filed under an app**, because `alerts.app_id` is required: the rule's app, or
+  the first app the contract covers. A contract that covers no app raises nothing.
+- **Support tickets live in the panel, and nothing about them is mailed.** An app opens one
+  (`POST /tickets`) with what the user typed; the device's facts, recent logs and open crashes are
+  captured into `tickets.context` at that moment, so the ticket shows what the device looked like
+  then, not now. The conversation is `ticket_messages`, both ways: the panel answers, the app reads it
+  back (`GET /tickets/:id`, scoped to the installation that opened it — another's is a 404) and learns
+  there is something to read from `sync.support_unread` in the heartbeat. `seen_at` on a message is
+  the other side having read it; answering marks the requester's messages read. The status follows
+  the conversation (a requester message → `open`, a reply → `pending` unless it resolves or closes;
+  `closed` takes no more messages). `number` is assigned inside the insert
+  (`MAX(number) + 1`), so it is unique without a counter table. The app's `support_assignee` —
+  whoever turned the module on, or took the tickets over — hears about a new ticket and every
+  requester message through `apps/notifications` (`custom_apps.ticket_opened` /
+  `custom_apps.ticket_message`); with nobody assigned the tickets simply wait in the inbox. Hours
+  spent on one are work log entries carrying `ticket_id`. Limits: five new tickets and thirty
+  messages per installation per hour.
 - **A website always pings.** A browser cannot set the `Authorization` header on a WebSocket upgrade,
   so socket mode is for native apps and `sdk.js` never opens one.
 
@@ -210,4 +271,7 @@ with `drainTelemetry()` — the simulated queue would otherwise deliver to this 
 mid-assertion. `NOTIFICATIONS_QUEUE` is captured the same way (`test/helpers/notifications.ts`): its
 consumer is another Worker. The Durable Object and R2 are Miniflare's real ones; `socket.test.ts`
 opens genuine WebSockets through `SELF.fetch` with an `Upgrade` header. The rate limiters are Miniflare's real ones; device requests use a random
-`CF-Connecting-IP` so the per-IP limit only bites the test that means it to.
+`CF-Connecting-IP` so the per-IP limit only bites the test that means it to. `EMAIL` is replaced
+by a capture before every test (`test/helpers/email.ts`, with `failEmail()` for the outage paths), so
+no test sends mail — and the ticket tests assert that opening one sends none. Contract tests move the calendar by calling `runContracts(env, later)` with a
+future instant, and give each company a RUT of its own.

@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, isNull, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
@@ -6,23 +6,27 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute, generateSpecs, resolver } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb } from '@/db/client'
-import { apps, appKeys, commands, installations, messageReceipts, messages, releaseReports, releases, screenshots } from '@/db/schema'
+import { apps, appKeys, auditLogs, commands, installations, messageReceipts, messages, releaseReports, releases, screenshots, ticketMessages, tickets } from '@/db/schema'
 import type { AppEnv } from '@/env'
-import { CRASHES, LOG_LEVELS, LOGS, PLATFORMS, RELEASES, SCREENSHOTS, TELEMETRY, UPDATE_REPORT_STATUSES, type AppModule } from '@/lib/config'
+import { CRASHES, LOG_LEVELS, LOGS, PLATFORMS, RELEASES, SCREENSHOTS, SUPPORT, TELEMETRY, UPDATE_REPORT_STATUSES, type AppModule } from '@/lib/config'
 import { mintDownloadTicket, verifyDownloadTicket } from '@/lib/download-tickets'
 import { validate } from '@/lib/validate'
 import { isUuid } from '@/lib/validation'
 import { invalidToken, requireInstallation } from '@/middleware/installation'
 import { buildSdk, modulesOf } from '@/services/apps'
+import { auditRow } from '@/services/audit'
+import { graceAllows } from '@/services/contracts'
 import { acknowledgeCommand, commandAckSchema } from '@/services/commands'
 import { enroll, enrollBodySchema, refresh, refreshBodySchema, type IssuedTokens } from '@/services/enrollment'
 import { heartbeatBodySchema, presenceFor, recordHeartbeat, stateFor } from '@/services/heartbeat'
 import { activeMessages } from '@/services/messages'
+import { effectiveState } from '@/services/presence'
 import { offerFor, toDeviceOffer } from '@/services/releases'
 import { effectiveLogLevel, etagOf, resolveConfig } from '@/services/remote-config'
 import type { AppRow, InstallationRow } from '@/services/serialize'
 import { ingestUrls } from '@/services/serialize'
 import { SOCKET_HEADERS } from '@/services/socket'
+import { captureContext, notifyAssignee, toDeviceTicket, unreadBy } from '@/services/tickets'
 import {
   crashesBodySchema,
   crashSignature,
@@ -130,7 +134,7 @@ const directivesSchema = v.object({
   presence: presenceSchema,
   server_time: v.string(),
   commands: v.array(commandSchema),
-  sync: v.object({ config_etag: v.nullable(v.string()), messages_etag: v.nullable(v.string()), log_level: v.nullable(v.string()) }),
+  sync: v.object({ config_etag: v.nullable(v.string()), messages_etag: v.nullable(v.string()), log_level: v.nullable(v.string()), support_unread: v.nullable(v.number()) }),
   update: v.nullable(v.object({ release_id: v.string(), version: v.string(), mandatory: v.boolean(), rollback: v.boolean() })),
 })
 const tokensSchema = v.object({
@@ -893,6 +897,179 @@ app.post(
   },
 )
 
+/* ── Support ───────────────────────────────────────────────────────────────── */
+
+const messageInput = v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(SUPPORT.maxMessageLength))
+
+const openTicketSchema = v.object({
+  subject: v.pipe(v.string(), v.trim(), v.minLength(1), v.maxLength(SUPPORT.maxSubjectLength)),
+  message: messageInput,
+  name: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))),
+  email: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.email(), v.maxLength(254)))),
+  /** Whether to attach recent logs and open crashes. The device facts are always attached. */
+  include_diagnostics: v.optional(v.boolean(), true),
+})
+
+const deviceTicketSchema = v.looseObject({ id: v.string(), number: v.number(), subject: v.string(), status: v.string(), unread: v.number() })
+
+/** Support is paused while the app is suspended, and in grace unless the lapsed contract keeps it. */
+const requireSupport = async (c: { env: AppEnv['Bindings'] }, appRow: AppRow, installation: InstallationRow) => {
+  requireModule(appRow, 'support')
+  const state = effectiveState(appRow.state, installation.stateOverride)
+  if (state === 'suspended' || (state === 'grace' && (installation.stateOverride === 'grace' || !(await graceAllows(getDb(c.env), appRow.id, 'support'))))) {
+    throw new HTTPException(403, { message: 'Support is paused for this app' })
+  }
+}
+
+/** One of this installation's tickets. Another installation's ticket is a 404, not a 403. */
+const loadOwnTicket = async (c: { env: AppEnv['Bindings'] }, installationId: string, ticketId: string | undefined) => {
+  const [row] = ticketId && isUuid(ticketId)
+    ? await getDb(c.env).select().from(tickets).where(and(eq(tickets.id, ticketId), eq(tickets.installationId, installationId))).limit(1)
+    : []
+  if (!row) throw new HTTPException(404, { message: 'Ticket not found' })
+  return row
+}
+
+app.post(
+  '/:appId/tickets',
+  describeRoute({
+    operationId: 'openTicket',
+    summary: 'Open a support ticket',
+    description: `Opens a ticket with what the user typed in the app's support form. The device's facts (version, channel, system, last contact) are attached, and — unless \`include_diagnostics\` is false — its latest log lines and the open crashes of the running version. Support answers from the panel; read the answers with \`GET /tickets/{ticketId}\`, and watch \`sync.support_unread\` in the heartbeat answer to know when there are new ones. At most ${SUPPORT.maxTicketsPerHour} new tickets per installation per hour. Paused while the app is in grace unless the client's contract keeps support running, and while it is suspended.`,
+    tags: ['Support'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      201: { description: 'Opened', content: json(v.object({ code: v.literal(201), data: deviceTicketSchema })) },
+      403: { description: 'The support module is not enabled, or support is paused for this app' },
+      429: { description: 'Too many tickets from this installation' },
+    },
+  }),
+  requireInstallation,
+  validate('json', openTicketSchema),
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    const appRow = await requireApp(c, appId)
+    const installation = await loadInstallation(c, installationId)
+    await requireSupport(c, appRow, installation)
+    const db = getDb(c.env)
+    const since = new Date(Date.now() - 3_600_000)
+    const [recent] = await db.select({ count: sql<number>`COUNT(*)` }).from(tickets).where(and(eq(tickets.installationId, installationId), gte(tickets.createdAt, since)))
+    if (Number(recent?.count ?? 0) >= SUPPORT.maxTicketsPerHour) throw tooMany(`At most ${SUPPORT.maxTicketsPerHour} tickets per hour from one installation`)
+
+    const body = c.req.valid('json')
+    const context = await captureContext(db, appRow, installation, body.include_diagnostics)
+    const id = crypto.randomUUID()
+    const now = new Date()
+    await db.batch([
+      db.insert(tickets).values({
+        id,
+        number: sql`(SELECT COALESCE(MAX(number), 0) + 1 FROM tickets)`,
+        appId,
+        companyId: appRow.companyId,
+        installationId,
+        subject: body.subject,
+        status: 'open',
+        requesterName: body.name || null,
+        requesterEmail: body.email || null,
+        context: JSON.stringify(context),
+        lastMessageAt: now,
+        lastMessageBy: 'requester',
+      }),
+      db.insert(ticketMessages).values({ id: crypto.randomUUID(), ticketId: id, author: 'requester', authorName: body.name || null, authorEmail: body.email || null, body: body.message, createdAt: now }),
+      db.insert(auditLogs).values(auditRow({ event: 'ticket.opened', resourceType: 'ticket', resourceId: id, ip: c.req.header('CF-Connecting-IP') ?? null, metadata: { app_id: appId, installation_id: installationId, subject: body.subject } })),
+    ])
+    const [ticket] = await db.select().from(tickets).where(eq(tickets.id, id))
+    await notifyAssignee(c.env, db, ticket!, 'custom_apps.ticket_opened', body.message)
+    return c.json({ code: 201 as const, data: toDeviceTicket(ticket!) }, 201)
+  },
+)
+
+app.get(
+  '/:appId/tickets',
+  describeRoute({
+    operationId: 'listTickets',
+    summary: "This installation's tickets",
+    description: 'The tickets this installation opened, most recently active first, each with the number of replies from support it has not read yet.',
+    tags: ['Support'],
+    security: [{ bearerAuth: [] }],
+    responses: { 200: { description: 'The tickets', content: json(v.object({ code: v.literal(200), data: v.array(deviceTicketSchema) })) }, 403: { description: 'The support module is not enabled for this app' } },
+  }),
+  requireInstallation,
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'support')
+    const db = getDb(c.env)
+    const rows = await db.select().from(tickets).where(eq(tickets.installationId, installationId)).orderBy(desc(tickets.lastMessageAt), desc(tickets.number)).limit(100)
+    const unread = await unreadBy(db, rows.map((row) => row.id), 'staff')
+    return c.json({ code: 200 as const, data: rows.map((row) => toDeviceTicket(row, { unread: unread.get(row.id) ?? 0 })) })
+  },
+)
+
+app.get(
+  '/:appId/tickets/:ticketId',
+  describeRoute({
+    operationId: 'getTicket',
+    summary: 'Read a ticket',
+    description: "One of this installation's tickets with its whole conversation. Reading it marks support's replies as read.",
+    tags: ['Support'],
+    security: [{ bearerAuth: [] }],
+    responses: { 200: { description: 'The ticket', content: json(v.object({ code: v.literal(200), data: deviceTicketSchema })) }, 404: { description: 'No such ticket for this installation' } },
+  }),
+  requireInstallation,
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    requireModule(await requireApp(c, appId), 'support')
+    const ticket = await loadOwnTicket(c, installationId, c.req.param('ticketId'))
+    const db = getDb(c.env)
+    await db.update(ticketMessages).set({ seenAt: new Date() }).where(and(eq(ticketMessages.ticketId, ticket.id), eq(ticketMessages.author, 'staff'), isNull(ticketMessages.seenAt)))
+    const messageRows = await db.select().from(ticketMessages).where(eq(ticketMessages.ticketId, ticket.id)).orderBy(asc(ticketMessages.createdAt), sql`rowid`)
+    return c.json({ code: 200 as const, data: toDeviceTicket(ticket, { messages: messageRows }) })
+  },
+)
+
+app.post(
+  '/:appId/tickets/:ticketId/messages',
+  describeRoute({
+    operationId: 'replyTicket',
+    summary: 'Write on a ticket',
+    description: `Adds the user's message to one of this installation's tickets, which puts it back with support (\`open\`). A \`closed\` ticket takes no more messages: open a new one. At most ${SUPPORT.maxMessagesPerHour} messages per installation per hour.`,
+    tags: ['Support'],
+    security: [{ bearerAuth: [] }],
+    responses: {
+      201: { description: 'Added', content: json(v.object({ code: v.literal(201), data: deviceTicketSchema })) },
+      404: { description: 'No such ticket for this installation' },
+      409: { description: 'The ticket is closed' },
+      429: { description: 'Too many messages from this installation' },
+    },
+  }),
+  requireInstallation,
+  validate('json', v.object({ message: messageInput, name: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(120)))) })),
+  async (c) => {
+    const { installationId, appId } = c.get('device')
+    const appRow = await requireApp(c, appId)
+    const installation = await loadInstallation(c, installationId)
+    await requireSupport(c, appRow, installation)
+    const ticket = await loadOwnTicket(c, installationId, c.req.param('ticketId'))
+    if (ticket.status === 'closed') throw new HTTPException(409, { message: 'This ticket is closed; open a new one' })
+    const db = getDb(c.env)
+    const recent = await c.env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM ticket_messages m JOIN tickets t ON t.id = m.ticket_id WHERE t.installation_id = ? AND m.author = 'requester' AND m.created_at >= ?",
+    )
+      .bind(installationId, Math.floor(Date.now() / 1000) - 3600)
+      .first<{ n: number }>()
+    if (Number(recent?.n ?? 0) >= SUPPORT.maxMessagesPerHour) throw tooMany(`At most ${SUPPORT.maxMessagesPerHour} messages per hour from one installation`)
+    const body = c.req.valid('json')
+    const now = new Date()
+    await db.batch([
+      db.insert(ticketMessages).values({ id: crypto.randomUUID(), ticketId: ticket.id, author: 'requester', authorName: body.name || ticket.requesterName, authorEmail: ticket.requesterEmail, body: body.message, createdAt: now }),
+      db.update(tickets).set({ status: 'open', lastMessageAt: now, lastMessageBy: 'requester', resolvedAt: null, resolvedBy: null, updatedAt: now }).where(eq(tickets.id, ticket.id)),
+    ])
+    const [updated] = await db.select().from(tickets).where(eq(tickets.id, ticket.id))
+    await notifyAssignee(c.env, db, updated!, 'custom_apps.ticket_message', body.message)
+    return c.json({ code: 201 as const, data: toDeviceTicket(updated!) }, 201)
+  },
+)
+
 /* ── Documents ─────────────────────────────────────────────────────────────── */
 
 /**
@@ -909,6 +1086,7 @@ const MODULE_OF_SEGMENT: Record<string, AppModule> = {
   commands: 'commands',
   updates: 'updates',
   downloads: 'updates',
+  tickets: 'support',
 }
 
 /** Socket presence is listed only for apps in socket mode: a ping app would be refused it. */

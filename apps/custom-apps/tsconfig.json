@@ -11,6 +11,9 @@
     "types": [
       "@cloudflare/workers-types"
     ],
+    // For the react-email templates imported from `@franciscosolis/emails`, which declare
+    // `@jsxImportSource react` themselves.
+    "jsx": "react-jsx",
     "paths": {
       "@/*": [
         "./src/*"

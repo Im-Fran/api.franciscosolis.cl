@@ -38,6 +38,8 @@ export { AccountAccessEmail, accountAccessSubject, renderAccountAccessEmail } fr
 export type { AccountAccessEmailProps, AccountAccessEvent } from './templates/account-access'
 export { ContentEmail, renderContentEmail } from './templates/content'
 export type { ContentEmailProps } from './templates/content'
+export { ContractNoticeEmail, renderContractNoticeEmail } from './templates/contract-notice'
+export type { ContractNoticeEmailProps } from './templates/contract-notice'
 export { InvitationEmail, renderInvitationEmail } from './templates/invitation'
 export type { InvitationEmailProps } from './templates/invitation'
 export { MagicLinkEmail, renderMagicLinkEmail } from './templates/magic-link'

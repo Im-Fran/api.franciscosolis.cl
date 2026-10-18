@@ -58,6 +58,26 @@ type AuditEvent =
   | 'release.withdrawn'
   | 'release.rolled_back'
   | 'release.deleted'
+  | 'contract.created'
+  | 'contract.updated'
+  /** By hand, or with no actor when a contract that renews itself reached its end. */
+  | 'contract.renewed'
+  | 'contract.cancelled'
+  | 'contract.deleted'
+  /** Written by the cron: the client was emailed and the covered apps show the notice. */
+  | 'contract.notice_sent'
+  /** Written by the cron: the contract ended without renewal and its apps went into grace. */
+  | 'contract.lapsed'
+  /** With no actor when the calendar closed it. */
+  | 'cycle.closed'
+  | 'cycle.billed'
+  | 'work_log.created'
+  | 'work_log.updated'
+  | 'work_log.deleted'
+  /** Written by the ingest surface with no actor: an app opened a support ticket. */
+  | 'ticket.opened'
+  | 'ticket.replied'
+  | 'ticket.status_changed'
 
 type AuditInput = {
   event: AuditEvent

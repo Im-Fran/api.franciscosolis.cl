@@ -12,8 +12,9 @@ language) into files, commits, or code in this repo.
 `@franciscosolis/emails` holds every email body the monorepo sends, written as
 [react-email](https://react.email) components. `apps/auth` uses it for magic links, invitations and
 account access notices, `apps/cms` for editorial messages, `apps/notifications` for notices and
-digests, and `apps/marketplace` for the two documents that come with a sale: the voucher and the
-notice that one was refunded. It is the first entry under `packages/` and the only non-Worker workspace package.
+digests, `apps/marketplace` for the two documents that come with a sale: the voucher and the
+notice that one was refunded, and `apps/custom-apps` for the notice that a client's contract is
+ending. It is the first entry under `packages/` and the only non-Worker workspace package.
 
 A consumer imports a `render*Email` function, gets `{ subject, html, text }` and hands
 that to its Cloudflare Email Sending binding. No Worker builds markup itself any more.

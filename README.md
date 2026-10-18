@@ -93,7 +93,8 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   account takes the money and is stamped on every purchase.
 - **Support is plain email** — there is no ticket system here any more. Help is asked for and
   answered by writing to `soporte@franciscosolis.cl`, a Google Group; the website's contact section
-  links to it, and nothing in this repository sits on that path.
+  links to it. The custom apps are the one exception: their support tickets, opened from inside a
+  client's app, live in the internal custom-apps panel.
 - **Notifications** — `apps/notifications` is the bell on the website: an in-site list of what
   happened to an account (a sign-in, an authorization, an avatar decision, a purchase, a refund, a new release of something bought, an answer to a review), **Web Push** to every
   device that subscribed (VAPID, RFC 8291/8292, with an installable PWA on the website), and email —
@@ -122,7 +123,10 @@ pnpm `catalog` so every worker stays on the same Hono/valibot/wrangler versions.
   commands and screenshots, feature flags and a versioned remote config, in-app messages, remote logs,
   grouped crash reports, and alerts sent through the notification centre — and their releases:
   Ed25519-signed builds uploaded from CI, channels, staged rollout, a minimum version, the offer an
-  A/B updater installs from, its reports, the automatic pause and rollback. The panel API sits behind the gateway at
+  A/B updater installs from, its reports, the automatic pause and rollback — and their contracts:
+  hours included per cycle with rollover and overage, a hand-kept work log, a client notice before a
+  contract ends and grace for its apps when it lapses, and support tickets opened from inside the app
+  and answered from the panel. The panel API sits behind the gateway at
   `/custom-apps/*`, for one account holding `custom-apps:admin`; the client apps report to
   `ingest.franciscosolis.cl/custom-apps/v1/<appId>`, a route of its own straight to the Worker, which
   tells the two apart by hostname. Enrollment is auto-approved for anybody holding an app's public
