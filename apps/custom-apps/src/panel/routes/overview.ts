@@ -25,7 +25,7 @@ app.get(
   '/overview',
   describeRoute({
     description:
-      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, contracts ending or in grace, hours cycles over budget or waiting to be billed, and the latest enrollments.',
+      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, contracts ending or in grace, hours cycles over budget or waiting to be billed, support tickets waiting on us or on the client, and the latest enrollments.',
     tags: ['Overview'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'The overview' }, ...panelErrors },
@@ -36,7 +36,7 @@ app.get(
     const nowDate = new Date(now * 1000)
 
     const summaryColumns = { installation: installations, appName: apps.name, interval: apps.heartbeatIntervalSeconds }
-    const [[fleet], states, [counts], recent, review, openAlerts, [rollouts], contractRows, [cycleRow]] = await Promise.all([
+    const [[fleet], states, [counts], recent, review, openAlerts, [rollouts], contractRows, [cycleRow], [ticketRow]] = await Promise.all([
       c.env.DB.prepare(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN i.status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -69,6 +69,12 @@ app.get(
         `SELECT SUM(CASE WHEN y.status = 'open' AND (SELECT COALESCE(SUM(w.minutes), 0) FROM work_logs w WHERE w.cycle_id = y.id) > y.included_minutes + y.carried_minutes THEN 1 ELSE 0 END) AS exceeded,
                 SUM(CASE WHEN y.status = 'closed' AND COALESCE(y.overage_minutes, 0) > 0 THEN 1 ELSE 0 END) AS to_bill
          FROM contract_cycles y JOIN contracts c ON c.id = y.contract_id`,
+      ).all<Record<string, number | null>>().then((result) => result.results),
+      c.env.DB.prepare(
+        `SELECT SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                (SELECT COUNT(*) FROM ticket_messages WHERE author = 'requester' AND seen_at IS NULL) AS unread
+         FROM tickets`,
       ).all<Record<string, number | null>>().then((result) => result.results),
     ])
     const today = todayIn(nowDate)
@@ -103,6 +109,7 @@ app.get(
           in_grace: contractViews.filter((view) => view.status === 'grace').length,
         },
         cycles: { exceeded: Number(cycleRow?.exceeded ?? 0), to_bill: Number(cycleRow?.to_bill ?? 0) },
+        tickets: { open: Number(ticketRow?.open ?? 0), pending: Number(ticketRow?.pending ?? 0), unread: Number(ticketRow?.unread ?? 0) },
         releases: { rolling_out: Number(rollouts?.rolling_out ?? 0), paused: Number(rollouts?.paused ?? 0), drafts: Number(rollouts?.drafts ?? 0) },
         recent_installations: recent.map(summary),
         needs_review: review.map(summary),

@@ -13,6 +13,7 @@ import installations from '@/panel/routes/installations'
 import overview from '@/panel/routes/overview'
 import releases from '@/panel/routes/releases'
 import remote from '@/panel/routes/remote'
+import tickets from '@/panel/routes/tickets'
 import { dataSchema, jsonContent, panelErrors } from '@/panel/shared'
 
 /**
@@ -69,5 +70,6 @@ app.route('/', diagnostics)
 app.route('/', alerts)
 app.route('/', releases)
 app.route('/', contracts)
+app.route('/', tickets)
 
 export { app as panel }

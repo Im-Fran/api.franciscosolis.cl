@@ -78,8 +78,8 @@
       "bucket_name": "franciscosolis-custom-apps-releases"
     }
   ],
-  // Two kinds of mail: the notice that a contract is ending, to the client, and in-app support
-  // requests, to the support inbox. Support is plain email — nothing here keeps a ticket.
+  // One kind of mail: the notice to a client that a contract is ending. Support tickets stay in the
+  // panel and are never mailed.
   "send_email": [
     {
       "name": "EMAIL",
@@ -174,12 +174,9 @@
     // Public base of the ingest surface, up to and including the version. Its host is what
     // `src/index.ts` dispatches on, and the panel quotes it so a client app can be configured.
     "INGEST_PUBLIC_URL": "https://ingest.franciscosolis.cl/custom-apps/v1",
-    // Sender of everything this Worker emails, and where in-app support requests go.
+    // Sender of the contract notices.
     "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
-    "MAIL_FROM_NAME": "FranciscoSolis",
-    "SUPPORT_EMAIL": "soporte@franciscosolis.cl",
-    // The panel on the website, for the links a support request carries.
-    "PANEL_PUBLIC_URL": "https://franciscosolis.cl/custom-apps"
+    "MAIL_FROM_NAME": "FranciscoSolis"
   },
   "observability": {
     "enabled": true,
@@ -300,9 +297,7 @@
         "CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
         "INGEST_PUBLIC_URL": "https://ingest-dev.franciscosolis.cl/custom-apps/v1",
         "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
-        "MAIL_FROM_NAME": "FranciscoSolis (dev)",
-        "SUPPORT_EMAIL": "soporte@franciscosolis.cl",
-        "PANEL_PUBLIC_URL": "https://dev.franciscosolis.cl/custom-apps"
+        "MAIL_FROM_NAME": "FranciscoSolis (dev)"
       }
     }
   }

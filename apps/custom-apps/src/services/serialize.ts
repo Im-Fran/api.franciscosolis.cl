@@ -99,6 +99,8 @@ const toApp = (
   log_level: row.logLevel,
   screenshots_enabled: row.screenshotsEnabled,
   release_public_key: row.releasePublicKey,
+  /** Who hears about this app's support tickets. */
+  support_assignee_email: row.supportAssigneeEmail,
   update_health_timeout_seconds: row.updateHealthTimeoutSeconds,
   update_max_failures: row.updateMaxFailures,
   rollout_pause_rollback_percent: row.rolloutPauseRollbackPercent,

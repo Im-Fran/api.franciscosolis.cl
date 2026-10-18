@@ -1,12 +1,11 @@
 import type { Env } from '@/env'
 
 /**
- * Everything this Worker emails goes through here: the notice that a contract is ending, and in-app
- * support requests. Bodies come from `@franciscosolis/emails`; this only hands them to Cloudflare
- * Email Sending, from the Worker's one configured sender.
+ * Everything this Worker emails goes through here — which is one message: the notice to a client that
+ * a contract is ending. The body comes from `@franciscosolis/emails`; this only hands it to
+ * Cloudflare Email Sending, from the Worker's one configured sender.
  *
- * It throws on failure. Each caller decides what a failed send means — a support request answers the
- * device with an error so it can retry, the contract notice is retried by the next cron run.
+ * It throws on failure, and the cron leaves the notice unsent so its next run retries.
  */
 
 type OutgoingEmail = {

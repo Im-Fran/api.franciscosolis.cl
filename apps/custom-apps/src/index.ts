@@ -34,6 +34,7 @@ import {
   SCREENSHOTS,
   TARGET_SCOPES,
   TELEMETRY,
+  TICKET_STATUSES,
   UPDATE_REPORT_STATUSES,
   WORK_KINDS,
 } from '@/lib/config'
@@ -126,6 +127,7 @@ const rootResponseSchema = v.object({
     contract_statuses: v.array(v.string()),
     grace_allowances: v.array(v.string()),
     work_kinds: v.array(v.string()),
+    ticket_statuses: v.array(v.string()),
     contract_limits: v.object({ max_grace_days: v.number(), max_notice_days: v.number(), default_notice_days: v.number(), max_work_log_minutes: v.number() }),
     grace_max_days: v.number(),
     screenshot_max_bytes: v.number(),
@@ -177,6 +179,7 @@ panelApp.get(
         contract_statuses: [...CONTRACT_STATUSES],
         grace_allowances: [...GRACE_ALLOWANCES],
         work_kinds: [...WORK_KINDS],
+        ticket_statuses: [...TICKET_STATUSES],
         contract_limits: {
           max_grace_days: CONTRACTS.maxGraceDays,
           max_notice_days: CONTRACTS.maxNoticeDays,

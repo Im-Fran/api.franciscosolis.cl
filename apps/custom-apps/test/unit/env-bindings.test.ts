@@ -13,8 +13,6 @@ const REQUIRED_VARS = [
   'INGEST_PUBLIC_URL',
   'MAIL_FROM_EMAIL',
   'MAIL_FROM_NAME',
-  'SUPPORT_EMAIL',
-  'PANEL_PUBLIC_URL',
 ] as const
 
 describe('the Worker configuration', () => {

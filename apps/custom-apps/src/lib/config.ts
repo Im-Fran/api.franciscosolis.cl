@@ -68,9 +68,8 @@ type PresenceMode = (typeof PRESENCE_MODES)[number]
  * - `commands`: remote commands from the closed catalogue in `COMMAND_TYPES`, screenshots included.
  * - `updates`: remote updates — the release a device is offered, its signed download, and the
  *   reports that tell a rollout whether it is working.
- * - `support`: the in-app support form. A request is emailed to the support inbox with the device's
- *   context attached; nothing is kept here as a ticket (support is plain email, see the root
- *   CLAUDE.md).
+ * - `support`: support tickets opened from inside the app, with the device's context attached,
+ *   answered from the panel and read back by the app.
  */
 const APP_MODULES = ['metrics', 'events', 'logs', 'crashes', 'config', 'messages', 'commands', 'updates', 'support'] as const
 type AppModule = (typeof APP_MODULES)[number]
@@ -325,15 +324,28 @@ const CONTRACTS = {
   maxWorkLogMinutes: 24 * 60,
 } as const
 
-/** The in-app support form. */
+/**
+ * A ticket's lifecycle:
+ *
+ * - `open`: waiting on us — new, or the requester wrote again.
+ * - `pending`: we answered and wait on the requester.
+ * - `resolved`: done; a new message from the requester reopens it.
+ * - `closed`: done for good; the requester has to open a new ticket.
+ */
+const TICKET_STATUSES = ['open', 'pending', 'resolved', 'closed'] as const
+type TicketStatus = (typeof TICKET_STATUSES)[number]
+
+/** Support tickets from inside a client's app. */
 const SUPPORT = {
-  /** Requests an installation may send per hour. The form is a mailing endpoint; this is its limit. */
-  maxPerHour: 5,
+  /** Tickets an installation may open per hour. */
+  maxTicketsPerHour: 5,
+  /** Messages an installation may add to its tickets per hour. */
+  maxMessagesPerHour: 30,
   maxSubjectLength: 200,
   maxMessageLength: 5000,
-  /** Recent log entries attached to a request, when the app has the `logs` module. */
+  /** Recent log entries attached to a new ticket, when the app has the `logs` module. */
   attachedLogs: 20,
-  /** Open crash groups of the running version attached to a request, when the app has `crashes`. */
+  /** Open crash groups of the running version attached to a new ticket, when the app has `crashes`. */
   attachedCrashes: 5,
 } as const
 
@@ -442,6 +454,7 @@ export {
   SUPPORT,
   TARGET_SCOPES,
   TELEMETRY,
+  TICKET_STATUSES,
   TOKENS,
   UPDATE_REPORT_STATUSES,
   WEEKDAYS,
@@ -474,6 +487,7 @@ export type {
   PresenceMode,
   ReleaseStatus,
   TargetScope,
+  TicketStatus,
   UpdateReportStatus,
   Weekday,
   WorkKind,

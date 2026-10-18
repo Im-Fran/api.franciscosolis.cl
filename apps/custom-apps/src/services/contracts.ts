@@ -269,7 +269,7 @@ const toContract = (
   }
 }
 
-const toWorkLog = (row: WorkLogRow, extra: { appName?: string | null; companyName?: string | null; contractName?: string | null; cycleStatus?: string | null } = {}) => ({
+const toWorkLog = (row: WorkLogRow, extra: { appName?: string | null; companyName?: string | null; contractName?: string | null; cycleStatus?: string | null; ticketNumber?: number | null } = {}) => ({
   id: row.id,
   company_id: row.companyId,
   company_name: extra.companyName ?? null,
@@ -285,6 +285,8 @@ const toWorkLog = (row: WorkLogRow, extra: { appName?: string | null; companyNam
   kind: row.kind,
   description: row.description,
   link_url: row.linkUrl,
+  ticket_id: row.ticketId,
+  ticket_number: extra.ticketNumber ?? null,
   created_at: iso(row.createdAt),
   updated_at: iso(row.updatedAt),
   created_by: row.createdBy,

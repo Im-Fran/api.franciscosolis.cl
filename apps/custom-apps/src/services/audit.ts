@@ -74,8 +74,10 @@ type AuditEvent =
   | 'work_log.created'
   | 'work_log.updated'
   | 'work_log.deleted'
-  /** Written by the ingest surface with no actor: the installation is the resource. */
-  | 'support.requested'
+  /** Written by the ingest surface with no actor: an app opened a support ticket. */
+  | 'ticket.opened'
+  | 'ticket.replied'
+  | 'ticket.status_changed'
 
 type AuditInput = {
   event: AuditEvent

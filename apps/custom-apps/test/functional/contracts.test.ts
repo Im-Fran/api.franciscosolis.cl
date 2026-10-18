@@ -201,9 +201,9 @@ describe('the end of a contract', () => {
     expect(JSON.parse(audit!.metadata)).toMatchObject({ automatic: true, reason: 'contract_lapsed', contract_id: contract.id })
 
     // Support is paused in grace unless the contract keeps it running.
-    expect((await ingest(app.id, '/support', { token: device.access_token, body: { subject: 'x', message: 'y' } })).status).toBe(403)
+    expect((await ingest(app.id, '/tickets', { token: device.access_token, body: { subject: 'x', message: 'y' } })).status).toBe(403)
     await panelJson(`/v1/contracts/${contract.id}`, { method: 'PATCH', body: { grace_allows: ['support'] } })
-    expect((await ingest(app.id, '/support', { token: device.access_token, body: { subject: 'x', message: 'y' } })).status).toBe(202)
+    expect((await ingest(app.id, '/tickets', { token: device.access_token, body: { subject: 'x', message: 'y' } })).status).toBe(201)
 
     const renewed = await panelJson(`/v1/contracts/${contract.id}/renew`, { method: 'POST', body: { ends_on: addDays(today(), 365) } })
     expect(renewed.body.data).toMatchObject({ status: 'active', lapsed_at: null })
@@ -251,47 +251,6 @@ describe('contract alerts', () => {
         expect.objectContaining({ kind: 'cycle_hours_low', value: 20, app_id: app.id }),
       ]),
     )
-  })
-})
-
-describe('in-app support', () => {
-  it('emails the support inbox with the device attached, and replies go to the user', async () => {
-    const { app } = await setup()
-    const device = await enrollDevice(app.id, app.key.key, { app_version: '1.4.0', hostname: 'CAJA-2' })
-    await ingestJson(app.id, '/logs', { token: device.access_token, body: { entries: [{ id: 'l1', level: 'error', message: 'COM3 not responding', target: 'printer', occurred_at: new Date().toISOString() }] } })
-    const { drainTelemetry } = await import('../helpers/telemetry')
-    await drainTelemetry()
-
-    const sent = await ingestJson(app.id, '/support', {
-      token: device.access_token,
-      body: { subject: 'La impresora no imprime', message: 'Desde la mañana.', name: 'María', email: 'maria@cliente.cl' },
-    })
-    expect(sent.status).toBe(202)
-    const [email] = sentEmails()
-    expect(email).toMatchObject({ to: ['soporte@franciscosolis.cl'], replyTo: 'maria@cliente.cl', subject: `[${app.name}] La impresora no imprime` })
-    expect(email!.text).toContain('Desde la mañana.')
-    expect(email!.text).toContain('CAJA-2')
-    expect(email!.text).toContain('COM3 not responding')
-    expect(email!.text).toContain(`/custom-apps/installations/${device.installation_id}`)
-    const audit = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE event = 'support.requested' AND resource_id = ?").bind(device.installation_id).first<{ n: number }>()
-    expect(audit!.n).toBe(1)
-  })
-
-  it('is limited per installation, needs the module, and says when mail is down', async () => {
-    const { app } = await setup()
-    const device = await enrollDevice(app.id, app.key.key)
-    const send = () => ingest(app.id, '/support', { token: device.access_token, body: { subject: 'Hola', message: 'Ayuda', include_diagnostics: false } })
-    failEmail()
-    expect((await send()).status).toBe(502)
-    failEmail(false)
-    for (let i = 0; i < 5; i += 1) expect((await send()).status).toBe(202)
-    expect((await send()).status).toBe(429)
-
-    const bare = await createApp({ company_id: app.company_id, modules: ['metrics'] })
-    const other = await enrollDevice(bare.id, bare.key.key)
-    expect((await ingest(bare.id, '/support', { token: other.access_token, body: { subject: 'x', message: 'y' } })).status).toBe(403)
-    const paths = Object.keys(((await ingestJson(bare.id, '/openapi.json')).body as { paths: Record<string, unknown> }).paths)
-    expect(paths).not.toContain('/support')
   })
 })
 
