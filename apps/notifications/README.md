@@ -132,6 +132,7 @@ carry on. This Worker is the queue's consumer:
 | `marketplace.purchase_completed`, `marketplace.purchase_refunded` | marketplace | no — the receipt and refund notice |
 | `marketplace.release_published`, `marketplace.review_reply` | marketplace | yes |
 | `custom_apps.alert_opened`, `custom_apps.alert_resolved` | custom-apps | yes — its alert rules, for the account that created them |
+| `custom_apps.ticket_opened`, `custom_apps.ticket_message` | custom-apps | yes — a support ticket opened from a client's app, or a new message from its requester, for the account the app's tickets are assigned to |
 
 The event id is the notification's primary key, so a redelivery inserts nothing and pushes nothing.
 A malformed event is acknowledged and dropped; an unknown type is retried, since it means a producer
