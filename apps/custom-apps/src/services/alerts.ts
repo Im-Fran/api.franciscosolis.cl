@@ -275,16 +275,17 @@ const reconcile = async (env: Env, db: Database, rule: RuleRow, findings: Findin
   for (const finding of findings) {
     seen.add(finding.subject)
     const details = JSON.stringify(finding.details)
+    const appName = typeof finding.details.app_name === 'string' ? finding.details.app_name : null
     const open = bySubject.get(finding.subject)
     if (open) {
-      await db.update(alerts).set({ lastTriggeredAt: now, value: finding.value, details }).where(eq(alerts.id, open.id))
+      await db.update(alerts).set({ lastTriggeredAt: now, value: finding.value, details, ...(appName !== null && { appName }) }).where(eq(alerts.id, open.id))
       continue
     }
     const previous = resolvedBySubject.get(finding.subject)
     if (previous) {
       await db
         .update(alerts)
-        .set({ status: 'open', resolvedAt: null, resolvedBy: null, acknowledgedAt: null, acknowledgedBy: null, occurrences: previous.occurrences + 1, lastTriggeredAt: now, value: finding.value, details })
+        .set({ status: 'open', resolvedAt: null, resolvedBy: null, acknowledgedAt: null, acknowledgedBy: null, occurrences: previous.occurrences + 1, lastTriggeredAt: now, value: finding.value, details, ...(appName !== null && { appName }) })
         .where(eq(alerts.id, previous.id))
       counts.reopened += 1
       continue
@@ -297,6 +298,7 @@ const reconcile = async (env: Env, db: Database, rule: RuleRow, findings: Findin
         ruleName: rule.name,
         ruleKind: rule.kind,
         appId: finding.appId,
+        appName,
         installationId: finding.installationId,
         subject: finding.subject,
         status: 'open',
@@ -368,6 +370,7 @@ type AlertSelection = { alert: AlertRow; ruleName: string | null; ruleKind: stri
 /**
  * An alert whose rule was deleted keeps rendering: `rule_id` and `threshold` are null,
  * `rule_deleted` is true, and `rule_name` / `kind` come from the snapshot taken when it opened.
+ * `app_name` is the live app's, or the snapshot's once the app is gone.
  */
 const toAlert = (row: AlertSelection) => ({
   id: row.alert.id,
@@ -376,7 +379,7 @@ const toAlert = (row: AlertSelection) => ({
   kind: row.ruleKind ?? row.alert.ruleKind,
   rule_deleted: row.alert.ruleId === null,
   app_id: row.alert.appId,
-  app_name: row.appName,
+  app_name: row.appName ?? row.alert.appName,
   installation_id: row.alert.installationId,
   subject: row.alert.subject,
   subject_name: subjectName(row.alert),
@@ -412,11 +415,26 @@ const toRule = (row: RuleRow, appName: string | null, openAlerts = 0) => ({
   updated_by: row.updatedBy,
 })
 
+/** Open alerts of a rule, as a column of a query over `alert_rules`. */
+const openCountSql = sql<number>`(SELECT COUNT(*) FROM alerts x WHERE x.rule_id = "alert_rules"."id" AND x.status != 'resolved')`
+
+/**
+ * An alert's app's current name, falling back to the snapshot it holds, as the value of an update of
+ * `alerts`. The outer column is named in full, never `${alerts.appId}`: unqualified, SQLite would
+ * resolve it to the inner `apps`.
+ */
+const appNameSql = sql<string | null>`COALESCE((SELECT a.name FROM apps a WHERE a.id = "alerts"."app_id"), "alerts"."app_name")`
+
+/** Takes a snapshot of the app's name on every alert filed under it: what deleting the app runs first. */
+const snapshotAppName = async (db: Database, appId: string) => {
+  await db.update(alerts).set({ appName: appNameSql }).where(eq(alerts.appId, appId))
+}
+
 /**
  * What deleting rules does to their alerts, run before the delete: the snapshot is set to the
- * rules' last name and kind, and the unresolved ones are resolved by `actor` — nothing would ever
- * reconcile them again. The delete itself then nulls `rule_id` (ON DELETE SET NULL); the alerts
- * stay, as history.
+ * rules' last name and kind and their app's current name, and the unresolved ones are resolved by
+ * `actor` — nothing would ever reconcile them again. The delete itself then nulls `rule_id` (ON
+ * DELETE SET NULL); the alerts stay, as history.
  */
 const retireRuleAlerts = async (db: Database, rules: Pick<RuleRow, 'id' | 'name' | 'kind'>[], actor: string | null, now: Date = new Date()) => {
   if (rules.length === 0) return
@@ -425,7 +443,7 @@ const retireRuleAlerts = async (db: Database, rules: Pick<RuleRow, 'id' | 'name'
       .update(alerts)
       .set({ status: 'resolved', resolvedAt: now, resolvedBy: actor })
       .where(and(inArray(alerts.ruleId, rules.map((rule) => rule.id)), ne(alerts.status, 'resolved'))),
-    ...rules.map((rule) => db.update(alerts).set({ ruleName: rule.name, ruleKind: rule.kind }).where(eq(alerts.ruleId, rule.id))),
+    ...rules.map((rule) => db.update(alerts).set({ ruleName: rule.name, ruleKind: rule.kind, appName: appNameSql }).where(eq(alerts.ruleId, rule.id))),
   ])
 }
 
@@ -435,5 +453,5 @@ const unresolvedCount = async (db: Database) => {
   return Number(row?.count ?? 0)
 }
 
-export { alertSelection, detect, evaluateAlerts, retireRuleAlerts, toAlert, toRule, unresolvedCount }
+export { alertSelection, detect, evaluateAlerts, openCountSql, retireRuleAlerts, snapshotAppName, toAlert, toRule, unresolvedCount }
 export type { AlertRow, AlertSelection, Finding, RuleRow }

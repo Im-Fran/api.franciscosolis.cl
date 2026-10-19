@@ -9,7 +9,7 @@ import type { AppEnv } from '@/env'
 import { ALERT_KINDS, ALERT_STATUSES, ALERTS, type AlertKind } from '@/lib/config'
 import { dateInput, paginationQuery, requiredText } from '@/lib/validation'
 import { readOptionalJson, validate } from '@/lib/validate'
-import { alertSelection, retireRuleAlerts, toAlert, toRule, type RuleRow } from '@/services/alerts'
+import { alertSelection, openCountSql, retireRuleAlerts, toAlert, toRule, type RuleRow } from '@/services/alerts'
 import { diff, getActorContext, recordAudit } from '@/services/audit'
 import { assertId, dataSchema, jsonContent, listSchema, notFound, page, panelErrors } from '@/panel/shared'
 
@@ -42,8 +42,6 @@ const checkThreshold = (kind: AlertKind, threshold: number) => {
     throw new HTTPException(400, { message: `threshold: for ${kind} it is ${bounds.unit}, between ${bounds.min} and ${bounds.max}` })
   }
 }
-
-const openCountSql = sql<number>`(SELECT COUNT(*) FROM alerts x WHERE x.rule_id = "alert_rules"."id" AND x.status != 'resolved')`
 
 const loadRule = async (db: Database, id: string) => {
   const [row] = await db

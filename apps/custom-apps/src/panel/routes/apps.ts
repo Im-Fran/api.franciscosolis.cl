@@ -22,7 +22,7 @@ import {
   searchQuery,
 } from '@/lib/validation'
 import { readOptionalJson, validate } from '@/lib/validate'
-import { retireRuleAlerts } from '@/services/alerts'
+import { openCountSql, retireRuleAlerts, snapshotAppName, toRule } from '@/services/alerts'
 import { buildSdk } from '@/services/apps'
 import { auditRow, diff, getActorContext, recordAudit } from '@/services/audit'
 import { appUsage, usageHeatmap } from '@/services/series'
@@ -318,7 +318,8 @@ app.patch(
 app.delete(
   '/apps/:appId',
   describeRoute({
-    description: 'Deletes an app and its keys. Refused with a 409 while it has installations, revoked ones included: they carry its history.',
+    description:
+      'Deletes an app and its keys. Refused with a 409 while it has installations, revoked ones included: they carry its history. Its alert rules go with it, each recorded in the audit trail as `alert_rule.deleted` with `cascade: "app.deleted"`; their alerts stay as history, resolved, and keep the app\'s name in `app_name`.',
     tags: ['Apps'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Deleted' }, 404: { description: 'Not found' }, 409: { description: 'The app has installations' }, ...panelErrors },
@@ -331,10 +332,26 @@ app.delete(
     if (before.installation_count > 0) {
       throw new HTTPException(409, { message: `This app has ${before.installation_count} installation(s) and cannot be deleted` })
     }
-    // The app's own alert rules go with it (a cascade); their alerts stay, as history.
-    await retireRuleAlerts(db, await db.select().from(alertRules).where(eq(alertRules.appId, id)), actor.actorEmail)
+    // The app's own alert rules go with it (a cascade); their alerts stay, as history, and keep the
+    // app's name — every alert filed under the app, a contract rule's included.
+    const rules = await db.select({ rule: alertRules, open: openCountSql }).from(alertRules).where(eq(alertRules.appId, id))
+    const ruleViews = rules.map((row) => toRule(row.rule, before.name, Number(row.open)))
+    await snapshotAppName(db, id)
+    await retireRuleAlerts(db, rules.map((row) => row.rule), actor.actorEmail)
     await db.delete(apps).where(eq(apps.id, id))
-    await recordAudit(db, { event: 'app.deleted', resourceType: 'app', resourceId: id, ...actor, metadata: { before } })
+    // Each rule that went with it is deleted as surely as one deleted by hand, and the trail says so,
+    // ahead of the app's own row. Like `recordAudit`, a failed write is logged, not answered.
+    const statements = [
+      ...ruleViews.map((view) =>
+        db.insert(auditLogs).values(auditRow({ event: 'alert_rule.deleted', resourceType: 'alert_rule', resourceId: view.id, ...actor, metadata: { before: view, cascade: 'app.deleted', app_id: id } })),
+      ),
+      db.insert(auditLogs).values(auditRow({ event: 'app.deleted', resourceType: 'app', resourceId: id, ...actor, metadata: { before } })),
+    ]
+    try {
+      await db.batch(statements as [(typeof statements)[number], ...(typeof statements)[number][]])
+    } catch (error) {
+      console.error('failed to write audit log', 'app.deleted', error)
+    }
     return c.json({ code: 200 as const, data: { id, deleted: true } })
   },
 )

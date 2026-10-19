@@ -43,6 +43,13 @@
       "when": 1792375569331,
       "tag": "0005_alert_history_cancel_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792378591332,
+      "tag": "0006_alert_app_name",
+      "breakpoints": true
     }
   ]
 }
