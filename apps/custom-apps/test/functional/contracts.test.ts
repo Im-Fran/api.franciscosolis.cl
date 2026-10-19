@@ -278,8 +278,15 @@ describe('the end of a contract', () => {
     await log(app.id, {})
     expect((await panelJson(`/v1/contracts/${contract.id}`, { method: 'DELETE' })).status).toBe(409)
     const cancelled = await panelJson(`/v1/contracts/${contract.id}/cancel`, { method: 'POST', body: { reason: 'Cliente cerró' } })
-    expect(cancelled.body.data).toMatchObject({ status: 'cancelled', cancelled_by: 'fran@franciscosolis.cl' })
+    expect(cancelled.body.data).toMatchObject({ status: 'cancelled', cancelled_by: 'fran@franciscosolis.cl', cancel_reason: 'Cliente cerró' })
+    expect((await panelJson(`/v1/contracts/${contract.id}`)).body.data.cancel_reason).toBe('Cliente cerró')
+    const audit = await env.DB.prepare("SELECT metadata FROM audit_logs WHERE event = 'contract.cancelled' AND resource_id = ?").bind(contract.id).first<{ metadata: string }>()
+    expect(JSON.parse(audit!.metadata)).toMatchObject({ reason: 'Cliente cerró' })
     expect((await panelJson(`/v1/contracts/${contract.id}`, { method: 'PATCH', body: { name: 'x' } })).status).toBe(409)
+
+    // No reason is a null one.
+    const quiet = await setup()
+    expect((await panelJson(`/v1/contracts/${quiet.contract.id}/cancel`, { method: 'POST' })).body.data).toMatchObject({ status: 'cancelled', cancel_reason: null })
 
     const empty = await setup({ starts_on: addDays(today(), 3) })
     expect((await panelJson(`/v1/contracts/${empty.contract.id}`, { method: 'DELETE' })).status).toBe(200)

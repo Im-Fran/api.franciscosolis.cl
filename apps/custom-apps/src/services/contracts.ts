@@ -261,6 +261,7 @@ const toContract = (
     lapsed_at: iso(row.lapsedAt),
     cancelled_at: iso(row.cancelledAt),
     cancelled_by: row.cancelledBy,
+    cancel_reason: row.cancelReason,
     notes: row.notes,
     apps: extra.apps ?? [],
     current_cycle: extra.currentCycle ?? null,

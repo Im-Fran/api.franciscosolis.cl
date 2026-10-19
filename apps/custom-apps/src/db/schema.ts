@@ -689,10 +689,18 @@ const alertRules = sqliteTable('alert_rules', {
  * One firing of a rule for one subject — an installation, or the app itself — kept for good. At most
  * one unresolved alert exists per rule and subject (a partial unique index), so a condition that holds
  * for an hour is one alert with an `occurrences` count, not twelve.
+ *
+ * Kept for good means it outlives its rule: deleting a rule resolves its unresolved alerts and nulls
+ * `rule_id` on all of them, and `rule_name` / `rule_kind` — copied from the rule when the alert opens
+ * — are what the panel still shows for one whose rule is gone.
  */
 const alerts = sqliteTable('alerts', {
   id: text('id').primaryKey(),
-  ruleId: text('rule_id').notNull().references(() => alertRules.id, { onDelete: 'cascade' }),
+  /** Null once the rule was deleted. */
+  ruleId: text('rule_id').references(() => alertRules.id, { onDelete: 'set null' }),
+  /** The rule's name and kind, snapshotted so the alert still reads right after the rule is deleted. */
+  ruleName: text('rule_name'),
+  ruleKind: text('rule_kind'),
   appId: text('app_id').notNull(),
   installationId: text('installation_id'),
   /** `installation:<id>` or `app:<id>`: what the alert is about, for the uniqueness above. */
@@ -818,6 +826,8 @@ const contracts = sqliteTable('contracts', {
   lapsedAt: integer('lapsed_at', { mode: 'timestamp' }),
   cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
   cancelledBy: text('cancelled_by'),
+  /** Why it was cancelled, as the person cancelling it wrote it. */
+  cancelReason: text('cancel_reason'),
   notes: text('notes'),
   ...authorship,
   ...timestamps,

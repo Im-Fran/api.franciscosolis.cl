@@ -4,7 +4,7 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb, type Database } from '@/db/client'
-import { apps, appKeys, auditLogs, companies, installations } from '@/db/schema'
+import { alertRules, apps, appKeys, auditLogs, companies, installations } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { APP_KINDS, APP_MODULES, APP_STATES, GRACE_MAX_DAYS, INSTALLATION_STATUSES, LOG_LEVELS, PRESENCE_MODES, ROLLUP, TELEMETRY, HEARTBEAT } from '@/lib/config'
 import { randomToken, TOKEN_PREFIXES } from '@/lib/tokens'
@@ -22,6 +22,7 @@ import {
   searchQuery,
 } from '@/lib/validation'
 import { readOptionalJson, validate } from '@/lib/validate'
+import { retireRuleAlerts } from '@/services/alerts'
 import { buildSdk } from '@/services/apps'
 import { auditRow, diff, getActorContext, recordAudit } from '@/services/audit'
 import { appUsage, usageHeatmap } from '@/services/series'
@@ -330,6 +331,8 @@ app.delete(
     if (before.installation_count > 0) {
       throw new HTTPException(409, { message: `This app has ${before.installation_count} installation(s) and cannot be deleted` })
     }
+    // The app's own alert rules go with it (a cascade); their alerts stay, as history.
+    await retireRuleAlerts(db, await db.select().from(alertRules).where(eq(alertRules.appId, id)), actor.actorEmail)
     await db.delete(apps).where(eq(apps.id, id))
     await recordAudit(db, { event: 'app.deleted', resourceType: 'app', resourceId: id, ...actor, metadata: { before } })
     return c.json({ code: 200 as const, data: { id, deleted: true } })
