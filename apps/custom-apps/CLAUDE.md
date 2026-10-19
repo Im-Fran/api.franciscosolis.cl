@@ -237,7 +237,9 @@ the clients' apps and to this internal panel, never to the website.
   are whole again. Mapping that day back to "the period containing it" finds the closed cycle it was
   meant to follow, which is how every read of a renewed contract once spun to
   `CONTRACTS.maxCyclesPerRun`; `syncCycles` now also stops whenever an opened cycle does not end
-  after the latest one. `remaining_minutes` is never negative — what is over is `overage_minutes`.
+  after the latest one. A renewal (or any change of `ends_on`) while that cut cycle is still open does
+  not need a short cycle at all: `followContractEnd` moves the open cycle's end to where its period
+  now ends. `remaining_minutes` is never negative — what is over is `overage_minutes`.
 - **Cancelling keeps the reason on the contract** (`cancel_reason`), as well as in the
   `contract.cancelled` audit row.
 - **A closed cycle is final.** Closing computes the balance once (`closeCycle`): usage is drawn from

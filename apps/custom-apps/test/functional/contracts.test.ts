@@ -196,6 +196,22 @@ describe('cycles', () => {
     expect(count!.n).toBe(11)
   })
 
+  it('stretch a cycle still open when the contract is renewed before its end', async () => {
+    // Weekly from 60 days ago, ending tomorrow: the open cycle (days 56–62) is cut after tomorrow.
+    const { contract } = await setup({ cycle_period: 'weekly', starts_on: addDays(today(), -60), ends_on: addDays(today(), 1), included_minutes: 700 })
+    const before = (await panelJson(`/v1/contracts/${contract.id}`)).body.data.current_cycle
+    expect(before).toMatchObject({ starts_on: addDays(today(), -4), ends_on: addDays(today(), 2), included_minutes: 700 })
+
+    expect((await panelJson(`/v1/contracts/${contract.id}/renew`, { method: 'POST', body: { ends_on: addDays(today(), 60) } })).status).toBe(200)
+    // The same cycle now runs to its anchored boundary: no short cycle after it, no minutes twice.
+    const after = (await panelJson(`/v1/contracts/${contract.id}`)).body.data.current_cycle
+    expect(after).toMatchObject({ id: before.id, starts_on: addDays(today(), -4), ends_on: addDays(today(), 3), included_minutes: 700 })
+    await runContracts(env, startOfZonedDay(addDays(today(), 3)))
+    const cycles = (await panelJson(`/v1/contracts/${contract.id}/cycles`)).body.data
+    expect(cycles[0]).toMatchObject({ status: 'open', starts_on: addDays(today(), 3), ends_on: addDays(today(), 10), included_minutes: 700 })
+    expect(cycles[1]).toMatchObject({ id: before.id, status: 'closed', ends_on: addDays(today(), 3) })
+  })
+
   it('never answer a negative remainder: what is over budget is overage', async () => {
     const { app, contract } = await setup({ included_minutes: 30 })
     await log(app.id, { minutes: 75 })

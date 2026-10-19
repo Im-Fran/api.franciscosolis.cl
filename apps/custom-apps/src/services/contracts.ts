@@ -5,7 +5,7 @@ import { getDb, type Database } from '@/db/client'
 import { apps, auditLogs, companies, companyContacts, contacts, contractApps, contractCycles, contracts, messages, workLogs } from '@/db/schema'
 import type { Env } from '@/env'
 import { CONTRACTS, type Currency, type CyclePeriod, type GraceAllowance } from '@/lib/config'
-import { addDays, addMonths, carriedMinutes, closeCycle, cycleOpeningOn, daysBetween, overageAmount, type CarriedBucket, type RolloverPolicy } from '@/lib/hours'
+import { addDays, addMonths, carriedMinutes, closeCycle, cycleContaining, cycleOpeningOn, daysBetween, overageAmount, type CarriedBucket, type RolloverPolicy } from '@/lib/hours'
 import { iso, parseJsonArray } from '@/lib/json'
 import { startOfZonedDay, zonedDay } from '@/lib/time'
 import { auditRow } from '@/services/audit'
@@ -144,6 +144,22 @@ const closeOpenCycle = async (db: Database, contract: ContractRow, cycle: CycleR
  * that contains `day`, carrying over what the policy allows. Idempotent and safe to race: inserts
  * are keyed on the cycle's start and closes on its status.
  */
+/**
+ * Keeps an open cycle's end in step with the contract's. The last cycle is cut at `ends_on`, so a
+ * contract renewed (or extended, or shortened) while that cycle is still open moves its end to where
+ * the period now ends: the next boundary, or the new last day. A closed cycle is final and never moves.
+ */
+const followContractEnd = async (db: Database, contract: ContractRow, cycle: CycleRow, lastDay: string | null) => {
+  const natural = cycleContaining(contract.cyclePeriod as CyclePeriod, contract.startsOn, cycle.startsOn, lastDay)
+  if (!natural || natural.endsOn === cycle.endsOn || natural.endsOn <= cycle.startsOn) return cycle
+  const [moved] = await db
+    .update(contractCycles)
+    .set({ endsOn: natural.endsOn, updatedAt: new Date() })
+    .where(and(eq(contractCycles.id, cycle.id), eq(contractCycles.status, 'open')))
+    .returning()
+  return moved ?? cycle
+}
+
 const syncCycles = async (db: Database, contract: ContractRow, day: string, actor: string | null = null, now: Date = new Date()) => {
   const [latestRow] = await db.select().from(contractCycles).where(eq(contractCycles.contractId, contract.id)).orderBy(desc(contractCycles.startsOn)).limit(1)
   let latest: CycleRow | null = latestRow ?? null
@@ -156,6 +172,7 @@ const syncCycles = async (db: Database, contract: ContractRow, day: string, acto
       continue
     }
     if (latest.status === 'open') {
+      latest = await followContractEnd(db, contract, latest, lastDay)
       if (latest.endsOn > day) return latest
       latest = await closeOpenCycle(db, contract, latest, actor, now)
     }
