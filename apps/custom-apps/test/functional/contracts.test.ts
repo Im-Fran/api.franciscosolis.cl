@@ -7,6 +7,7 @@ import { runContracts, todayIn } from '@/services/contracts'
 import { runScheduled } from '@/services/maintenance'
 import { createApp, createCompany, enrollDevice, ingest, ingestJson, panel, panelJson, type Json } from '../helpers/api'
 import { failEmail, sentEmails } from '../helpers/email'
+import { countQueries } from '../helpers/queries'
 
 /** A valid RUT for any body, so each test can have companies of its own. */
 const rut = (body: number) => {
@@ -222,6 +223,59 @@ describe('cycles', () => {
   it('cannot be closed by hand while still running', async () => {
     const { contract } = await setup()
     expect((await panelJson(`/v1/cycles/${contract.current_cycle.id}/close`, { method: 'POST' })).status).toBe(409)
+  })
+
+  it('are brought up to date by a list read, for every contract that needs it', async () => {
+    const owner = await company()
+    const create = async (name: string, body: Json = {}) => {
+      const created = await panelJson('/v1/contracts', { method: 'POST', body: { company_id: owner.id, name, starts_on: addDays(today(), -40), included_minutes: 600, ...body } })
+      expect(created.status).toBe(201)
+      return created.body.data as Json
+    }
+    const cyclesOf = async (contractId: string) =>
+      (await env.DB.prepare('SELECT id, starts_on, ends_on, status FROM contract_cycles WHERE contract_id = ? ORDER BY starts_on DESC').bind(contractId).all<Json>()).results
+    // Every contract starts out current: a closed first month and an open second one.
+    const expired = await create('Vencido')
+    const missing = await create('Sin ciclos')
+    const stretched = await create('Recortado')
+    const untouched = await create('Al día')
+    const [current, previous] = await cyclesOf(expired.id)
+
+    // As if nobody had read them since the second month began: the first month is still open…
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM contract_cycles WHERE id = ?').bind(current!.id),
+      env.DB.prepare("UPDATE contract_cycles SET status = 'open', used_minutes = NULL, overage_minutes = NULL, expired_minutes = NULL, closed_at = NULL WHERE id = ?").bind(previous!.id),
+      // …this one has no cycle at all…
+      env.DB.prepare('DELETE FROM contract_cycles WHERE contract_id = ?').bind(missing.id),
+      // …and this one's open cycle is still cut at an end the contract no longer has.
+      env.DB.prepare('UPDATE contract_cycles SET ends_on = ? WHERE id = ?').bind(addDays(today(), 1), stretched.current_cycle.id),
+    ])
+
+    const listed = await panelJson(`/v1/contracts?company_id=${owner.id}`)
+    expect(listed.status).toBe(200)
+    const byId = new Map((listed.body.data as Json[]).map((contract) => [contract.id, contract]))
+    expect(byId.get(expired.id)!.current_cycle).toMatchObject({ status: 'open', starts_on: current!.starts_on, ends_on: current!.ends_on })
+    expect(await cyclesOf(expired.id)).toEqual([expect.objectContaining({ starts_on: current!.starts_on, status: 'open' }), expect.objectContaining({ id: previous!.id, status: 'closed' })])
+    const closedAudit = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_logs WHERE event = 'cycle.closed' AND resource_id = ? AND metadata LIKE ?").bind(expired.id, `%${previous!.id}%`).first<{ n: number }>()
+    expect(closedAudit!.n).toBe(2)
+
+    expect(byId.get(missing.id)!.current_cycle).toMatchObject({ status: 'open', starts_on: current!.starts_on })
+    expect((await cyclesOf(missing.id)).map((cycle) => cycle.status)).toEqual(['open', 'closed'])
+
+    expect(byId.get(stretched.id)!.current_cycle).toMatchObject({ id: stretched.current_cycle.id, ends_on: stretched.current_cycle.ends_on })
+    expect(byId.get(untouched.id)!.current_cycle).toMatchObject({ id: untouched.current_cycle.id, status: 'open', ends_on: untouched.current_cycle.ends_on })
+  })
+
+  it('cost a list read the same number of statements however many contracts are listed', async () => {
+    const owner = await company()
+    const create = (name: string) => panelJson('/v1/contracts', { method: 'POST', body: { company_id: owner.id, name, starts_on: addDays(today(), -40), included_minutes: 600 } })
+    await create('Uno')
+    const one = await countQueries(() => panelJson(`/v1/contracts?company_id=${owner.id}`))
+    for (const name of ['Dos', 'Tres', 'Cuatro', 'Cinco', 'Seis', 'Siete']) await create(name)
+    const seven = await countQueries(() => panelJson(`/v1/contracts?company_id=${owner.id}`))
+    expect(seven.result.body.data).toHaveLength(7)
+    expect(seven.result.body.data.every((contract: Json) => contract.current_cycle?.status === 'open')).toBe(true)
+    expect(seven.statements).toBe(one.statements)
   })
 })
 
