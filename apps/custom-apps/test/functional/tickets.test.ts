@@ -96,7 +96,12 @@ describe('support tickets', () => {
     for (let i = 0; i < 5; i += 1) numbers.push((await open(app.id, device.access_token, { include_diagnostics: false })).body.data.number)
     expect(numbers).toEqual([...numbers].sort((a, b) => a - b))
     expect(new Set(numbers).size).toBe(5)
-    expect((await open(app.id, device.access_token)).status).toBe(429)
+    const limited = await open(app.id, device.access_token)
+    expect(limited.status).toBe(429)
+    // Not a flat minute: the seconds until the oldest of the five leaves the hour, just under 3600.
+    const retryAfter = Number(limited.response.headers.get('Retry-After'))
+    expect(retryAfter).toBeGreaterThan(3500)
+    expect(retryAfter).toBeLessThanOrEqual(3600)
 
     const bare = await createApp({ company_id: app.company_id, modules: ['metrics'] })
     const other = await enrollDevice(bare.id, bare.key.key)
@@ -118,6 +123,9 @@ describe('support tickets', () => {
     const detail = (await panelJson(`/v1/tickets/${ticket.id}`)).body.data
     expect(detail).toMatchObject({ logged_minutes: 45 })
     expect(detail.work_logs).toEqual([expect.objectContaining({ minutes: 45, description: 'Diagnóstico remoto' })])
+    // The same shape the work log routes answer.
+    expect(detail.work_logs[0]).toMatchObject({ id: logged.body.data.id, ticket_id: ticket.id, ticket_number: ticket.number, app_id: app.id, app_name: app.name, editable: true, company_id: app.company_id })
+    expect(detail.work_logs[0].company_name).toEqual(expect.any(String))
 
     const otherCompany = (await panelJson('/v1/companies', { method: 'POST', body: { legal_name: 'Otra SpA', is_company: true } })).body.data
     const foreign = await createApp({ company_id: otherCompany.id })

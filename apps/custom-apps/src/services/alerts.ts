@@ -294,6 +294,8 @@ const reconcile = async (env: Env, db: Database, rule: RuleRow, findings: Findin
       .values({
         id: crypto.randomUUID(),
         ruleId: rule.id,
+        ruleName: rule.name,
+        ruleKind: rule.kind,
         appId: finding.appId,
         installationId: finding.installationId,
         subject: finding.subject,
@@ -348,7 +350,10 @@ const evaluateAlerts = async (env: Env, now: Date = new Date()) => {
   return totals
 }
 
-/** Alerts as the panel lists them, with their rule's name and kind, and their app's name. */
+/**
+ * Alerts as the panel lists them, with their rule's name and kind, and their app's name. The rule is
+ * a left join: an alert outlives its rule, and then its own snapshot of the rule is what is shown.
+ */
 const alertSelection = {
   alert: alerts,
   ruleName: alertRules.name,
@@ -358,13 +363,18 @@ const alertSelection = {
   installationAlias: installations.alias,
 }
 
-type AlertSelection = { alert: AlertRow; ruleName: string; ruleKind: string; threshold: number; appName: string | null; installationAlias: string | null }
+type AlertSelection = { alert: AlertRow; ruleName: string | null; ruleKind: string | null; threshold: number | null; appName: string | null; installationAlias: string | null }
 
+/**
+ * An alert whose rule was deleted keeps rendering: `rule_id` and `threshold` are null,
+ * `rule_deleted` is true, and `rule_name` / `kind` come from the snapshot taken when it opened.
+ */
 const toAlert = (row: AlertSelection) => ({
   id: row.alert.id,
   rule_id: row.alert.ruleId,
-  rule_name: row.ruleName,
-  kind: row.ruleKind,
+  rule_name: row.ruleName ?? row.alert.ruleName,
+  kind: row.ruleKind ?? row.alert.ruleKind,
+  rule_deleted: row.alert.ruleId === null,
   app_id: row.alert.appId,
   app_name: row.appName,
   installation_id: row.alert.installationId,
@@ -402,11 +412,28 @@ const toRule = (row: RuleRow, appName: string | null, openAlerts = 0) => ({
   updated_by: row.updatedBy,
 })
 
+/**
+ * What deleting rules does to their alerts, run before the delete: the snapshot is set to the
+ * rules' last name and kind, and the unresolved ones are resolved by `actor` — nothing would ever
+ * reconcile them again. The delete itself then nulls `rule_id` (ON DELETE SET NULL); the alerts
+ * stay, as history.
+ */
+const retireRuleAlerts = async (db: Database, rules: Pick<RuleRow, 'id' | 'name' | 'kind'>[], actor: string | null, now: Date = new Date()) => {
+  if (rules.length === 0) return
+  await db.batch([
+    db
+      .update(alerts)
+      .set({ status: 'resolved', resolvedAt: now, resolvedBy: actor })
+      .where(and(inArray(alerts.ruleId, rules.map((rule) => rule.id)), ne(alerts.status, 'resolved'))),
+    ...rules.map((rule) => db.update(alerts).set({ ruleName: rule.name, ruleKind: rule.kind }).where(eq(alerts.ruleId, rule.id))),
+  ])
+}
+
 /** Open and acknowledged alerts, for the overview. */
 const unresolvedCount = async (db: Database) => {
   const [row] = await db.select({ count: sql<number>`COUNT(*)` }).from(alerts).where(inArray(alerts.status, ['open', 'acknowledged']))
   return Number(row?.count ?? 0)
 }
 
-export { alertSelection, detect, evaluateAlerts, toAlert, toRule, unresolvedCount }
+export { alertSelection, detect, evaluateAlerts, retireRuleAlerts, toAlert, toRule, unresolvedCount }
 export type { AlertRow, AlertSelection, Finding, RuleRow }

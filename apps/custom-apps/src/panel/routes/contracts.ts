@@ -399,7 +399,7 @@ app.post(
   '/contracts/:contractId/cancel',
   describeRoute({
     description:
-      'Cancels a contract from today: no new cycles start, nothing more is sent about it, and its apps are left as they are — use the kill switch to suspend them. The cycle running today closes at its normal end.',
+      'Cancels a contract from today: no new cycles start, nothing more is sent about it, and its apps are left as they are — use the kill switch to suspend them. The cycle running today closes at its normal end. `reason`, when sent, is kept on the contract as `cancel_reason`.',
     tags: ['Contracts'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Cancelled', content: jsonContent(dataSchema(looseSchema)) }, 404: { description: 'Not found' }, 409: { description: 'Already cancelled' }, ...panelErrors },
@@ -413,7 +413,7 @@ app.post(
     if (before.cancelledAt) throw new HTTPException(409, { message: 'This contract is already cancelled' })
     const now = new Date()
     await db.batch([
-      db.update(contracts).set({ cancelledAt: now, cancelledBy: actor.actorEmail, updatedAt: now, updatedBy: actor.actorEmail }).where(eq(contracts.id, id)),
+      db.update(contracts).set({ cancelledAt: now, cancelledBy: actor.actorEmail, cancelReason: reason ?? null, updatedAt: now, updatedBy: actor.actorEmail }).where(eq(contracts.id, id)),
       db.insert(auditLogs).values(
         auditRow({ event: 'contract.cancelled', resourceType: 'contract', resourceId: id, ...actor, metadata: { reason: reason ?? null } }),
       ),

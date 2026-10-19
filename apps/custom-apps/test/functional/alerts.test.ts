@@ -85,6 +85,48 @@ describe('an offline installation', () => {
     expect(alert.notified_at).toBeNull()
   })
 
+  it('outlive their rule: deleting it resolves them and keeps them as history', async () => {
+    const created = await createApp()
+    const device = await enrollDevice(created.id, created.key.key)
+    const offline = await rule({ name: 'Kiosk down', kind: 'installation_offline', threshold: 10, app_id: created.id })
+    await setLastSeen(device.installation_id, 15 * 60)
+    expect(await evaluateAlerts(env)).toMatchObject({ opened: 1 })
+    const [alert] = (await panelJson(`/v1/alerts?app_id=${created.id}`)).body.data
+    expect(alert).toMatchObject({ rule_id: offline.id, rule_name: 'Kiosk down', kind: 'installation_offline', threshold: 10, rule_deleted: false })
+    // The rule's current name is shown while it exists, whatever the alert opened under.
+    await panel(`/v1/alert-rules/${offline.id}`, { method: 'PATCH', body: { name: 'Kiosk offline' } })
+    expect((await panelJson(`/v1/alerts/${alert.id}`)).body.data.rule_name).toBe('Kiosk offline')
+
+    expect((await panelJson(`/v1/alert-rules/${offline.id}`, { method: 'DELETE' })).status).toBe(200)
+    const kept = { id: alert.id, rule_id: null, rule_deleted: true, rule_name: 'Kiosk offline', kind: 'installation_offline', threshold: null, status: 'resolved', resolved_by: 'fran@franciscosolis.cl' }
+    const listed = await panelJson(`/v1/alerts?app_id=${created.id}`)
+    expect(listed.body.data).toEqual([expect.objectContaining(kept)])
+    expect(listed.body.pagination.total).toBe(1)
+    expect((await panelJson(`/v1/alerts/${alert.id}`)).body.data).toMatchObject(kept)
+    expect((await panelJson(`/v1/alerts?app_id=${created.id}&status=unresolved`)).body.pagination.total).toBe(0)
+    expect((await panelJson(`/v1/alerts/${alert.id}/ack`, { method: 'POST' })).status).toBe(409)
+
+    // The next run neither fails on them nor raises them again; a new rule starts its own.
+    expect(await evaluateAlerts(env)).toMatchObject({ rules: 0, opened: 0, failed: 0 })
+    expect((await panelJson(`/v1/alerts?app_id=${created.id}`)).body.pagination.total).toBe(1)
+    const again = await rule({ name: 'Kiosk down', kind: 'installation_offline', threshold: 10, app_id: created.id })
+    expect(await evaluateAlerts(env)).toMatchObject({ opened: 1, reopened: 0, failed: 0 })
+    const current = (await panelJson(`/v1/alerts?app_id=${created.id}&status=unresolved`)).body.data
+    expect(current).toEqual([expect.objectContaining({ rule_id: again.id, rule_deleted: false, status: 'open' })])
+  })
+
+  it('outlive an app deleted with its rules', async () => {
+    const created = await createApp()
+    const scoped = await rule({ name: 'Enrollments', kind: 'enrollment_spike', threshold: 5, app_id: created.id })
+    // An app with no installations can still have an alert about the app itself.
+    const id = crypto.randomUUID()
+    await env.DB.prepare("INSERT INTO alerts (id, rule_id, rule_name, rule_kind, app_id, subject, status, opened_at, last_triggered_at) VALUES (?, ?, 'Enrollments', 'enrollment_spike', ?, ?, 'open', ?, ?)")
+      .bind(id, scoped.id, created.id, `app:${created.id}`, minutesAgo(10), minutesAgo(5))
+      .run()
+    expect((await panel(`/v1/apps/${created.id}`, { method: 'DELETE' })).status).toBe(200)
+    expect((await panelJson(`/v1/alerts/${id}`)).body.data).toMatchObject({ rule_id: null, rule_deleted: true, rule_name: 'Enrollments', kind: 'enrollment_spike', status: 'resolved', app_name: null })
+  })
+
   it('can be acknowledged and resolved by hand', async () => {
     const created = await createApp()
     const device = await enrollDevice(created.id, created.key.key)

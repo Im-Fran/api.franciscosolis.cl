@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, addMonths, closeCycle, cycleContaining, daysBetween, overageAmount } from '@/lib/hours'
+import { addDays, addMonths, closeCycle, cycleContaining, cycleOpeningOn, daysBetween, overageAmount } from '@/lib/hours'
 
 describe('calendar arithmetic', () => {
   it('moves days and months, clamping to the end of a short month from the anchor', () => {
@@ -24,6 +24,36 @@ describe('calendar arithmetic', () => {
     expect(cycleContaining('monthly', '2026-01-15', '2026-03-20', '2026-03-31')).toEqual({ startsOn: '2026-03-15', endsOn: '2026-04-01' })
     expect(cycleContaining('monthly', '2026-01-15', '2026-01-14')).toBeNull()
     expect(cycleContaining('monthly', '2026-01-15', '2026-04-01', '2026-03-31')).toBeNull()
+  })
+})
+
+describe('the cycle opening on a day', () => {
+  it('is the whole period, with every included minute, when the day is a boundary', () => {
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-10-08', 600)).toEqual({ startsOn: '2026-10-08', endsOn: '2026-10-15', includedMinutes: 600 })
+    expect(cycleOpeningOn('monthly', '2026-01-31', '2026-02-28', 600)).toEqual({ startsOn: '2026-02-28', endsOn: '2026-03-31', includedMinutes: 600 })
+    expect(cycleOpeningOn('monthly', '2026-01-15', '2026-01-15', 600)).toEqual({ startsOn: '2026-01-15', endsOn: '2026-02-15', includedMinutes: 600 })
+  })
+
+  it('runs to the next boundary from mid-period, with the minutes prorated by days', () => {
+    // A renewal after a contract ended mid-week: 4 of 7 days, 600 × 4/7 = 342.86.
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-10-11', 600)).toEqual({ startsOn: '2026-10-11', endsOn: '2026-10-15', includedMinutes: 343 })
+    // Rounded to the nearest whole minute, both ways: 100 × 4/7 = 57.14, 100 × 3/7 = 42.86.
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-10-11', 100)?.includedMinutes).toBe(57)
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-10-12', 100)?.includedMinutes).toBe(43)
+    // 26 of March 15 – April 15's 31 days: 600 × 26/31 = 503.23.
+    expect(cycleOpeningOn('monthly', '2026-01-15', '2026-03-20', 600)).toEqual({ startsOn: '2026-03-20', endsOn: '2026-04-15', includedMinutes: 503 })
+    // A short month is its own period: 10 of February's 28 days from an anchor on the 1st.
+    expect(cycleOpeningOn('monthly', '2026-01-01', '2026-02-19', 280)).toEqual({ startsOn: '2026-02-19', endsOn: '2026-03-01', includedMinutes: 100 })
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-10-11', 0)?.includedMinutes).toBe(0)
+  })
+
+  it('is still cut at the end of the contract, prorated against the full period', () => {
+    // 2 of 7 days: opened mid-week and the contract ends the day after.
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-10-11', 700, '2026-10-12')).toEqual({ startsOn: '2026-10-11', endsOn: '2026-10-13', includedMinutes: 200 })
+    // A boundary cut short keeps the whole period's minutes, as the first cycle of a short contract always has.
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-10-08', 700, '2026-10-09')).toEqual({ startsOn: '2026-10-08', endsOn: '2026-10-10', includedMinutes: 700 })
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-10-13', 700, '2026-10-12')).toBeNull()
+    expect(cycleOpeningOn('weekly', '2026-10-01', '2026-09-30', 700)).toBeNull()
   })
 })
 

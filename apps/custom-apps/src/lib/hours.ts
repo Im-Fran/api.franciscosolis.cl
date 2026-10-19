@@ -69,6 +69,22 @@ const cycleContaining = (period: CyclePeriod, anchor: string, day: string, contr
 }
 
 /**
+ * The cycle that opens on `from`. Normally `from` is a period boundary and this is the whole
+ * period. It is not when a contract that ended mid-period is renewed: its last cycle was cut short
+ * at the old end, so the next one opens mid-period. That cycle runs to the next boundary, so the
+ * anchor still holds, and gets the share of `includedMinutes` its days are of the full period's
+ * (rounded to whole minutes), so a few days never hand out a whole period's minutes.
+ */
+const cycleOpeningOn = (period: CyclePeriod, anchor: string, from: string, includedMinutes: number, contractEnd: string | null = null) => {
+  const bounds = cycleContaining(period, anchor, from, contractEnd)
+  if (!bounds) return null
+  if (bounds.startsOn === from) return { ...bounds, includedMinutes }
+  const full = cycleContaining(period, anchor, from) as { startsOn: string; endsOn: string }
+  const share = daysBetween(from, bounds.endsOn) / daysBetween(full.startsOn, full.endsOn)
+  return { startsOn: from, endsOn: bounds.endsOn, includedMinutes: Math.round(includedMinutes * share) }
+}
+
+/**
  * Hours carried from earlier cycles, one bucket per cycle they came from. Kept apart rather than as
  * one sum because they age separately: a contract that lets hours accumulate for three cycles has to
  * know which of them are on their third.
@@ -157,5 +173,5 @@ const overageAmount = (minutes: number, ratePerHour: number, currency: Currency)
   return Math.round((minutes / 60) * ratePerHour * factor) / factor
 }
 
-export { addDays, addMonths, closeCycle, cycleContaining, cycleStart, daysBetween, overageAmount, sum as carriedMinutes }
+export { addDays, addMonths, closeCycle, cycleContaining, cycleOpeningOn, cycleStart, daysBetween, overageAmount, sum as carriedMinutes }
 export type { CarriedBucket, CycleBalance, RolloverPolicy }

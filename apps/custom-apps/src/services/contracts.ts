@@ -5,7 +5,7 @@ import { getDb, type Database } from '@/db/client'
 import { apps, auditLogs, companies, companyContacts, contacts, contractApps, contractCycles, contracts, messages, workLogs } from '@/db/schema'
 import type { Env } from '@/env'
 import { CONTRACTS, type Currency, type CyclePeriod, type GraceAllowance } from '@/lib/config'
-import { addDays, addMonths, carriedMinutes, closeCycle, cycleContaining, daysBetween, overageAmount, type CarriedBucket, type RolloverPolicy } from '@/lib/hours'
+import { addDays, addMonths, carriedMinutes, closeCycle, cycleContaining, cycleOpeningOn, daysBetween, overageAmount, type CarriedBucket, type RolloverPolicy } from '@/lib/hours'
 import { iso, parseJsonArray } from '@/lib/json'
 import { startOfZonedDay, zonedDay } from '@/lib/time'
 import { auditRow } from '@/services/audit'
@@ -88,7 +88,7 @@ const lastDayOf = (contract: ContractRow) => {
 }
 
 const openCycle = async (db: Database, contract: ContractRow, startsOn: string, carried: CarriedBucket[]) => {
-  const bounds = cycleContaining(contract.cyclePeriod as CyclePeriod, contract.startsOn, startsOn, lastDayOf(contract))
+  const bounds = cycleOpeningOn(contract.cyclePeriod as CyclePeriod, contract.startsOn, startsOn, contract.includedMinutes, lastDayOf(contract))
   if (!bounds) return null
   await db
     .insert(contractCycles)
@@ -97,7 +97,7 @@ const openCycle = async (db: Database, contract: ContractRow, startsOn: string, 
       contractId: contract.id,
       startsOn: bounds.startsOn,
       endsOn: bounds.endsOn,
-      includedMinutes: contract.includedMinutes,
+      includedMinutes: bounds.includedMinutes,
       carried: JSON.stringify(carried),
       carriedMinutes: carriedMinutes(carried),
     })
@@ -144,6 +144,22 @@ const closeOpenCycle = async (db: Database, contract: ContractRow, cycle: CycleR
  * that contains `day`, carrying over what the policy allows. Idempotent and safe to race: inserts
  * are keyed on the cycle's start and closes on its status.
  */
+/**
+ * Keeps an open cycle's end in step with the contract's. The last cycle is cut at `ends_on`, so a
+ * contract renewed (or extended, or shortened) while that cycle is still open moves its end to where
+ * the period now ends: the next boundary, or the new last day. A closed cycle is final and never moves.
+ */
+const followContractEnd = async (db: Database, contract: ContractRow, cycle: CycleRow, lastDay: string | null) => {
+  const natural = cycleContaining(contract.cyclePeriod as CyclePeriod, contract.startsOn, cycle.startsOn, lastDay)
+  if (!natural || natural.endsOn === cycle.endsOn || natural.endsOn <= cycle.startsOn) return cycle
+  const [moved] = await db
+    .update(contractCycles)
+    .set({ endsOn: natural.endsOn, updatedAt: new Date() })
+    .where(and(eq(contractCycles.id, cycle.id), eq(contractCycles.status, 'open')))
+    .returning()
+  return moved ?? cycle
+}
+
 const syncCycles = async (db: Database, contract: ContractRow, day: string, actor: string | null = null, now: Date = new Date()) => {
   const [latestRow] = await db.select().from(contractCycles).where(eq(contractCycles.contractId, contract.id)).orderBy(desc(contractCycles.startsOn)).limit(1)
   let latest: CycleRow | null = latestRow ?? null
@@ -156,13 +172,16 @@ const syncCycles = async (db: Database, contract: ContractRow, day: string, acto
       continue
     }
     if (latest.status === 'open') {
+      latest = await followContractEnd(db, contract, latest, lastDay)
       if (latest.endsOn > day) return latest
       latest = await closeOpenCycle(db, contract, latest, actor, now)
     }
     const nextStart = latest.endsOn
     if (nextStart > day || (lastDay && nextStart > lastDay)) return latest
     const next = await openCycle(db, contract, nextStart, carriedAfter(latest, contract))
-    if (!next) return latest
+    // A cycle that does not move past the latest one would loop until the step limit, querying D1
+    // on every turn; stop instead and leave the calendar where it is.
+    if (!next || next.endsOn <= latest.endsOn) return latest
     latest = next
   }
   return latest
@@ -175,7 +194,7 @@ const cycleBalance = (cycle: CycleRow, used: number) => {
   return {
     available_minutes: available,
     used_minutes: usedMinutes,
-    remaining_minutes: available - usedMinutes,
+    remaining_minutes: Math.max(0, available - usedMinutes),
     overage_minutes: cycle.status === 'open' ? Math.max(0, usedMinutes - available) : (cycle.overageMinutes ?? 0),
   }
 }
@@ -259,6 +278,7 @@ const toContract = (
     lapsed_at: iso(row.lapsedAt),
     cancelled_at: iso(row.cancelledAt),
     cancelled_by: row.cancelledBy,
+    cancel_reason: row.cancelReason,
     notes: row.notes,
     apps: extra.apps ?? [],
     current_cycle: extra.currentCycle ?? null,

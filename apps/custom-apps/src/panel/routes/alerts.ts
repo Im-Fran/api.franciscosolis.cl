@@ -9,7 +9,7 @@ import type { AppEnv } from '@/env'
 import { ALERT_KINDS, ALERT_STATUSES, ALERTS, type AlertKind } from '@/lib/config'
 import { dateInput, paginationQuery, requiredText } from '@/lib/validation'
 import { readOptionalJson, validate } from '@/lib/validate'
-import { alertSelection, toAlert, toRule, type RuleRow } from '@/services/alerts'
+import { alertSelection, retireRuleAlerts, toAlert, toRule, type RuleRow } from '@/services/alerts'
 import { diff, getActorContext, recordAudit } from '@/services/audit'
 import { assertId, dataSchema, jsonContent, listSchema, notFound, page, panelErrors } from '@/panel/shared'
 
@@ -179,7 +179,8 @@ app.patch(
 app.delete(
   '/alert-rules/:ruleId',
   describeRoute({
-    description: 'Deletes a rule and every alert it raised. To stop it while keeping its history, disable it instead.',
+    description:
+      'Deletes a rule; its alerts are kept as history, the unresolved ones resolved. They keep the rule\'s name and kind and answer `rule_id: null`, `rule_deleted: true`. To stop a rule for a while, disable it instead.',
     tags: ['Alerts'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Deleted' }, 404: { description: 'Not found' }, ...panelErrors },
@@ -188,7 +189,9 @@ app.delete(
     const id = assertId(c.req.param('ruleId'), 'Alert rule')
     const actor = getActorContext(c)
     const db = getDb(c.env)
-    const before = ruleView(await loadRule(db, id))
+    const row = await loadRule(db, id)
+    const before = ruleView(row)
+    await retireRuleAlerts(db, [row.rule], actor.actorEmail)
     await db.delete(alertRules).where(eq(alertRules.id, id))
     await recordAudit(db, { event: 'alert_rule.deleted', resourceType: 'alert_rule', resourceId: id, ...actor, metadata: { before } })
     return c.json({ code: 200 as const, data: { id, deleted: true } })
@@ -201,7 +204,7 @@ const selectAlerts = (db: Database) =>
   db
     .select(alertSelection)
     .from(alerts)
-    .innerJoin(alertRules, eq(alertRules.id, alerts.ruleId))
+    .leftJoin(alertRules, eq(alertRules.id, alerts.ruleId))
     .leftJoin(apps, eq(apps.id, alerts.appId))
     .leftJoin(installations, eq(installations.id, alerts.installationId))
 
