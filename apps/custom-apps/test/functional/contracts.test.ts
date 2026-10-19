@@ -153,6 +153,56 @@ describe('cycles', () => {
     expect(audit!.n).toBeGreaterThanOrEqual(2)
   })
 
+  it('open a short, prorated cycle after a renewal of a contract that ended mid-cycle', async () => {
+    // Weekly from 60 days ago, ended yesterday: the ninth cycle (days 56–62) was cut at the end, today.
+    const { app, contract } = await setup({ cycle_period: 'weekly', starts_on: addDays(today(), -60), ends_on: addDays(today(), -1), included_minutes: 700, grace_days: 5 })
+    await runScheduled(env, new Date())
+    let cycles = (await panelJson(`/v1/contracts/${contract.id}/cycles`)).body.data
+    expect(cycles).toHaveLength(9)
+    expect(cycles.every((cycle: Json) => cycle.status === 'closed')).toBe(true)
+    expect(cycles[0]).toMatchObject({ starts_on: addDays(today(), -4), ends_on: today() })
+    expect((await panelJson(`/v1/contracts/${contract.id}`)).body.data).toMatchObject({ status: 'grace', current_cycle: null })
+
+    // Renewing used to send the cycle sync round in circles: the next cycle mapped back onto the
+    // closed one it was meant to follow, until the step limit, on every read.
+    expect((await panelJson(`/v1/contracts/${contract.id}/renew`, { method: 'POST', body: { ends_on: addDays(today(), 60) } })).status).toBe(200)
+    const started = Date.now()
+    const shown = await panelJson(`/v1/contracts/${contract.id}`)
+    const listed = await panelJson(`/v1/contracts?company_id=${contract.company_id}`)
+    const listedCycles = await panelJson(`/v1/contracts/${contract.id}/cycles`)
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect([shown.status, listed.status, listedCycles.status]).toEqual([200, 200, 200])
+
+    // From the old end + 1 (today) to the next anchored boundary (day 63), 3 of 7 days' minutes.
+    const short = { status: 'open', starts_on: today(), ends_on: addDays(today(), 3), included_minutes: 300 }
+    expect(shown.body.data).toMatchObject({ status: 'active', current_cycle: short })
+    expect(listed.body.data).toEqual([expect.objectContaining({ id: contract.id, current_cycle: expect.objectContaining(short) })])
+    expect(listedCycles.body.data).toHaveLength(10)
+    expect(listedCycles.body.data[0]).toMatchObject(short)
+
+    // Work done today is filed into the short cycle; yesterday is still the closed one.
+    const logged = await log(app.id, { minutes: 30 })
+    expect(logged.body.data).toMatchObject({ contract_id: contract.id, cycle_id: shown.body.data.current_cycle.id })
+    expect((await log(app.id, { occurred_on: addDays(today(), -1) })).status).toBe(409)
+
+    // The cycles after it are whole weeks again, with every included minute.
+    await runContracts(env, startOfZonedDay(addDays(today(), 4)))
+    cycles = (await panelJson(`/v1/contracts/${contract.id}/cycles`)).body.data
+    expect(cycles).toHaveLength(11)
+    expect(cycles[0]).toMatchObject({ status: 'open', starts_on: addDays(today(), 3), ends_on: addDays(today(), 10), included_minutes: 700 })
+    expect(cycles[1]).toMatchObject({ status: 'closed', starts_on: today(), used_minutes: 30 })
+    // Nothing else was opened along the way.
+    const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM contract_cycles WHERE contract_id = ?').bind(contract.id).first<{ n: number }>()
+    expect(count!.n).toBe(11)
+  })
+
+  it('never answer a negative remainder: what is over budget is overage', async () => {
+    const { app, contract } = await setup({ included_minutes: 30 })
+    await log(app.id, { minutes: 75 })
+    const cycle = (await panelJson(`/v1/contracts/${contract.id}`)).body.data.current_cycle
+    expect(cycle).toMatchObject({ available_minutes: 30, used_minutes: 75, remaining_minutes: 0, overage_minutes: 45 })
+  })
+
   it('cannot be closed by hand while still running', async () => {
     const { contract } = await setup()
     expect((await panelJson(`/v1/cycles/${contract.current_cycle.id}/close`, { method: 'POST' })).status).toBe(409)

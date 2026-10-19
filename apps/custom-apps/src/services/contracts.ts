@@ -5,7 +5,7 @@ import { getDb, type Database } from '@/db/client'
 import { apps, auditLogs, companies, companyContacts, contacts, contractApps, contractCycles, contracts, messages, workLogs } from '@/db/schema'
 import type { Env } from '@/env'
 import { CONTRACTS, type Currency, type CyclePeriod, type GraceAllowance } from '@/lib/config'
-import { addDays, addMonths, carriedMinutes, closeCycle, cycleContaining, daysBetween, overageAmount, type CarriedBucket, type RolloverPolicy } from '@/lib/hours'
+import { addDays, addMonths, carriedMinutes, closeCycle, cycleOpeningOn, daysBetween, overageAmount, type CarriedBucket, type RolloverPolicy } from '@/lib/hours'
 import { iso, parseJsonArray } from '@/lib/json'
 import { startOfZonedDay, zonedDay } from '@/lib/time'
 import { auditRow } from '@/services/audit'
@@ -88,7 +88,7 @@ const lastDayOf = (contract: ContractRow) => {
 }
 
 const openCycle = async (db: Database, contract: ContractRow, startsOn: string, carried: CarriedBucket[]) => {
-  const bounds = cycleContaining(contract.cyclePeriod as CyclePeriod, contract.startsOn, startsOn, lastDayOf(contract))
+  const bounds = cycleOpeningOn(contract.cyclePeriod as CyclePeriod, contract.startsOn, startsOn, contract.includedMinutes, lastDayOf(contract))
   if (!bounds) return null
   await db
     .insert(contractCycles)
@@ -97,7 +97,7 @@ const openCycle = async (db: Database, contract: ContractRow, startsOn: string, 
       contractId: contract.id,
       startsOn: bounds.startsOn,
       endsOn: bounds.endsOn,
-      includedMinutes: contract.includedMinutes,
+      includedMinutes: bounds.includedMinutes,
       carried: JSON.stringify(carried),
       carriedMinutes: carriedMinutes(carried),
     })
@@ -162,7 +162,9 @@ const syncCycles = async (db: Database, contract: ContractRow, day: string, acto
     const nextStart = latest.endsOn
     if (nextStart > day || (lastDay && nextStart > lastDay)) return latest
     const next = await openCycle(db, contract, nextStart, carriedAfter(latest, contract))
-    if (!next) return latest
+    // A cycle that does not move past the latest one would loop until the step limit, querying D1
+    // on every turn; stop instead and leave the calendar where it is.
+    if (!next || next.endsOn <= latest.endsOn) return latest
     latest = next
   }
   return latest
@@ -175,7 +177,7 @@ const cycleBalance = (cycle: CycleRow, used: number) => {
   return {
     available_minutes: available,
     used_minutes: usedMinutes,
-    remaining_minutes: available - usedMinutes,
+    remaining_minutes: Math.max(0, available - usedMinutes),
     overage_minutes: cycle.status === 'open' ? Math.max(0, usedMinutes - available) : (cycle.overageMinutes ?? 0),
   }
 }
