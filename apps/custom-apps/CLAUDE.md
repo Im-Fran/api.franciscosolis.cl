@@ -142,6 +142,13 @@ the clients' apps and to this internal panel, never to the website.
   allows one per rule and subject): open and notify once, refresh, reopen within
   `ALERTS.reopenWithinMinutes` without notifying, or resolve. Notifications go to the rule creator's
   `sub` through `apps/notifications`; silencing stops those and nothing else.
+- **An alert outlives its rule.** `alerts.rule_id` is nullable with `ON DELETE SET NULL`, and each
+  alert carries `rule_name` / `rule_kind`, copied from the rule when it opens. Deleting a rule — or an
+  app, whose rules cascade — first runs `retireRuleAlerts`: the snapshot takes the rule's last name,
+  and the unresolved alerts are resolved by the actor, since nothing would reconcile them again. Alert
+  reads left-join the rule and fall back to the snapshot: such an alert answers `rule_id: null`,
+  `rule_deleted: true`, `threshold: null`. Reconciliation only ever reads alerts by `rule_id`, so
+  orphans never collide with a new rule's alerts.
 - **A grace period ends on its own.** The cron suspends an app whose `grace` reached `state_until`,
   with an audit row that has no actor and `automatic: true`.
 - **The heartbeat writes synchronously, metrics and events through the queue.** Presence must be
@@ -170,6 +177,10 @@ the clients' apps and to this internal panel, never to the website.
 - **Correlated subqueries name the outer column as `"apps"."id"`, never `${apps.id}`.** Drizzle
   renders a single-table column unqualified, and SQLite resolves a bare `"id"` to the inner table —
   a count that was silently wrong before this was caught.
+- **Read the SQL drizzle-kit generates for a table rebuild.** `0005_alert_history_cancel_reason.sql`
+  had to be hand-edited: the generated copy selected the new columns from the old table, which SQLite
+  reads as string literals rather than an error. Nothing references `alerts`, so the drop is safe
+  whether or not `PRAGMA foreign_keys=OFF` takes effect inside D1's transaction.
 - **`audit_logs` is append-only in the database** (two triggers in `0000_init.sql`, hand-added after
   the generated DDL). The test setup therefore never deletes from it; tests assert on rows of the
   resources they created.
@@ -219,6 +230,16 @@ the clients' apps and to this internal panel, never to the website.
   the 31st (`addMonths` always counts from the anchor). Inserts are keyed on the cycle's start and
   closes on `status = 'open'`, so concurrent syncs are harmless. `starts_on` and `cycle_period` are
   frozen once a cycle exists.
+- **A renewal after a mid-cycle end opens a short cycle** (`cycleOpeningOn`). A contract's last cycle
+  is cut at `ends_on`, so once it is renewed the next cycle starts on a day that is not a boundary.
+  It opens exactly there and runs to the next anchored boundary, so the anchor holds, with
+  `included_minutes` prorated by days (`round(included × days / period days)`); the cycles after it
+  are whole again. Mapping that day back to "the period containing it" finds the closed cycle it was
+  meant to follow, which is how every read of a renewed contract once spun to
+  `CONTRACTS.maxCyclesPerRun`; `syncCycles` now also stops whenever an opened cycle does not end
+  after the latest one. `remaining_minutes` is never negative — what is over is `overage_minutes`.
+- **Cancelling keeps the reason on the contract** (`cancel_reason`), as well as in the
+  `contract.cancelled` audit row.
 - **A closed cycle is final.** Closing computes the balance once (`closeCycle`): usage is drawn from
   the oldest carried minutes first, then the cycle's own; leftovers roll over only if the contract
   says so, expire past `rollover_max_cycles`, and are trimmed oldest-first above `rollover_max_minutes`;
@@ -257,8 +278,9 @@ the clients' apps and to this internal panel, never to the website.
   whoever turned the module on, or took the tickets over — hears about a new ticket and every
   requester message through `apps/notifications` (`custom_apps.ticket_opened` /
   `custom_apps.ticket_message`); with nobody assigned the tickets simply wait in the inbox. Hours
-  spent on one are work log entries carrying `ticket_id`. Limits: five new tickets and thirty
-  messages per installation per hour.
+  spent on one are work log entries carrying `ticket_id`, and the ticket shows them in the work log's
+  own shape (`toWorkLog`). Limits: five new tickets and thirty messages per installation per hour,
+  refused with a `Retry-After` of the seconds until the oldest request leaves the hour.
 - **A website always pings.** A browser cannot set the `Authorization` header on a WebSocket upgrade,
   so socket mode is for native apps and `sdk.js` never opens one.
 

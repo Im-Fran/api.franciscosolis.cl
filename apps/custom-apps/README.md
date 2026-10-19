@@ -111,7 +111,8 @@ secrets vault build on the same model and are not here yet.
   minutes; one alert per rule and subject while it holds, reopened rather than repeated when it
   flaps, resolved on its own when the condition clears. The rule's creator is told through the
   notification centre (`apps/notifications`), in the bell, by push and by email as their preferences
-  say; a silenced rule keeps recording and stops telling.
+  say; a silenced rule keeps recording and stops telling. Alerts are history: deleting a rule
+  resolves its open ones and keeps them all, with the rule's name and kind.
 - **Signed releases from CI** — CI uploads a build with a token of its own (`cic_…`, one app, the
   upload route and nothing else), the artifact as the request body and an Ed25519 signature over
   its SHA-256 digest in a header. The body is streamed into a private R2 bucket and through SHA-256
@@ -136,7 +137,8 @@ secrets vault build on the same model and are not here yet.
   per cycle — daily, weekly or monthly, anchored on its start date — and, if it says so, unused
   minutes roll over, with a cap in minutes and in cycles; what is used beyond everything available
   is overage, priced at the contract's hourly rate and charged in the next cycle. Cycles open and
-  close with the calendar, and a closed cycle is final.
+  close with the calendar, and a closed cycle is final. A contract renewed after it ended mid-cycle
+  picks up with a short cycle up to the next anchored boundary, with its share of the minutes.
 - **The work log (bitácora)** — hours entered by hand against a company and optionally one of its
   apps, each filed under the contract and cycle of its day, with a link to the commit or merge
   request. Work outside any contract is still logged; a day in a closed cycle is refused.
@@ -267,8 +269,8 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `GET` | `/v1/crashes/:crashId/reports` | Its reports, stack included |
 | `GET` | `/v1/apps/:appId/logs` · `/v1/installations/:installationId/logs` | Remote logs (`?level`, `?search`, `?from`, `?to`) |
 | `GET` / `POST` | `/v1/alert-rules` | Rules; create one (its creator is notified) |
-| `PATCH` / `DELETE` | `/v1/alert-rules/:ruleId` | Edit, disable, silence; delete |
-| `GET` | `/v1/alerts` · `/v1/alerts/:alertId` | `?status` (`unresolved` for the inbox), `?app_id`, `?rule_id` |
+| `PATCH` / `DELETE` | `/v1/alert-rules/:ruleId` | Edit, disable, silence; delete (its alerts stay as history, the unresolved ones resolved) |
+| `GET` | `/v1/alerts` · `/v1/alerts/:alertId` | `?status` (`unresolved` for the inbox), `?app_id`, `?rule_id`; an alert whose rule was deleted answers `rule_id: null`, `rule_deleted: true`, `threshold: null`, and the rule's last `rule_name` and `kind` |
 | `POST` | `/v1/alerts/:alertId/ack` · `/resolve` | Acknowledge, or close by hand |
 | `GET` / `POST` | `/v1/apps/:appId/ci-tokens` | CI tokens; create one (the token is shown once) |
 | `POST` | `/v1/ci-tokens/:tokenId/revoke` | Retire a CI token |
@@ -280,13 +282,13 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `GET` | `/v1/installations/:installationId/updates` | What it would be offered now, and its update reports |
 | `GET` / `POST` | `/v1/contracts` | Contracts (`?company_id`, `?app_id`, `?status`); create one |
 | `GET` / `PATCH` / `DELETE` | `/v1/contracts/:contractId` | One contract with its current cycle and usage per app; edit (`app_ids` replaces the covered apps); delete one with no history |
-| `POST` | `/v1/contracts/:contractId/renew` · `/cancel` | Renew until a new end (reactivating apps a lapse switched off); cancel |
+| `POST` | `/v1/contracts/:contractId/renew` · `/cancel` | Renew until a new end (reactivating apps a lapse switched off); cancel, with an optional `reason` kept as `cancel_reason` |
 | `GET` | `/v1/contracts/:contractId/cycles` | Its cycles, newest first, with their balance |
 | `GET` | `/v1/cycles/:cycleId` | One cycle and the work logged in it |
 | `POST` | `/v1/cycles/:cycleId/close` · `/bill` | Close one whose period ended; mark its overage billed |
 | `GET` / `POST` | `/v1/work-logs` · `/v1/apps/:appId/work-logs` | The work log (`?company_id`, `?app_id`, `?contract_id`, `?cycle_id`, `?kind`, `?from`, `?to`) with the total minutes; log work |
 | `PATCH` / `DELETE` | `/v1/work-logs/:workLogId` | Edit or delete an entry while its cycle is open |
-| `GET` | `/v1/tickets` · `/v1/tickets/:ticketId` | The support inbox (`?status`, `active` for what needs somebody; `?app_id`, `?company_id`, `?installation_id`, `?search`, `#42` included); one ticket with its conversation, device context and logged work |
+| `GET` | `/v1/tickets` · `/v1/tickets/:ticketId` | The support inbox (`?status`, `active` for what needs somebody; `?app_id`, `?company_id`, `?installation_id`, `?search`, `#42` included); one ticket with its conversation, device context and logged work (in the work log's shape) |
 | `POST` / `PATCH` | `/v1/tickets/:ticketId/replies` · `/v1/tickets/:ticketId` | Answer (it becomes `pending`, or `resolved`/`closed`); change its status or subject |
 | `POST` | `/v1/apps/:appId/support/assignee` | Take over an app's tickets: you are notified of them |
 | `GET` | `/v1/audit-log` | `?event` (a trailing `.` matches a family), `?resource_type`, `?resource_id`, `?actor`, `?from`, `?to` |
@@ -351,6 +353,9 @@ by decision: each integrates the routes it needs from its app's own `openapi.jso
 | `POST` | `/tickets` | Open a ticket: `subject`, `message`, optionally `name` and `email`; the device is attached (module `support`) |
 | `GET` | `/tickets` · `/tickets/:ticketId` | This installation's tickets with their unread answers; one with its conversation (marks the answers read) |
 | `POST` | `/tickets/:ticketId/messages` | Write on a ticket again (reopens it; a closed one refuses) |
+
+Five new tickets and thirty messages per installation per hour; past that a `429` whose `Retry-After`
+is the seconds until the oldest request in the hour leaves it.
 
 A device should keep its tokens in the platform's secure store, ask `/status` on start-up, queue
 metrics, events and logs locally while offline and send them when the network is back, deduplicate
