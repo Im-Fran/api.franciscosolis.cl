@@ -4,12 +4,13 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb, type Database } from '@/db/client'
-import { apps, auditLogs, companies, installations, ticketMessages, tickets, workLogs } from '@/db/schema'
+import { apps, auditLogs, companies, contractCycles, contracts, installations, ticketMessages, tickets, workLogs } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { SUPPORT, TICKET_STATUSES } from '@/lib/config'
 import { paginationQuery, searchQuery } from '@/lib/validation'
 import { validate } from '@/lib/validate'
 import { auditRow, getActorContext, recordAudit } from '@/services/audit'
+import { toWorkLog } from '@/services/contracts'
 import { toTicket, unreadBy, type TicketRow } from '@/services/tickets'
 import { assertId, dataSchema, jsonContent, likeTerm, listSchema, notFound, page, panelErrors } from '@/panel/shared'
 
@@ -119,16 +120,20 @@ app.get(
     const [messageRows, logs] = await Promise.all([
       db.select().from(ticketMessages).where(eq(ticketMessages.ticketId, id)).orderBy(asc(ticketMessages.createdAt), sql`rowid`),
       db
-        .select({ id: workLogs.id, occurredOn: workLogs.occurredOn, minutes: workLogs.minutes, kind: workLogs.kind, description: workLogs.description, createdBy: workLogs.createdBy })
+        .select({ log: workLogs, appName: apps.name, contractName: contracts.name, cycleStatus: contractCycles.status })
         .from(workLogs)
+        .leftJoin(apps, eq(apps.id, workLogs.appId))
+        .leftJoin(contracts, eq(contracts.id, workLogs.contractId))
+        .leftJoin(contractCycles, eq(contractCycles.id, workLogs.cycleId))
         .where(eq(workLogs.ticketId, id))
-        .orderBy(desc(workLogs.occurredOn)),
+        .orderBy(desc(workLogs.occurredOn), desc(workLogs.createdAt)),
     ])
     return c.json({
       code: 200 as const,
       data: {
         ...serialize(row, 0, messageRows),
-        work_logs: logs.map((log) => ({ id: log.id, occurred_on: log.occurredOn, minutes: log.minutes, kind: log.kind, description: log.description, created_by: log.createdBy })),
+        // The same shape the work log routes answer, so the panel can render and edit them alike.
+        work_logs: logs.map((entry) => toWorkLog(entry.log, { ...entry, companyName: row.companyName, ticketNumber: row.ticket.number })),
       },
     })
   },

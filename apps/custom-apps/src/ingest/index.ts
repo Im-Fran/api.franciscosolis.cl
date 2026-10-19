@@ -150,14 +150,17 @@ const json = (schema: v.GenericSchema) => ({ 'application/json': { schema: resol
 
 /* ── Public documents ──────────────────────────────────────────────────────── */
 
-const tooMany = (message: string) =>
+const tooMany = (message: string, retryAfterSeconds = 60) =>
   new HTTPException(429, {
     message,
     res: new Response(JSON.stringify({ code: 429, error: message }), {
       status: 429,
-      headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Retry-After': '60' },
+      headers: { 'Content-Type': 'application/json; charset=UTF-8', 'Retry-After': String(Math.max(1, Math.ceil(retryAfterSeconds))) },
     }),
   })
+
+/** Seconds until an hourly window counted from `oldest` (unix seconds, the oldest request in it) frees a slot. */
+const untilHourFrees = (oldest: number | null | undefined) => (oldest ? oldest + 3600 - Date.now() / 1000 : 60)
 
 /* ── Enrollment ────────────────────────────────────────────────────────────── */
 
@@ -953,8 +956,13 @@ app.post(
     await requireSupport(c, appRow, installation)
     const db = getDb(c.env)
     const since = new Date(Date.now() - 3_600_000)
-    const [recent] = await db.select({ count: sql<number>`COUNT(*)` }).from(tickets).where(and(eq(tickets.installationId, installationId), gte(tickets.createdAt, since)))
-    if (Number(recent?.count ?? 0) >= SUPPORT.maxTicketsPerHour) throw tooMany(`At most ${SUPPORT.maxTicketsPerHour} tickets per hour from one installation`)
+    const [recent] = await db
+      .select({ count: sql<number>`COUNT(*)`, oldest: sql<number | null>`MIN(${tickets.createdAt})` })
+      .from(tickets)
+      .where(and(eq(tickets.installationId, installationId), gte(tickets.createdAt, since)))
+    if (Number(recent?.count ?? 0) >= SUPPORT.maxTicketsPerHour) {
+      throw tooMany(`At most ${SUPPORT.maxTicketsPerHour} tickets per hour from one installation`, untilHourFrees(recent?.oldest))
+    }
 
     const body = c.req.valid('json')
     const context = await captureContext(db, appRow, installation, body.include_diagnostics)
@@ -1053,11 +1061,13 @@ app.post(
     if (ticket.status === 'closed') throw new HTTPException(409, { message: 'This ticket is closed; open a new one' })
     const db = getDb(c.env)
     const recent = await c.env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM ticket_messages m JOIN tickets t ON t.id = m.ticket_id WHERE t.installation_id = ? AND m.author = 'requester' AND m.created_at >= ?",
+      "SELECT COUNT(*) AS n, MIN(m.created_at) AS oldest FROM ticket_messages m JOIN tickets t ON t.id = m.ticket_id WHERE t.installation_id = ? AND m.author = 'requester' AND m.created_at >= ?",
     )
       .bind(installationId, Math.floor(Date.now() / 1000) - 3600)
-      .first<{ n: number }>()
-    if (Number(recent?.n ?? 0) >= SUPPORT.maxMessagesPerHour) throw tooMany(`At most ${SUPPORT.maxMessagesPerHour} messages per hour from one installation`)
+      .first<{ n: number; oldest: number | null }>()
+    if (Number(recent?.n ?? 0) >= SUPPORT.maxMessagesPerHour) {
+      throw tooMany(`At most ${SUPPORT.maxMessagesPerHour} messages per hour from one installation`, untilHourFrees(recent?.oldest))
+    }
     const body = c.req.valid('json')
     const now = new Date()
     await db.batch([
