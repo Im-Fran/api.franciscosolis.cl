@@ -233,7 +233,7 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/v1/me` | The account behind the token |
-| `GET` | `/v1/overview` | Fleet counts, apps by state, unresolved alerts, latest enrollments and what waits for review |
+| `GET` | `/v1/overview` | Fleet counts, apps by state, unresolved alerts, releases, contracts and cycles, support tickets (`open`, `pending`, and `unread`: tickets — not messages — with a requester message nobody opened, closed ones left out), latest enrollments and what waits for review |
 | `GET` / `POST` | `/v1/companies` | List (`?search`) and create |
 | `GET` / `PATCH` / `DELETE` | `/v1/companies/:companyId` | One company with its contacts and apps; delete refused while it has apps |
 | `GET` | `/v1/companies/:companyId/contacts` | Its contacts with their roles |
@@ -241,7 +241,7 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `GET` / `POST` | `/v1/contacts` | List (`?search`, `?company_id`) and create |
 | `GET` / `PATCH` / `DELETE` | `/v1/contacts/:contactId` | One contact with the companies they belong to |
 | `GET` / `POST` | `/v1/apps` | List (`?company_id`, `?state`, `?kind`, `?search`) and create, with its first key |
-| `GET` / `PATCH` / `DELETE` | `/v1/apps/:appId` | One app; delete refused once anything enrolled |
+| `GET` / `PATCH` / `DELETE` | `/v1/apps/:appId` | One app; delete refused once anything enrolled, and its alert rules go with it, each audited as `alert_rule.deleted` with `cascade: "app.deleted"` |
 | `PUT` | `/v1/apps/:appId/status` | The kill switch: state, message, until |
 | `GET` / `POST` | `/v1/apps/:appId/keys` | Keys, shown in full; add one |
 | `POST` | `/v1/apps/:appId/keys/:keyId/rotate` · `/revoke` | Replace or retire a key |
@@ -270,7 +270,7 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `GET` | `/v1/apps/:appId/logs` · `/v1/installations/:installationId/logs` | Remote logs (`?level`, `?search`, `?from`, `?to`) |
 | `GET` / `POST` | `/v1/alert-rules` | Rules; create one (its creator is notified) |
 | `PATCH` / `DELETE` | `/v1/alert-rules/:ruleId` | Edit, disable, silence; delete (its alerts stay as history, the unresolved ones resolved) |
-| `GET` | `/v1/alerts` · `/v1/alerts/:alertId` | `?status` (`unresolved` for the inbox), `?app_id`, `?rule_id`; an alert whose rule was deleted answers `rule_id: null`, `rule_deleted: true`, `threshold: null`, and the rule's last `rule_name` and `kind` |
+| `GET` | `/v1/alerts` · `/v1/alerts/:alertId` | `?status` (`unresolved` for the inbox), `?app_id`, `?rule_id`; an alert whose rule was deleted answers `rule_id: null`, `rule_deleted: true`, `threshold: null`, and the rule's last `rule_name` and `kind`; `app_name` is the app's, or the name it had when it was deleted |
 | `POST` | `/v1/alerts/:alertId/ack` · `/resolve` | Acknowledge, or close by hand |
 | `GET` / `POST` | `/v1/apps/:appId/ci-tokens` | CI tokens; create one (the token is shown once) |
 | `POST` | `/v1/ci-tokens/:tokenId/revoke` | Retire a CI token |
@@ -280,7 +280,7 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `POST` | `/v1/releases/:releaseId/pause` · `/resume` · `/withdraw` · `/rollback` | Stop offering it; offer it again; pull it; roll the line back to it |
 | `GET` | `/v1/releases/:releaseId/artifact` · `/reports` | The artifact; what devices reported |
 | `GET` | `/v1/installations/:installationId/updates` | What it would be offered now, and its update reports |
-| `GET` / `POST` | `/v1/contracts` | Contracts (`?company_id`, `?app_id`, `?status`); create one |
+| `GET` / `POST` | `/v1/contracts` | Contracts (`?company_id`, `?app_id`, `?status`), each with its current cycle — a list read brings up to date only the contracts whose calendar moved; create one |
 | `GET` / `PATCH` / `DELETE` | `/v1/contracts/:contractId` | One contract with its current cycle and usage per app; edit (`app_ids` replaces the covered apps); delete one with no history |
 | `POST` | `/v1/contracts/:contractId/renew` · `/cancel` | Renew until a new end (reactivating apps a lapse switched off); cancel, with an optional `reason` kept as `cancel_reason` |
 | `GET` | `/v1/contracts/:contractId/cycles` | Its cycles, newest first, with their balance |
