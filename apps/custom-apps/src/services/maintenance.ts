@@ -6,14 +6,16 @@ import { evaluateAlerts } from '@/services/alerts'
 import { auditRow } from '@/services/audit'
 import { expireCommands } from '@/services/commands'
 import { runContracts } from '@/services/contracts'
+import { runMaintenances } from '@/services/maintenances'
 import { pauseReason, releaseStats } from '@/services/releases'
 import { runHourly } from '@/services/rollup'
 import { syncApp } from '@/services/socket'
 
 /**
  * The cron, every five minutes. Each run expires stale commands, renews, warns about and lapses
- * contracts and keeps their hours cycles current, ends grace periods that ran out, pauses rollouts
- * that are going wrong and evaluates the alert rules; the first run of each hour also does the hourly work (purge, and the
+ * contracts and keeps their hours cycles current, ends grace periods that ran out, moves scheduled
+ * maintenances along (`runMaintenances` — this file is the cron, that one the maintenances it drives),
+ * pauses rollouts that are going wrong and evaluates the alert rules; the first run of each hour also does the hourly work (purge, and the
  * daily roll-up at its hour). The minute check is on UTC, which is the same as Santiago's: Chile's
  * offset is a whole number of hours.
  */
@@ -96,10 +98,12 @@ const runScheduled = async (env: Env, now: Date) => {
   // the grace expiry in the same run.
   const contractsResult = await runContracts(env, now)
   const suspended = await endGracePeriods(env, now)
+  // After grace ends, so a maintenance of an app suspended this run is paused rather than started.
+  const maintenancesResult = await runMaintenances(env, now)
   const pausedReleases = await evaluateRollouts(env, now)
   const alerts = await evaluateAlerts(env, now)
   const hourly = now.getUTCMinutes() < 5 ? await runHourly(env, now) : null
-  return { expired_commands: expiredCommands, contracts: contractsResult, suspended_apps: suspended, paused_releases: pausedReleases, alerts, hourly }
+  return { expired_commands: expiredCommands, contracts: contractsResult, suspended_apps: suspended, maintenances: maintenancesResult, paused_releases: pausedReleases, alerts, hourly }
 }
 
 export { endGracePeriods, evaluateRollouts, runScheduled }

@@ -24,6 +24,10 @@ import {
   GRACE_MAX_DAYS,
   HEARTBEAT,
   LOG_LEVELS,
+  MAINTENANCE_KINDS,
+  MAINTENANCE_STATUSES,
+  MAINTENANCE_WINDOW_SOURCES,
+  MAINTENANCES,
   MESSAGE_DISPLAYS,
   MESSAGE_SEVERITIES,
   PLATFORMS,
@@ -39,6 +43,7 @@ import {
   WORK_KINDS,
 } from '@/lib/config'
 import { ingest } from '@/ingest/index'
+import { approval } from '@/panel/approval'
 import { ci } from '@/panel/ci'
 import { panel } from '@/panel/index'
 import { CONTRACT_STATUSES } from '@/services/contracts'
@@ -128,7 +133,28 @@ const rootResponseSchema = v.object({
     grace_allowances: v.array(v.string()),
     work_kinds: v.array(v.string()),
     ticket_statuses: v.array(v.string()),
-    contract_limits: v.object({ max_grace_days: v.number(), max_notice_days: v.number(), default_notice_days: v.number(), max_work_log_minutes: v.number() }),
+    maintenance_statuses: v.array(v.string()),
+    maintenance_kinds: v.array(v.string()),
+    maintenance_window_sources: v.array(v.string()),
+    maintenance_limits: v.object({
+      min_lead_hours: v.number(),
+      resend_after_hours: v.number(),
+      reminder_before_hours: v.number(),
+      suggest_days: v.number(),
+      suggest_count: v.number(),
+      security_min_lead_minutes: v.number(),
+      min_estimated_minutes: v.number(),
+      max_estimated_minutes: v.number(),
+      max_windows: v.number(),
+    }),
+    contract_limits: v.object({
+      max_grace_days: v.number(),
+      max_notice_days: v.number(),
+      default_notice_days: v.number(),
+      max_work_log_minutes: v.number(),
+      default_security_patch_days: v.number(),
+      max_security_patch_days: v.number(),
+    }),
     grace_max_days: v.number(),
     screenshot_max_bytes: v.number(),
     heartbeat_interval: v.object({ min: v.number(), max: v.number(), default: v.number() }),
@@ -180,11 +206,27 @@ panelApp.get(
         grace_allowances: [...GRACE_ALLOWANCES],
         work_kinds: [...WORK_KINDS],
         ticket_statuses: [...TICKET_STATUSES],
+        maintenance_statuses: [...MAINTENANCE_STATUSES],
+        maintenance_kinds: [...MAINTENANCE_KINDS],
+        maintenance_window_sources: [...MAINTENANCE_WINDOW_SOURCES],
+        maintenance_limits: {
+          min_lead_hours: MAINTENANCES.minLeadHours,
+          resend_after_hours: MAINTENANCES.resendAfterHours,
+          reminder_before_hours: MAINTENANCES.reminderBeforeHours,
+          suggest_days: MAINTENANCES.suggestDays,
+          suggest_count: MAINTENANCES.suggestCount,
+          security_min_lead_minutes: MAINTENANCES.securityMinLeadMinutes,
+          min_estimated_minutes: MAINTENANCES.minEstimatedMinutes,
+          max_estimated_minutes: MAINTENANCES.maxEstimatedMinutes,
+          max_windows: MAINTENANCES.maxWindows,
+        },
         contract_limits: {
           max_grace_days: CONTRACTS.maxGraceDays,
           max_notice_days: CONTRACTS.maxNoticeDays,
           default_notice_days: CONTRACTS.defaultNoticeDays,
           max_work_log_minutes: CONTRACTS.maxWorkLogMinutes,
+          default_security_patch_days: CONTRACTS.defaultSecurityPatchDays,
+          max_security_patch_days: CONTRACTS.maxSecurityPatchDays,
         },
         grace_max_days: GRACE_MAX_DAYS,
         screenshot_max_bytes: SCREENSHOTS.maxBytes,
@@ -197,8 +239,10 @@ panelApp.get(
   },
 )
 
-// CI uploads go first: the route takes a CI token rather than a panel one, so it has to answer before
-// the `/v1` gate would refuse it. See `src/panel/ci.ts`.
+// CI uploads and the public maintenance approval routes go first: one takes a CI token and the other
+// a maintenance link rather than a panel token, so they have to answer before the `/v1` gate would
+// refuse them. See `src/panel/ci.ts` and `src/panel/approval.ts`.
+panelApp.route('/v1', approval)
 panelApp.route('/v1', ci)
 panelApp.route('/v1', panel)
 
@@ -210,7 +254,7 @@ panelApp.get(
         title: 'FranciscoSolis - Custom Apps API',
         version: '1.0.0',
         description:
-          'The panel behind the bespoke apps built for clients: companies and contacts, apps and their keys, installations and their telemetry, and their remote operation — commands and screenshots, flags and remote config, in-app messages, logs, crashes and alerts. Everything under /v1 needs an access token minted for the `franciscosolis-custom-apps` application, carrying `custom-apps:admin`. The client apps themselves use a separate ingest API, documented per app at <ingest>/<appId>/openapi.json.',
+          'The panel behind the bespoke apps built for clients: companies and contacts, apps and their keys, installations and their telemetry, and their remote operation — commands and screenshots, flags and remote config, in-app messages, logs, crashes and alerts, releases, contracts and the work log, support tickets and scheduled maintenances. Everything under /v1 needs an access token minted for the `franciscosolis-custom-apps` application, carrying `custom-apps:admin` — except the CI upload, which takes a CI token, and /v1/public/maintenances/*, which a client opens from the approval link in their email without signing in. The client apps themselves use a separate ingest API, documented per app at <ingest>/<appId>/openapi.json.',
       },
       components: {
         securitySchemes: {

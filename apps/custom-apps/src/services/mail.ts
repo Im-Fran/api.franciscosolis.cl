@@ -1,11 +1,13 @@
 import type { Env } from '@/env'
 
 /**
- * Everything this Worker emails goes through here — which is one message: the notice to a client that
- * a contract is ending. The body comes from `@franciscosolis/emails`; this only hands it to
- * Cloudflare Email Sending, from the Worker's one configured sender.
+ * Everything this Worker emails goes through here: the notice to a client that a contract is ending,
+ * and the mail around a scheduled maintenance — the approval request, the confirmation, the reminder,
+ * and how it ended. The body comes from `@franciscosolis/emails`; this only hands it to Cloudflare
+ * Email Sending, from the Worker's one configured sender.
  *
- * It throws on failure, and the cron leaves the notice unsent so its next run retries.
+ * It throws on failure; each caller decides what a failure means (the cron leaves a contract notice
+ * unsent so its next run retries).
  */
 
 type OutgoingEmail = {
@@ -35,5 +37,29 @@ const formatMailDay = (day: string, locale: 'en' | 'es') => {
   )
 }
 
-export { formatMailDay, sendMail }
+const SANTIAGO = 'America/Santiago'
+
+const dateFormat = (locale: 'en' | 'es') =>
+  new Intl.DateTimeFormat(locale === 'es' ? 'es-CL' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: SANTIAGO })
+const timeFormat = (locale: 'en' | 'es') => new Intl.DateTimeFormat(locale === 'es' ? 'es-CL' : 'en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: SANTIAGO })
+
+/** An instant as the recipient reads it, on Santiago's clock: "martes, 3 de noviembre de 2026, 02:00". */
+const formatMailInstant = (date: Date, locale: 'en' | 'es') => `${dateFormat(locale).format(date)}, ${timeFormat(locale).format(date)}`
+
+/**
+ * A window on Santiago's clock, saying so: "martes, 3 de noviembre de 2026, 02:00–04:00 (hora de
+ * Santiago)", or both ends in full when it runs past midnight.
+ */
+const formatMailWindow = (start: Date, end: Date, locale: 'en' | 'es') => {
+  const zone = locale === 'es' ? '(hora de Santiago)' : '(Santiago time)'
+  const sameDay = dateFormat(locale).format(start) === dateFormat(locale).format(end)
+  return sameDay
+    ? `${formatMailInstant(start, locale)}–${timeFormat(locale).format(end)} ${zone}`
+    : `${formatMailInstant(start, locale)} – ${formatMailInstant(end, locale)} ${zone}`
+}
+
+/** Just the time of day on Santiago's clock, "04:00". */
+const formatMailTime = (date: Date, locale: 'en' | 'es') => timeFormat(locale).format(date)
+
+export { formatMailDay, formatMailInstant, formatMailTime, formatMailWindow, sendMail }
 export type { OutgoingEmail }

@@ -4,7 +4,7 @@ import { HTTPException } from 'hono/http-exception'
 import { describeRoute } from 'hono-openapi'
 import * as v from 'valibot'
 import { getDb, type Database } from '@/db/client'
-import { apps, auditLogs, companies, contractApps, contractCycles, contracts, tickets, workLogs } from '@/db/schema'
+import { apps, auditLogs, companies, contractApps, contractCycles, contracts, maintenances, tickets, workLogs } from '@/db/schema'
 import type { AppEnv } from '@/env'
 import { BILLING_PERIODS, CONTRACTS, CURRENCIES, CYCLE_PERIODS, GRACE_ALLOWANCES, WORK_KINDS } from '@/lib/config'
 import { addDays } from '@/lib/hours'
@@ -76,6 +76,8 @@ const contractFields = {
   grace_days: v.pipe(v.number(), v.integer(), v.minValue(0), v.maxValue(CONTRACTS.maxGraceDays)),
   grace_allows: graceAllowsInput,
   grace_message: v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(1000))),
+  /** Days within which a security patch is applied without the client's approval. */
+  security_patch_days: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(CONTRACTS.maxSecurityPatchDays)),
   notes: v.nullable(v.pipe(v.string(), v.trim(), v.maxLength(5000))),
   app_ids: appIdsInput,
 }
@@ -100,6 +102,7 @@ const createSchema = v.object({
   grace_days: v.optional(contractFields.grace_days, 0),
   grace_allows: v.optional(contractFields.grace_allows, []),
   grace_message: v.optional(contractFields.grace_message, null),
+  security_patch_days: v.optional(contractFields.security_patch_days, CONTRACTS.defaultSecurityPatchDays),
   notes: v.optional(contractFields.notes, null),
   app_ids: v.optional(contractFields.app_ids, []),
 })
@@ -262,6 +265,7 @@ app.post(
         graceDays: body.grace_days,
         graceAllows: JSON.stringify(body.grace_allows),
         graceMessage: body.grace_message || null,
+        securityPatchDays: body.security_patch_days,
         notes: body.notes || null,
         createdBy: actor.actorEmail,
         updatedBy: actor.actorEmail,
@@ -338,6 +342,7 @@ const editContract = async (c: Context<AppEnv>, before: ContractRow, body: v.Inf
         ...(body.grace_days !== undefined && { graceDays: body.grace_days }),
         ...(body.grace_allows !== undefined && { graceAllows: JSON.stringify(body.grace_allows) }),
         ...(body.grace_message !== undefined && { graceMessage: body.grace_message || null }),
+        ...(body.security_patch_days !== undefined && { securityPatchDays: body.security_patch_days }),
         ...(body.notes !== undefined && { notes: body.notes || null }),
         updatedBy: actor.actorEmail,
         updatedAt: now,
@@ -479,7 +484,15 @@ const loadCycle = async (db: Database, id: string) => {
   return row
 }
 
-const workLogSelection = { log: workLogs, appName: apps.name, companyName: companies.legalName, contractName: contracts.name, cycleStatus: contractCycles.status, ticketNumber: tickets.number }
+const workLogSelection = {
+  log: workLogs,
+  appName: apps.name,
+  companyName: companies.legalName,
+  contractName: contracts.name,
+  cycleStatus: contractCycles.status,
+  ticketNumber: tickets.number,
+  maintenanceTitle: maintenances.title,
+}
 
 const workLogQuery = (db: Database) =>
   db
@@ -490,8 +503,17 @@ const workLogQuery = (db: Database) =>
     .leftJoin(contracts, eq(contracts.id, workLogs.contractId))
     .leftJoin(contractCycles, eq(contractCycles.id, workLogs.cycleId))
     .leftJoin(tickets, eq(tickets.id, workLogs.ticketId))
+    .leftJoin(maintenances, eq(maintenances.id, workLogs.maintenanceId))
 
-type WorkLogSelection = { log: typeof workLogs.$inferSelect; appName: string | null; companyName: string; contractName: string | null; cycleStatus: string | null; ticketNumber: number | null }
+type WorkLogSelection = {
+  log: typeof workLogs.$inferSelect
+  appName: string | null
+  companyName: string
+  contractName: string | null
+  cycleStatus: string | null
+  ticketNumber: number | null
+  maintenanceTitle: string | null
+}
 const serializeLog = (row: WorkLogSelection) => toWorkLog(row.log, row)
 
 app.get(
@@ -565,12 +587,18 @@ app.post(
 
 /* ── Work log ──────────────────────────────────────────────────────────────── */
 
+const assertMaintenanceOfCompany = async (db: Database, maintenanceId: string, companyId: string) => {
+  const [row] = await db.select({ companyId: maintenances.companyId }).from(maintenances).where(eq(maintenances.id, maintenanceId)).limit(1)
+  if (!row || row.companyId !== companyId) throw new HTTPException(422, { message: 'maintenance_id must be a maintenance of the same company' })
+}
+
 const workLogFilters = v.object({
   company_id: v.optional(v.pipe(v.string(), v.uuid())),
   app_id: v.optional(v.pipe(v.string(), v.uuid())),
   contract_id: v.optional(v.pipe(v.string(), v.uuid())),
   cycle_id: v.optional(v.pipe(v.string(), v.uuid())),
   ticket_id: v.optional(v.pipe(v.string(), v.uuid())),
+  maintenance_id: v.optional(v.pipe(v.string(), v.uuid())),
   kind: v.optional(v.picklist(WORK_KINDS)),
   from: v.optional(calendarDay),
   to: v.optional(calendarDay),
@@ -586,6 +614,7 @@ const listWorkLogs = async (c: Context<AppEnv>, query: v.InferOutput<typeof work
     query.contract_id ? eq(workLogs.contractId, query.contract_id) : undefined,
     query.cycle_id ? eq(workLogs.cycleId, query.cycle_id) : undefined,
     query.ticket_id ? eq(workLogs.ticketId, query.ticket_id) : undefined,
+    query.maintenance_id ? eq(workLogs.maintenanceId, query.maintenance_id) : undefined,
     query.kind ? eq(workLogs.kind, query.kind) : undefined,
     query.from ? gte(workLogs.occurredOn, query.from) : undefined,
     query.to ? lte(workLogs.occurredOn, query.to) : undefined,
@@ -605,6 +634,8 @@ const workLogBody = {
   link_url: optionalUrl,
   /** The support ticket the work answered. */
   ticket_id: v.optional(v.nullable(v.pipe(v.string(), v.uuid()))),
+  /** The maintenance the work was. */
+  maintenance_id: v.optional(v.nullable(v.pipe(v.string(), v.uuid()))),
 }
 
 const createWorkLogSchema = v.object({
@@ -627,6 +658,7 @@ const createWorkLog = async (c: Context<AppEnv>, body: v.InferOutput<typeof crea
   if (!companyId) throw new HTTPException(400, { message: 'company_id or app_id is required' })
   if (!(await companyOf(db, companyId))) throw new HTTPException(422, { message: 'Unknown company' })
   if (body.ticket_id) await assertTicketOfCompany(db, body.ticket_id, companyId)
+  if (body.maintenance_id) await assertMaintenanceOfCompany(db, body.maintenance_id, companyId)
   const target = await resolveWorkLogTarget(db, { companyId, appId: body.app_id ?? null, contractId: body.contract_id, occurredOn: body.occurred_on, day: todayIn() })
   const id = crypto.randomUUID()
   await db.insert(workLogs).values({
@@ -641,6 +673,7 @@ const createWorkLog = async (c: Context<AppEnv>, body: v.InferOutput<typeof crea
     description: body.description,
     linkUrl: body.link_url ?? null,
     ticketId: body.ticket_id ?? null,
+    maintenanceId: body.maintenance_id ?? null,
     createdBy: actor.actorEmail,
     updatedBy: actor.actorEmail,
   })
@@ -711,6 +744,7 @@ app.patch(
       if (!appRow || appRow.companyId !== before.log.companyId) throw new HTTPException(422, { message: 'app_id must be an app of the same company' })
     }
     if (body.ticket_id) await assertTicketOfCompany(db, body.ticket_id, before.log.companyId)
+    if (body.maintenance_id) await assertMaintenanceOfCompany(db, body.maintenance_id, before.log.companyId)
     const occurredOn = body.occurred_on ?? before.log.occurredOn
     const refile = body.occurred_on !== undefined || body.app_id !== undefined || body.contract_id !== undefined
     const target = refile
@@ -728,6 +762,7 @@ app.patch(
         ...(body.description !== undefined && { description: body.description }),
         ...(body.link_url !== undefined && { linkUrl: body.link_url }),
         ...(body.ticket_id !== undefined && { ticketId: body.ticket_id }),
+        ...(body.maintenance_id !== undefined && { maintenanceId: body.maintenance_id }),
         updatedBy: actor.actorEmail,
         updatedAt: new Date(),
       })

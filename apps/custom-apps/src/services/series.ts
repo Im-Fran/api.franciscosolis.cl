@@ -161,23 +161,27 @@ const HEATMAP_DAYS = 30
 /**
  * Average use per weekday and hour over the last 30 days, in Santiago time: a 7 × 24 grid, Monday
  * first, of the seconds of use (and of connection) an average such hour saw across the fleet — or
- * one installation, when given.
+ * one installation, or a set of them (the installations a maintenance includes), when given.
  *
  * Averaged over every occurrence of that hour in the window, not over the hours that happened to
  * have data: an hour nobody used is a zero, and that zero is precisely what a maintenance window is
  * looking for.
  */
-const usageHeatmap = async (db: D1Database, appId: string, installationId: string | null, now: Date = new Date()) => {
+const usageHeatmap = async (db: D1Database, appId: string, installations: string | string[] | null, now: Date = new Date()) => {
   const end = Math.floor(now.getTime() / 1000 / 3600) * 3600
   const start = end - HEATMAP_DAYS * 86_400
 
+  // A set travels as one JSON parameter: D1 binds at most 100 values to a statement.
+  const filter = installations === null ? '' : Array.isArray(installations) ? ' AND installation_id IN (SELECT value FROM json_each(?))' : ' AND installation_id = ?'
+  const bindings: unknown[] = [appId, start, end]
+  if (installations !== null) bindings.push(Array.isArray(installations) ? JSON.stringify(installations) : installations)
   const { results } = await db
     .prepare(
       `SELECT hour_start, SUM(active_seconds) AS active_seconds, SUM(online_seconds) AS online_seconds
-       FROM usage_hourly WHERE app_id = ? AND hour_start >= ? AND hour_start < ?${installationId ? ' AND installation_id = ?' : ''}
+       FROM usage_hourly WHERE app_id = ? AND hour_start >= ? AND hour_start < ?${filter}
        GROUP BY hour_start`,
     )
-    .bind(...(installationId ? [appId, start, end, installationId] : [appId, start, end]))
+    .bind(...bindings)
     .all<{ hour_start: number; active_seconds: number; online_seconds: number }>()
 
   const grid = () => Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))

@@ -45,7 +45,8 @@ const timeOfDay = v.pipe(v.string(), v.regex(/^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00
 
 /**
  * Declared operating hours: per weekday, zero or more `[start, end)` windows. What the usage
- * heatmap's "not in use" is measured against, and what a maintenance window must stay outside of.
+ * heatmap's "not in use" is read against, and what a suggested maintenance window must stay *inside*:
+ * outside its hours a device may be switched off, and a device that is off installs nothing.
  */
 const operatingHoursSchema = v.pipe(
   v.strictObject({

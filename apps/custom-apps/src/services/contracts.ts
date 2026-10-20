@@ -4,7 +4,7 @@ import { HTTPException } from 'hono/http-exception'
 import { getDb, type Database } from '@/db/client'
 import { apps, auditLogs, companies, companyContacts, contacts, contractApps, contractCycles, contracts, messages, workLogs } from '@/db/schema'
 import type { Env } from '@/env'
-import { CONTRACTS, type Currency, type CyclePeriod, type GraceAllowance } from '@/lib/config'
+import { CONTRACTS, type ContactRole, type Currency, type CyclePeriod, type GraceAllowance } from '@/lib/config'
 import { addDays, addMonths, carriedMinutes, closeCycle, cycleContaining, cycleOpeningOn, daysBetween, overageAmount, type CarriedBucket, type RolloverPolicy } from '@/lib/hours'
 import { iso, parseJsonArray } from '@/lib/json'
 import { startOfZonedDay, zonedDay } from '@/lib/time'
@@ -330,6 +330,7 @@ const toContract = (
     grace_days: row.graceDays,
     grace_allows: parseJsonArray<GraceAllowance>(row.graceAllows),
     grace_message: row.graceMessage,
+    security_patch_days: row.securityPatchDays,
     status,
     days_left: daysLeft,
     /** Ends within its notice period without renewing itself. */
@@ -349,7 +350,10 @@ const toContract = (
   }
 }
 
-const toWorkLog = (row: WorkLogRow, extra: { appName?: string | null; companyName?: string | null; contractName?: string | null; cycleStatus?: string | null; ticketNumber?: number | null } = {}) => ({
+const toWorkLog = (
+  row: WorkLogRow,
+  extra: { appName?: string | null; companyName?: string | null; contractName?: string | null; cycleStatus?: string | null; ticketNumber?: number | null; maintenanceTitle?: string | null } = {},
+) => ({
   id: row.id,
   company_id: row.companyId,
   company_name: extra.companyName ?? null,
@@ -367,6 +371,9 @@ const toWorkLog = (row: WorkLogRow, extra: { appName?: string | null; companyNam
   link_url: row.linkUrl,
   ticket_id: row.ticketId,
   ticket_number: extra.ticketNumber ?? null,
+  /** The maintenance the work was, when it was one. */
+  maintenance_id: row.maintenanceId,
+  maintenance_title: extra.maintenanceTitle ?? null,
   created_at: iso(row.createdAt),
   updated_at: iso(row.updatedAt),
   created_by: row.createdBy,
@@ -428,8 +435,11 @@ const graceAllows = async (db: Database, appId: string, allowance: GraceAllowanc
   return row ? parseJsonArray<string>(row.graceAllows).includes(allowance) : false
 }
 
-/** Who at the client is told about the contract: billing and owners, else the primary contact, else anyone. */
-const noticeRecipients = async (db: Database, companyId: string) => {
+/**
+ * Who at a client receives a kind of mail: the contacts holding one of `roles`, else the primary
+ * contact, else anyone with an address. Each contact's first address, deduplicated.
+ */
+const contactRecipients = async (db: Database, companyId: string, roles: readonly ContactRole[]) => {
   const rows = await db
     .select({ emails: contacts.emails, roles: companyContacts.roles, isPrimary: companyContacts.isPrimary })
     .from(companyContacts)
@@ -437,10 +447,27 @@ const noticeRecipients = async (db: Database, companyId: string) => {
     .where(eq(companyContacts.companyId, companyId))
   const first = (value: string) => parseJsonArray<string>(value).find((email) => email.includes('@')) ?? null
   const pick = (filter: (row: (typeof rows)[number]) => boolean) => rows.filter(filter).map((row) => first(row.emails)).filter((email): email is string => email !== null)
-  let recipients = pick((row) => parseJsonArray<string>(row.roles).some((role) => role === 'billing' || role === 'owner'))
+  let recipients = pick((row) => parseJsonArray<string>(row.roles).some((role) => (roles as readonly string[]).includes(role)))
   if (recipients.length === 0) recipients = pick((row) => row.isPrimary)
   if (recipients.length === 0) recipients = pick(() => true)
   return [...new Set(recipients.map((email) => email.toLowerCase()))]
+}
+
+/** Who at the client is told about the contract: billing and owners, else the primary contact, else anyone. */
+const noticeRecipients = (db: Database, companyId: string) => contactRecipients(db, companyId, ['billing', 'owner'])
+
+/**
+ * The days within which a security patch of `appId` is applied: `security_patch_days` of the contract
+ * covering the app on `day`, or the default when none does.
+ */
+const securityPatchDaysFor = async (db: Database, appId: string, day: string) => {
+  const rows = await db
+    .select({ contract: contracts })
+    .from(contracts)
+    .innerJoin(contractApps, eq(contractApps.contractId, contracts.id))
+    .where(eq(contractApps.appId, appId))
+  const covering = rows.map((row) => row.contract).find((row) => covers(row, day))
+  return covering?.securityPatchDays ?? CONTRACTS.defaultSecurityPatchDays
 }
 
 /**
@@ -649,6 +676,7 @@ const runContracts = async (env: Env, now: Date) => {
 
 export {
   afterRenewal,
+  contactRecipients,
   CONTRACT_STATUSES,
   contractStatus,
   coveredApps,
@@ -658,6 +686,7 @@ export {
   noticeRecipients,
   resolveWorkLogTarget,
   runContracts,
+  securityPatchDaysFor,
   syncContracts,
   syncCycles,
   todayIn,

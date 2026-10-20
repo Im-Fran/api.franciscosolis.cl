@@ -11,6 +11,7 @@ import { dateInput, paginationQuery, searchQuery } from '@/lib/validation'
 import { validate } from '@/lib/validate'
 import { unresolvedCount } from '@/services/alerts'
 import { todayIn, toContract } from '@/services/contracts'
+import { overviewCounts } from '@/services/maintenances'
 import { toInstallationSummary } from '@/services/serialize'
 import { connectedSql, nowSeconds, page, panelErrors } from '@/panel/shared'
 
@@ -25,7 +26,7 @@ app.get(
   '/overview',
   describeRoute({
     description:
-      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, contracts ending or in grace, hours cycles over budget or waiting to be billed, support tickets waiting on us or on the client (`tickets.open` / `tickets.pending`) and how many tickets hold a requester message nobody opened yet (`tickets.unread`: tickets, not messages, and never a `closed` one, which takes no more messages), and the latest enrollments.',
+      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, contracts ending or in grace, hours cycles over budget or waiting to be billed, support tickets waiting on us or on the client (`tickets.open` / `tickets.pending`) and how many tickets hold a requester message nobody opened yet (`tickets.unread`: tickets, not messages, and never a `closed` one, which takes no more messages), scheduled maintenances (`maintenances`: `pending_approval` waiting on the client, `upcoming` scheduled to start in the next 7 days, `in_progress`, and `needs_attention` — nobody answered, failed in the last 7 days, or sent back by the client), and the latest enrollments.',
     tags: ['Overview'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'The overview' }, ...panelErrors },
@@ -36,7 +37,7 @@ app.get(
     const nowDate = new Date(now * 1000)
 
     const summaryColumns = { installation: installations, appName: apps.name, interval: apps.heartbeatIntervalSeconds }
-    const [[fleet], states, [counts], recent, review, openAlerts, [rollouts], contractRows, [cycleRow], [ticketRow]] = await Promise.all([
+    const [[fleet], states, [counts], recent, review, openAlerts, [rollouts], contractRows, [cycleRow], [ticketRow], maintenanceCounts] = await Promise.all([
       c.env.DB.prepare(
         `SELECT COUNT(*) AS total,
                 SUM(CASE WHEN i.status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -76,6 +77,7 @@ app.get(
                 SUM(CASE WHEN status != 'closed' AND EXISTS (SELECT 1 FROM ticket_messages m WHERE m.ticket_id = tickets.id AND m.author = 'requester' AND m.seen_at IS NULL) THEN 1 ELSE 0 END) AS unread
          FROM tickets`,
       ).all<Record<string, number | null>>().then((result) => result.results),
+      overviewCounts(c.env.DB, nowDate),
     ])
     const today = todayIn(nowDate)
     const contractViews = contractRows.map((row) => toContract(row, { day: today }))
@@ -111,6 +113,7 @@ app.get(
         cycles: { exceeded: Number(cycleRow?.exceeded ?? 0), to_bill: Number(cycleRow?.to_bill ?? 0) },
         tickets: { open: Number(ticketRow?.open ?? 0), pending: Number(ticketRow?.pending ?? 0), unread: Number(ticketRow?.unread ?? 0) },
         releases: { rolling_out: Number(rollouts?.rolling_out ?? 0), paused: Number(rollouts?.paused ?? 0), drafts: Number(rollouts?.drafts ?? 0) },
+        maintenances: maintenanceCounts,
         recent_installations: recent.map(summary),
         needs_review: review.map(summary),
       },
