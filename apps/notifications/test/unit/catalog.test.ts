@@ -56,6 +56,19 @@ describe('the notification catalog', () => {
     expect(renderCopy('marketplace.release_published', data, 'es').body).toBe('Una nueva versión estable de algo que tienes.')
   })
 
+  it('tells the owner how a client answered a maintenance, and keeps completions out of the inbox', () => {
+    const data = { title: 'Actualización 1.1', app_name: 'POS', company_name: 'Andes', approved_by: 'ops@andes.cl', window: '2026-11-03 02:00–03:00' }
+    expect(renderCopy('custom_apps.maintenance_approved', data, 'es')).toEqual({
+      title: 'Mantención aprobada: Actualización 1.1',
+      body: 'POS · Andes: ops@andes.cl eligió 2026-11-03 02:00–03:00 (hora de Santiago).',
+    })
+    expect(renderCopy('custom_apps.maintenance_rejected', { ...data, rejected_by: 'ops@andes.cl', reason: 'Inventario' }, 'en').body).toBe('POS · Andes, by ops@andes.cl: Inventario')
+    for (const type of ['custom_apps.maintenance_approved', 'custom_apps.maintenance_rejected', 'custom_apps.maintenance_no_response', 'custom_apps.maintenance_failed'] as const) {
+      expect(isEmailable(type)).toBe(true)
+    }
+    expect(isEmailable('custom_apps.maintenance_completed')).toBe(false)
+  })
+
   it('explains a rejected avatar even when no reason was given', () => {
     expect(renderCopy('account.avatar_rejected', { reason: 'Too blurry' }, 'en').body).toBe('Too blurry')
     expect(renderCopy('account.avatar_rejected', { reason: null }, 'es').body).toBe('Puedes subir otra cuando quieras.')
