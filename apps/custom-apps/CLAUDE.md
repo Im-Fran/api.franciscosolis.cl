@@ -16,9 +16,11 @@ D1 database**, chosen by hostname in `src/index.ts`:
   `api.franciscosolis.cl/custom-apps`, every route under `/v1`. Companies, contacts, apps, app keys,
   installations, telemetry views, commands and screenshots, flags and remote config, messages,
   crashes and logs, alert rules and alerts, releases and CI tokens, contracts, cycles and the work
-  log, support tickets, audit log. Used by the panel at
-  `franciscosolis.cl/custom-apps`. One route on this host takes no panel token: CI uploading a
-  release (`src/panel/ci.ts`), mounted ahead of the `/v1` gate and accepting only a CI token.
+  log, support tickets, scheduled maintenances, audit log. Used by the panel at
+  `franciscosolis.cl/custom-apps`. Two kinds of route on this host take no panel token, both mounted
+  ahead of the `/v1` gate: CI uploading a release (`src/panel/ci.ts`, a CI token only), and the
+  public maintenance approval routes (`src/panel/approval.ts`, `/v1/public/maintenances/:token`, a
+  maintenance link only) that the page at `franciscosolis.cl/mantencion/<token>` calls.
 - **Ingest** — `ingest.franciscosolis.cl/custom-apps/v1/:appId/*`, a zone route straight to this
   Worker. Enrollment, token refresh, heartbeat, the socket, status, metrics, events, logs, crashes,
   config, messages, command acknowledgements and screenshot uploads, the update offer, download
@@ -28,9 +30,11 @@ Phases 1 (CRM, inventory, enrollment, presence, telemetry, kill switch), 2 (remo
 socket presence, commands and screenshots, flags and config, messages, logs, crashes, alerts,
 automatic grace expiry) and 3 (releases: signed uploads from CI, channels and staged rollout, minimum
 version, the A/B updater's offer and reports, automatic pause, rollback) of the custom-apps plan,
-and the first part of phase 4: contracts with hours cycles, the work log, contract ends driving the
-kill switch, and support tickets opened from inside the apps. Maintenance windows, site uptime and
-the secrets vault (the rest of phase 4) build on this schema. The tickets are the owner's deliberate
+and most of phase 4: contracts with hours cycles, the work log, contract ends driving the kill
+switch, support tickets opened from inside the apps, and scheduled maintenances — windows suggested
+from the usage heatmap, approval by email with resend and automatic application, security patches,
+the run itself and its closing. Site uptime and the secrets vault (the rest of phase 4) build on
+this schema. The tickets are the owner's deliberate
 exception to the repository's "support is plain email" rule (see the root CLAUDE.md): they belong to
 the clients' apps and to this internal panel, never to the website.
 
@@ -41,13 +45,15 @@ the clients' apps and to this internal panel, never to the website.
   upserts, or a query is an aggregate Drizzle would only obscure (`services/rollup.ts`,
   `services/series.ts`, `services/telemetry.ts`, the heartbeat).
 - **Cloudflare Queues**, producer *and* consumer of `franciscosolis-custom-apps-telemetry`, and a
-  producer of `franciscosolis-notifications` for alerts and support tickets.
+  producer of `franciscosolis-notifications` for alerts, support tickets and maintenances.
 - **Durable Objects** (`InstallationSocket`, one per installation, WebSocket Hibernation) for socket
   presence, and **R2** for screenshots (`SCREENSHOTS`) and release artifacts (`RELEASES`).
-- **Cloudflare Email Sending** (`EMAIL`) and `@franciscosolis/emails` for one message only: the
-  contract notice to a client. Prettier is aliased
+- **Cloudflare Email Sending** (`EMAIL`) and `@franciscosolis/emails` for mail to clients only: the
+  contract notice, and the maintenance mail (the approval request and its resend, the confirmation,
+  the reminder, the outcome). Prettier is aliased
   out of the bundle in `wrangler.jsonc` and `vitest.config.ts`, as in every Worker that sends mail.
-- **Workers Rate Limiting** (`ratelimits`), a **cron trigger** every five minutes.
+- **Workers Rate Limiting** (`ratelimits`: enrollment, ingest, and `PUBLIC_LIMITER` for the public
+  approval routes), a **cron trigger** every five minutes.
 - No runtime dependency beyond the catalog's Hono/valibot/Drizzle and the workspace's `@franciscosolis/emails`; versions via `catalog:`.
 
 ## Commands (run from this directory, `apps/custom-apps/`)
@@ -67,8 +73,10 @@ the clients' apps and to this internal panel, never to the website.
   `contacts`, `apps` — keys, status, sdk, installations list, usage — `installations`, `overview` —
   overview and audit log — `remote` — commands, screenshots, flags, config, messages —
   `diagnostics` — crashes and logs — `alerts`, `releases` — CI tokens, releases, rollout, reports —
-  `contracts` — contracts, cycles, work log — `tickets` — the support inbox, replies, the assignee),
-  `ci.ts` (the CI upload, outside the gate).
+  `contracts` — contracts, cycles, work log — `tickets` — the support inbox, replies, the assignee —
+  `maintenances` — maintenances, their windows and suggestions, send, schedule, close),
+  `ci.ts` (the CI upload, outside the gate), `approval.ts` (the public maintenance approval routes,
+  outside the gate).
 - `src/ingest/index.ts` — every device route and the per-app documents.
 - `src/middleware/` — `admin.ts` (`requireAdmin`), `installation.ts` (`requireInstallation`).
 - `src/services/` — `enrollment.ts`, `presence.ts` (connected rule, heartbeat credit),
@@ -78,7 +86,10 @@ the clients' apps and to this internal panel, never to the website.
   app / channel / installation scopes flags and messages share), `telemetry.ts` (device payload
   schemas — metrics, events, logs, crashes and the crash signature — the queue message, the
   consumer), `alerts.ts` (rule evaluation), `notify.ts` (the notifications-queue contract),
-  `maintenance.ts` (the five-minute cron), `rollup.ts` (daily roll-up, purge — the hourly half),
+  `maintenance.ts` (the five-minute cron — singular, and unrelated to scheduled maintenances beyond
+  calling `runMaintenances`), `maintenances.ts` (scheduled maintenances: serialisers, recipients,
+  sending the request, scheduling, the reminder, the start, the evaluation, finishing, the cron's
+  share, the overview counts), `rollup.ts` (daily roll-up, purge — the hourly half),
   `series.ts` (what the panel charts), `sdk.ts` (the `sdk.js` template), `apps.ts` (modules, current
   key, `buildSdk`), `releases.ts` (the offer, rollout buckets, release stats, the pause rule, signature
   verification), `contracts.ts` (contract status, cycle sync, work log filing, notices, lapse and
@@ -86,7 +97,8 @@ the clients' apps and to this internal panel, never to the website.
   the assignee's notifications), `mail.ts` (the `EMAIL` binding), `serialize.ts` (rows → JSON), `audit.ts`.
 - `src/lib/` — `config.ts` (every vocabulary and limit), `json-schema.ts` (the config schema
   subset), `rut.ts`, `tokens.ts`, `time.ts` (Santiago wall clock), `semver.ts`, `download-tickets.ts`,
-  `hours.ts` (cycle boundaries and the rollover arithmetic),
+  `hours.ts` (cycle boundaries and the rollover arithmetic), `maintenance-windows.ts` (where a
+  maintenance window goes: suggestions, a security patch's window, operating hours — pure),
   `validation.ts`, `validate.ts`, `jwks.ts`, `json.ts`, `errors.ts`.
 
 ## Architecture notes (non-obvious)
@@ -302,6 +314,86 @@ the clients' apps and to this internal panel, never to the website.
   spent on one are work log entries carrying `ticket_id`, and the ticket shows them in the work log's
   own shape (`toWorkLog`). Limits: five new tickets and thirty messages per installation per hour,
   refused with a `Retry-After` of the seconds until the oldest request leaves the hour.
+- **Maintenances are named in the plural in code** (`services/maintenances.ts`,
+  `panel/routes/maintenances.ts`, `lib/maintenance-windows.ts`) because `services/maintenance.ts` was
+  already the five-minute cron. The cron calls `runMaintenances`; that is the only link between them.
+- **A maintenance's lifecycle** (`MAINTENANCE_STATUSES`): `draft → pending_approval → scheduled →
+  in_progress → completed | failed`, plus `no_response` and `cancelled`. A **rejection is not a
+  status**: by the owner's decision it sends the maintenance back to `draft` to be rescheduled,
+  keeping `rejection_reason` and `rejected_at` (serialised as `rejected: true` while it is a draft).
+  `no_response` is editable and sendable again like a draft. Edits, windows and `send` are only
+  accepted in those two states; `DELETE` only for a draft or a cancelled one.
+- **Approval links are opaque, hashed, one per recipient per send** (`maintenance_links`, `mnt_…`,
+  SHA-256 stored like a device token). Each approver gets a link of their own, so an answer names the
+  address it was sent to (`responded_by`, and the audit row's actor, with `via: 'approval_link'`).
+  A link expires when the first window it offered starts; a new send invalidates every earlier link
+  (only once at least one new email went out, so an outage never leaves the client with nothing that
+  works); answering through one closes them all. Link numbers (`send`) run across every round of a
+  maintenance, so "the latest links" stays well defined after a rejection starts it over at
+  `sends = 1`. A closed link still *reads* — `GET` answers its `state` (`answered`, `closed`,
+  `superseded`, `expired`) and the `outcome` — and the answering routes refuse it with `410`.
+- **The public approval routes bypass the gate the way `ci.ts` does**: `src/panel/approval.ts` is
+  mounted on `/v1` before the panel, so its handlers answer before `requireAdmin` runs. They show
+  what the client was told and nothing else — no installation, no internal id beyond the window ids
+  the answer must name, no address — and are limited per IP (`PUBLIC_LIMITER`, 30 a minute). The
+  gateway's CORS already allows `franciscosolis.cl` and its subdomains, which is where the page lives.
+- **The cron timeline is 48 h / 48 h / 24 h, against an explicit `now`** (`runMaintenances`): 48 hours
+  after the first send it is sent again; 48 hours after that (or as soon as the links expire) it is
+  applied in the first offered window *by position* that still starts at least 24 hours away
+  (`auto_applied`, an audit row with no actor), or becomes `no_response` and the owner is told. 24 hours
+  before the window the reminder goes out — the email only if the client was not told within those 24
+  hours anyway (a late approval or a security notice) — with an in-app notice when the app has the
+  `messages` module: app-scoped when it includes every installation, one per installation when it
+  names some, `created_by = maintenance:<id>` so finishing or cancelling ends them. A window that
+  passed entirely without a run seeing it start is cancelled (`cancel_reason = 'missed'`).
+- **Starting puts the included installations in `maintenance` and remembers what they had.** Each
+  one's previous `state_override` / `state_message` goes into `result_detail.previous_overrides`, and
+  finishing restores it only where the override still says `maintenance` — a person may have changed
+  one by hand meanwhile. Installations suspended or in grace on their own are skipped. The state
+  message gives the estimated end on Santiago's clock.
+- **The release reaches exactly the update targets.** The targets are the included installations on
+  the release's line (channel, platform, normalised architecture) not already running its version.
+  A **draft** is published at 0 % with only the targets in `rollout_installations` (`published_by =
+  maintenance:<id>`); an already **published** one keeps its rollout and gets the targets added. A
+  release paused or withdrawn by the time the window starts fails the maintenance before anything is
+  touched (`release_unavailable`), and is not withdrawn by it. Named installations off the release's
+  line are refused when the maintenance is planned (422), since the offer could never reach them.
+- **The offer works during maintenance** (`offerFor` refuses only suspension and grace): the
+  installation's `maintenance` override wins over the app's `grace`, so a maintenance a lapsed
+  contract allows still installs its release.
+- **Success is every target healthy on the release since the start.** Evaluated at the window's end
+  plus the app's `update_health_timeout_seconds` (just the window's end without a release): each target
+  reported `health_ok` for the release since `started_at`, and none reported `rolled_back` or `failed`.
+  Completed: the hours (`estimated_minutes`) are logged as a `maintenance` work log entry with
+  `maintenance_id`, filed like any other on the window's Santiago day — or today when that day's cycle
+  already closed — and the client gets the closing email. Failed: the release is withdrawn exactly as
+  `/withdraw` does (`automatic: true`, reason `maintenance <title> failed health check`) so the devices
+  roll back, the owner is notified and the client is told the devices stayed on the previous version;
+  no hours are logged. `/complete` and `/fail` close one by hand, with a note.
+- **Security patches choose their own window** (`/schedule`, `kind: 'security'`, no approval): the
+  first block of the estimated duration with zero use on the heatmap, starting at least two hours from
+  now and ending within the `security_patch_days` of the contract covering the app (3 without one),
+  else the least-used block of that horizon, inside the operating hours. It replaces any window,
+  is saved as `suggested`, and the client gets the advance notice at once.
+- **Suggestions read the heatmap of what the maintenance touches**: the last 30 days of the named
+  installations (or the whole app), scored over the duration rounded up to whole hours. Blocks start
+  on the hour — a UTC hour is exactly one Santiago hour — at least 24 hours ahead, within 14 days, best
+  first and earliest among equals, never overlapping each other or a window already offered. When an
+  app declares operating hours a block must lie *inside* them: a device may be off outside them.
+- **Grace pauses maintenances unless the contract allows `maintenance`** (`GRACE_ALLOWANCES`), and
+  suspension always does: `/send`, `/resend` and `/schedule` answer 409, and the cron neither resends,
+  applies, reminds nor starts. A window (or a request's links) that runs out while paused cancels the
+  maintenance with the pause (`grace` / `suspended`) as `cancel_reason`. An app put in grace by hand
+  has no contract to allow it.
+- **Mail around a maintenance is best effort, the request excepted.** Sending the request fails with
+  502 only when nobody could be emailed; every later notice (confirmation, reminder, outcome) that
+  fails is logged and recorded in `result_detail.mail_failures` and never fails or retries what it
+  reports. Recipients are the company's `maintenance_approver` contacts, else the primary contact,
+  else anyone with an address (`contactRecipients`, which the contract notice shares). Client-facing
+  copy is Spanish (`MAINTENANCE_LOCALE`), with English in the templates beside it.
+- **The owner is the account that created the maintenance** (`created_by_id`): told through
+  `apps/notifications` when the client approves or rejects, when nobody answers, and how it ended
+  (`custom_apps.maintenance_*`; a completion is not emailed).
 - **A website always pings.** A browser cannot set the `Authorization` header on a WebSocket upgrade,
   so socket mode is for native apps and `sdk.js` never opens one.
 
@@ -317,4 +409,9 @@ opens genuine WebSockets through `SELF.fetch` with an `Upgrade` header. The rate
 `CF-Connecting-IP` so the per-IP limit only bites the test that means it to. `EMAIL` is replaced
 by a capture before every test (`test/helpers/email.ts`, with `failEmail()` for the outage paths), so
 no test sends mail — and the ticket tests assert that opening one sends none. Contract tests move the calendar by calling `runContracts(env, later)` with a
-future instant, and give each company a RUT of its own.
+future instant, and give each company a RUT of its own. Maintenance tests do the same with
+`runMaintenances(env, later)`: windows are offered on the real clock (they must start in the future)
+and every instant after the send is derived from them, never from an hour boundary. A device's
+update report is stamped by the database's clock, so the tests move it onto the simulated window
+after sending it. The approval page is called with a random `CF-Connecting-IP` per request, so only
+the test that means to hits `PUBLIC_LIMITER`.

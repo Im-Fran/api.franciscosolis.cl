@@ -133,6 +133,8 @@ carry on. This Worker is the queue's consumer:
 | `marketplace.release_published`, `marketplace.review_reply` | marketplace | yes |
 | `custom_apps.alert_opened`, `custom_apps.alert_resolved` | custom-apps | yes — its alert rules, for the account that created them |
 | `custom_apps.ticket_opened`, `custom_apps.ticket_message` | custom-apps | yes — a support ticket opened from a client's app, or a new message from its requester, for the account the app's tickets are assigned to |
+| `custom_apps.maintenance_approved`, `custom_apps.maintenance_rejected`, `custom_apps.maintenance_no_response`, `custom_apps.maintenance_failed` | custom-apps | yes — a scheduled maintenance: the client approved or rejected it through the approval link, nobody answered and no window is left to apply it in, or it failed (its release is withdrawn), for the account that created it |
+| `custom_apps.maintenance_completed` | custom-apps | no — the bell and push only: good news the panel already shows; the client's closing mail is custom-apps' own |
 
 The event id is the notification's primary key, so a redelivery inserts nothing and pushes nothing.
 A malformed event is acknowledged and dropped; an unknown type is retried, since it means a producer
