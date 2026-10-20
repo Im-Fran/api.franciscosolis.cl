@@ -826,6 +826,11 @@ const contracts = sqliteTable('contracts', {
   graceAllows: text('grace_allows').notNull().default('[]'),
   /** What the covered apps show while in grace and once suspended. Null leaves it to each app. */
   graceMessage: text('grace_message'),
+  /**
+   * Days within which a security patch is applied, without the client's approval: its window is the
+   * first unused block of that many days ahead, or the least used one.
+   */
+  securityPatchDays: integer('security_patch_days').notNull().default(3),
   noticeSentAt: integer('notice_sent_at', { mode: 'timestamp' }),
   lapsedAt: integer('lapsed_at', { mode: 'timestamp' }),
   cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
@@ -901,12 +906,130 @@ const workLogs = sqliteTable('work_logs', {
   linkUrl: text('link_url'),
   /** The support ticket the work answered, when it did. */
   ticketId: text('ticket_id').references(() => tickets.id, { onDelete: 'set null' }),
+  /** The maintenance the work was, when it was one. A completed maintenance logs itself here. */
+  maintenanceId: text('maintenance_id').references(() => maintenances.id, { onDelete: 'set null' }),
   ...authorship,
   ...timestamps,
 }, (table) => [
   index('work_logs_company_day_idx').on(table.companyId, table.occurredOn),
   index('work_logs_app_day_idx').on(table.appId, table.occurredOn),
   index('work_logs_cycle_idx').on(table.cycleId),
+  index('work_logs_maintenance_idx').on(table.maintenanceId),
+])
+
+/* ── Maintenances ──────────────────────────────────────────────────────────── */
+
+/**
+ * A scheduled maintenance of one app: what will be done and its impact (shown to the client), how long
+ * it takes, optionally the release it installs, and on which installations (`installation_ids`, empty
+ * for every active one). `MAINTENANCE_STATUSES` has the lifecycle; `services/maintenances.ts` the rules.
+ *
+ * Like a ticket it carries `company_id` without a foreign key: the client it was offered to is part of
+ * the record. The account that created it (`created_by_id`, an auth `sub`) is the one told about the
+ * client's answer and the outcome, through `apps/notifications`.
+ */
+const maintenances = sqliteTable('maintenances', {
+  id: text('id').primaryKey(),
+  appId: text('app_id').notNull().references(() => apps.id, { onDelete: 'cascade' }),
+  companyId: text('company_id').notNull(),
+  /** `MAINTENANCE_KINDS`. */
+  kind: text('kind').notNull().default('normal'),
+  title: text('title').notNull(),
+  /** What will be done and what the client will notice, in the client's words. Shown on the approval page. */
+  description: text('description').notNull(),
+  estimatedMinutes: integer('estimated_minutes').notNull(),
+  /** A release of the same app, offered to the included installations during the window. */
+  releaseId: text('release_id').references(() => releases.id, { onDelete: 'set null' }),
+  /** JSON array of installation ids; empty means every active installation of the app. */
+  installationIds: text('installation_ids').notNull().default('[]'),
+  /** `MAINTENANCE_STATUSES`. */
+  status: text('status').notNull().default('draft'),
+  /** Approval requests sent since the maintenance last left `draft`. */
+  sends: integer('sends').notNull().default(0),
+  lastSentAt: integer('last_sent_at', { mode: 'timestamp' }),
+  /** The window it runs in, once scheduled. One of its `maintenance_windows`. */
+  chosenWindowId: text('chosen_window_id'),
+  /** When it became `scheduled`, whichever way. */
+  scheduledAt: integer('scheduled_at', { mode: 'timestamp' }),
+  /** Applied in the first eligible window because nobody answered. */
+  autoApplied: integer('auto_applied', { mode: 'boolean' }).notNull().default(false),
+  /** Who answered the approval link — the address it was sent to — and the name they typed, if any. */
+  respondedBy: text('responded_by'),
+  respondedByName: text('responded_by_name'),
+  respondedAt: integer('responded_at', { mode: 'timestamp' }),
+  /** The last rejection: a rejected maintenance is a draft again, and keeps why. */
+  rejectionReason: text('rejection_reason'),
+  rejectedAt: integer('rejected_at', { mode: 'timestamp' }),
+  /** The 24-hour reminder: email and in-app notice. Once. */
+  reminderSentAt: integer('reminder_sent_at', { mode: 'timestamp' }),
+  /** `MAINTENANCE_RESULTS`, once it ended. */
+  result: text('result'),
+  /**
+   * JSON: what the run did and needs to undo — the installations put in maintenance and the override
+   * each had before (restored at the end), the update targets, the release's state before it was
+   * extended to them, and why it failed or was cancelled.
+   */
+  resultDetail: text('result_detail').notNull().default('{}'),
+  startedAt: integer('started_at', { mode: 'timestamp' }),
+  finishedAt: integer('finished_at', { mode: 'timestamp' }),
+  /** Who closed it by hand; null when the cron evaluated it. */
+  closedBy: text('closed_by'),
+  /** The work log entry a completed maintenance logged. */
+  workLogId: text('work_log_id'),
+  cancelledAt: integer('cancelled_at', { mode: 'timestamp' }),
+  /** Null when the cron cancelled it. */
+  cancelledBy: text('cancelled_by'),
+  cancelReason: text('cancel_reason'),
+  /** The auth `sub` of the account that created it, told about answers and outcomes. */
+  createdById: text('created_by_id'),
+  ...authorship,
+  ...timestamps,
+}, (table) => [
+  index('maintenances_status_idx').on(table.status),
+  index('maintenances_app_idx').on(table.appId, table.createdAt),
+  index('maintenances_company_idx').on(table.companyId, table.createdAt),
+])
+
+/**
+ * A window a maintenance is offered in (`[starts_at, ends_at)`, instants), in the order the client
+ * sees them (`position`). Never shorter than the estimated duration, never overlapping another window
+ * of the same maintenance.
+ */
+const maintenanceWindows = sqliteTable('maintenance_windows', {
+  id: text('id').primaryKey(),
+  maintenanceId: text('maintenance_id').notNull().references(() => maintenances.id, { onDelete: 'cascade' }),
+  startsAt: integer('starts_at', { mode: 'timestamp' }).notNull(),
+  endsAt: integer('ends_at', { mode: 'timestamp' }).notNull(),
+  /** `MAINTENANCE_WINDOW_SOURCES`. */
+  source: text('source').notNull().default('manual'),
+  position: integer('position').notNull().default(0),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [index('maintenance_windows_maintenance_idx').on(table.maintenanceId, table.position)])
+
+/**
+ * The approval links: one per recipient per send, opaque (`mnt_…`), only the SHA-256 stored like a
+ * device token. A link expires when the first window it offered starts; sending again invalidates
+ * every earlier link; answering through one closes them all. A link that can no longer answer still
+ * reads, so the page can show what became of the request.
+ */
+const maintenanceLinks = sqliteTable('maintenance_links', {
+  id: text('id').primaryKey(),
+  maintenanceId: text('maintenance_id').notNull().references(() => maintenances.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull(),
+  /** The address this link was emailed to: who answered, when somebody answers through it. */
+  recipientEmail: text('recipient_email').notNull(),
+  /** Which send of the maintenance it belongs to, numbered across every round of it (1, 2, …). */
+  send: integer('send').notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  /** A later send, an answer through another link, or the maintenance leaving `pending_approval`. */
+  invalidatedAt: integer('invalidated_at', { mode: 'timestamp' }),
+  /** `approved` or `rejected`, once answered through this link. */
+  answer: text('answer'),
+  answeredAt: integer('answered_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+}, (table) => [
+  uniqueIndex('maintenance_links_token_unique').on(table.tokenHash),
+  index('maintenance_links_maintenance_idx').on(table.maintenanceId, table.send),
 ])
 
 /* ── Audit ─────────────────────────────────────────────────────────────────── */
@@ -955,6 +1078,9 @@ export {
   installationDaily,
   installations,
   logEntries,
+  maintenanceLinks,
+  maintenances,
+  maintenanceWindows,
   messageReceipts,
   messages,
   metricSamples,
