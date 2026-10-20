@@ -5,6 +5,8 @@ import { theme } from '../theme'
 type ActionLinkProps = {
   href: string
   label: string
+  /** The line above the plain copy of the link, in the email's language. English by default. */
+  hint?: string
 }
 
 /**
@@ -24,7 +26,7 @@ type ActionLinkProps = {
  * `backgroundColor` is repeated as a `bgcolor` attribute — a sanitiser that drops the inline style
  * and keeps the white label would otherwise leave white text on white.
  */
-const ActionLink = ({ href, label }: ActionLinkProps) => (
+const ActionLink = ({ href, label, hint = 'If the button does not work, copy this link into your browser:' }: ActionLinkProps) => (
   <>
     <Button
       href={href}
@@ -43,7 +45,7 @@ const ActionLink = ({ href, label }: ActionLinkProps) => (
       {label}
     </Button>
     <Text style={{ margin: '24px 0 8px', fontSize: '13px', lineHeight: '1.6', color: theme.colors.muted }}>
-      If the button does not work, copy this link into your browser:
+      {hint}
     </Text>
     <Section
       bgcolor={theme.colors.surfaceTinted}
