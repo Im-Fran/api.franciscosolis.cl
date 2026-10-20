@@ -692,7 +692,8 @@ const alertRules = sqliteTable('alert_rules', {
  *
  * Kept for good means it outlives its rule: deleting a rule resolves its unresolved alerts and nulls
  * `rule_id` on all of them, and `rule_name` / `rule_kind` — copied from the rule when the alert opens
- * — are what the panel still shows for one whose rule is gone.
+ * — are what the panel still shows for one whose rule is gone. `app_name` does the same for an alert
+ * whose app was deleted.
  */
 const alerts = sqliteTable('alerts', {
   id: text('id').primaryKey(),
@@ -701,7 +702,10 @@ const alerts = sqliteTable('alerts', {
   /** The rule's name and kind, snapshotted so the alert still reads right after the rule is deleted. */
   ruleName: text('rule_name'),
   ruleKind: text('rule_kind'),
+  /** Not a foreign key: an alert outlives its app too. */
   appId: text('app_id').notNull(),
+  /** The app's name, snapshotted when the alert opens and when its app is deleted, for the same reason. */
+  appName: text('app_name'),
   installationId: text('installation_id'),
   /** `installation:<id>` or `app:<id>`: what the alert is about, for the uniqueness above. */
   subject: text('subject').notNull(),

@@ -17,6 +17,7 @@ import {
   contractStatus,
   coveredApps,
   resolveWorkLogTarget,
+  syncContracts,
   syncCycles,
   todayIn,
   toContract,
@@ -24,7 +25,6 @@ import {
   toWorkLog,
   usageOf,
   type ContractRow,
-  type CycleRow,
 } from '@/services/contracts'
 import { assertTicketOfCompany } from '@/panel/routes/tickets'
 import { assertId, dataSchema, jsonContent, listSchema, notFound, page, panelErrors } from '@/panel/shared'
@@ -34,7 +34,9 @@ import { assertId, dataSchema, jsonContent, listSchema, notFound, page, panelErr
  *
  * Hours are whole minutes on the wire as in the database, so nothing is rounded twice; the panel
  * shows them as hours. Every read of a contract first brings its cycles up to today
- * (`syncCycles`), so a cycle whose period ended reads as closed even before the cron has run.
+ * (`syncCycles`), so a cycle whose period ended reads as closed even before the cron has run. The
+ * list does the same for the contracts it shows, but only advances those whose calendar actually
+ * moved (`syncContracts`).
  */
 const app = new Hono<AppEnv>()
 
@@ -138,20 +140,16 @@ const checkDates = (startsOn: string, endsOn: string | null) => {
   if (endsOn && endsOn < startsOn) throw new HTTPException(400, { message: 'ends_on: cannot be before starts_on' })
 }
 
-/** A contract as the detail view shows it: company, apps, and the cycle running today with per-app usage. */
+/**
+ * A contract as the detail view shows it: company, apps, and the cycle running today with per-app
+ * usage. `row` must be current: the sync touches cycles only, never the contract itself.
+ */
 const detail = async (db: Database, row: ContractRow, day: string) => {
-  await syncCycles(db, row, day)
-  const fresh = await loadContract(db, row.id)
-  const [company, covered, [current]] = await Promise.all([
-    companyOf(db, fresh.companyId),
-    coveredApps(db, [fresh.id]),
-    db.select().from(contractCycles).where(and(eq(contractCycles.contractId, fresh.id), eq(contractCycles.status, 'open'))).orderBy(desc(contractCycles.startsOn)).limit(1),
-  ])
+  const [latest, company, covered] = await Promise.all([syncCycles(db, row, day), companyOf(db, row.companyId), coveredApps(db, [row.id])])
+  const current = latest?.status === 'open' ? latest : null
   let currentCycle = null
   let usageByApp: Array<{ app_id: string | null; app_name: string | null; minutes: number }> = []
   if (current) {
-    const used = (await usageOf(db, [current.id])).get(current.id) ?? 0
-    currentCycle = toCycle(current, used, fresh)
     usageByApp = (
       await db
         .select({ appId: workLogs.appId, appName: apps.name, minutes: sql<number>`SUM(${workLogs.minutes})` })
@@ -160,8 +158,9 @@ const detail = async (db: Database, row: ContractRow, day: string) => {
         .where(eq(workLogs.cycleId, current.id))
         .groupBy(workLogs.appId, apps.name)
     ).map((entry) => ({ app_id: entry.appId, app_name: entry.appName, minutes: Number(entry.minutes) }))
+    currentCycle = toCycle(current, usageByApp.reduce((total, entry) => total + entry.minutes, 0), row)
   }
-  return { ...toContract(fresh, { day, company, apps: covered.get(fresh.id) ?? [], currentCycle }), current_cycle_usage_by_app: usageByApp }
+  return { ...toContract(row, { day, company, apps: covered.get(row.id) ?? [], currentCycle }), current_cycle_usage_by_app: usageByApp }
 }
 
 /* ── Contracts ─────────────────────────────────────────────────────────────── */
@@ -199,14 +198,14 @@ app.get(
       .orderBy(sql`${contracts.endsOn} IS NULL`, asc(contracts.endsOn), asc(contracts.name))
     if (query.status) rows = rows.filter((row) => contractStatus(row.contract, day) === query.status)
     const pageRows = rows.slice(offset, offset + limit)
-    for (const row of pageRows) await syncCycles(db, row.contract, day)
-    const ids = pageRows.map((row) => row.contract.id)
-    const [covered, cycles] = await Promise.all([
-      coveredApps(db, ids),
-      ids.length > 0 ? db.select().from(contractCycles).where(and(inArray(contractCycles.contractId, ids), eq(contractCycles.status, 'open'))) : Promise.resolve([] as CycleRow[]),
+    // Only the contracts whose calendar moved are synced; the rest cost nothing beyond one statement
+    // that reads every listed contract's latest cycle.
+    const [covered, latest] = await Promise.all([
+      coveredApps(db, pageRows.map((row) => row.contract.id)),
+      syncContracts(db, pageRows.map((row) => row.contract), day),
     ])
-    const usage = await usageOf(db, cycles.map((cycle) => cycle.id))
-    const cycleOf = new Map(cycles.map((cycle) => [cycle.contractId, cycle]))
+    const cycleOf = new Map([...latest].filter(([, cycle]) => cycle.status === 'open'))
+    const usage = await usageOf(db, [...cycleOf.values()].map((cycle) => cycle.id))
     return c.json({
       code: 200 as const,
       data: pageRows.map((row) => {

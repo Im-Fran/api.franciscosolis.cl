@@ -140,29 +140,48 @@ const closeOpenCycle = async (db: Database, contract: ContractRow, cycle: CycleR
 }
 
 /**
- * Brings a contract's cycles up to `day`: closes every cycle whose period ended and opens the one
- * that contains `day`, carrying over what the policy allows. Idempotent and safe to race: inserts
- * are keyed on the cycle's start and closes on its status.
+ * Where an open cycle's end belongs now, or null when it already is there. The last cycle is cut at
+ * `ends_on`, so a contract renewed (or extended, or shortened) while that cycle is still open moves
+ * its end to where the period now ends: the next boundary, or the new last day.
  */
-/**
- * Keeps an open cycle's end in step with the contract's. The last cycle is cut at `ends_on`, so a
- * contract renewed (or extended, or shortened) while that cycle is still open moves its end to where
- * the period now ends: the next boundary, or the new last day. A closed cycle is final and never moves.
- */
-const followContractEnd = async (db: Database, contract: ContractRow, cycle: CycleRow, lastDay: string | null) => {
+const followedEnd = (contract: ContractRow, cycle: CycleRow, lastDay: string | null) => {
   const natural = cycleContaining(contract.cyclePeriod as CyclePeriod, contract.startsOn, cycle.startsOn, lastDay)
-  if (!natural || natural.endsOn === cycle.endsOn || natural.endsOn <= cycle.startsOn) return cycle
+  if (!natural || natural.endsOn === cycle.endsOn || natural.endsOn <= cycle.startsOn) return null
+  return natural.endsOn
+}
+
+/** Keeps an open cycle's end in step with the contract's (`followedEnd`). A closed cycle is final and never moves. */
+const followContractEnd = async (db: Database, contract: ContractRow, cycle: CycleRow, lastDay: string | null) => {
+  const endsOn = followedEnd(contract, cycle, lastDay)
+  if (!endsOn) return cycle
   const [moved] = await db
     .update(contractCycles)
-    .set({ endsOn: natural.endsOn, updatedAt: new Date() })
+    .set({ endsOn, updatedAt: new Date() })
     .where(and(eq(contractCycles.id, cycle.id), eq(contractCycles.status, 'open')))
     .returning()
   return moved ?? cycle
 }
 
-const syncCycles = async (db: Database, contract: ContractRow, day: string, actor: string | null = null, now: Date = new Date()) => {
-  const [latestRow] = await db.select().from(contractCycles).where(eq(contractCycles.contractId, contract.id)).orderBy(desc(contractCycles.startsOn)).limit(1)
-  let latest: CycleRow | null = latestRow ?? null
+/**
+ * Whether `advanceCycles` would change anything for a contract whose latest cycle is `latest`:
+ * the first step of its loop, answered without touching D1. A contract with no cycle that covers
+ * `day` needs its first one; an open cycle needs its end moved or, once its period is over, closing;
+ * a closed latest cycle needs a successor once `day` reaches its end, within the contract.
+ */
+const needsSync = (contract: ContractRow, latest: CycleRow | null, day: string) => {
+  const lastDay = lastDayOf(contract)
+  if (!latest) return !(day < contract.startsOn || (lastDay !== null && contract.startsOn > lastDay))
+  if (latest.status === 'open') return followedEnd(contract, latest, lastDay) !== null || latest.endsOn <= day
+  return !(latest.endsOn > day || (lastDay !== null && latest.endsOn > lastDay))
+}
+
+/**
+ * Brings a contract's cycles up to `day`, from its latest cycle: closes every cycle whose period
+ * ended and opens the one that contains `day`, carrying over what the policy allows. Idempotent and
+ * safe to race: inserts are keyed on the cycle's start and closes on its status.
+ */
+const advanceCycles = async (db: Database, contract: ContractRow, latestRow: CycleRow | null, day: string, actor: string | null, now: Date) => {
+  let latest: CycleRow | null = latestRow
   const lastDay = lastDayOf(contract)
   for (let step = 0; step < CONTRACTS.maxCyclesPerRun; step += 1) {
     if (!latest) {
@@ -183,6 +202,47 @@ const syncCycles = async (db: Database, contract: ContractRow, day: string, acto
     // on every turn; stop instead and leave the calendar where it is.
     if (!next || next.endsOn <= latest.endsOn) return latest
     latest = next
+  }
+  return latest
+}
+
+/** Brings one contract's cycles up to `day` (`advanceCycles`), and answers its latest cycle. */
+const syncCycles = async (db: Database, contract: ContractRow, day: string, actor: string | null = null, now: Date = new Date()) => {
+  const [latest] = await db.select().from(contractCycles).where(eq(contractCycles.contractId, contract.id)).orderBy(desc(contractCycles.startsOn)).limit(1)
+  return advanceCycles(db, contract, latest ?? null, day, actor, now)
+}
+
+/** The latest cycle of each contract, in one statement. */
+const latestCycles = async (db: Database, contractIds: string[]) => {
+  const map = new Map<string, CycleRow>()
+  if (contractIds.length === 0) return map
+  const rows = await db
+    .select()
+    .from(contractCycles)
+    .where(
+      and(
+        inArray(contractCycles.contractId, contractIds),
+        sql`${contractCycles.startsOn} = (SELECT MAX(x.starts_on) FROM contract_cycles x WHERE x.contract_id = "contract_cycles"."contract_id")`,
+      ),
+    )
+  for (const row of rows) map.set(row.contractId, row)
+  return map
+}
+
+/**
+ * `syncCycles` for many contracts at once, for the reads that list them: their latest cycles are
+ * loaded in one statement, and only the contracts `needsSync` picks are advanced — on a day when
+ * nothing ends, a list costs one statement here however long it is. Answers each contract's latest
+ * cycle after the sync (absent when it has none).
+ */
+const syncContracts = async (db: Database, rows: ContractRow[], day: string, now: Date = new Date()) => {
+  const latest = await latestCycles(db, rows.map((row) => row.id))
+  for (const row of rows) {
+    const cycle = latest.get(row.id) ?? null
+    if (!needsSync(row, cycle, day)) continue
+    const synced = await advanceCycles(db, row, cycle, day, null, now)
+    if (synced) latest.set(row.id, synced)
+    else latest.delete(row.id)
   }
   return latest
 }
@@ -594,9 +654,11 @@ export {
   coveredApps,
   covers,
   graceAllows,
+  needsSync,
   noticeRecipients,
   resolveWorkLogTarget,
   runContracts,
+  syncContracts,
   syncCycles,
   todayIn,
   toContract,

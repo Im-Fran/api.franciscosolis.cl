@@ -36,7 +36,9 @@ describe('an offline installation', () => {
 
     expect(await evaluateAlerts(env)).toMatchObject({ rules: 1, opened: 1 })
     const [alert] = (await panelJson('/v1/alerts?status=unresolved')).body.data
-    expect(alert).toMatchObject({ rule_id: offline.id, installation_id: device.installation_id, status: 'open', value: 15, kind: 'installation_offline' })
+    expect(alert).toMatchObject({ rule_id: offline.id, installation_id: device.installation_id, status: 'open', value: 15, kind: 'installation_offline', app_name: 'POS Andes' })
+    // The app's name is snapshotted as the alert opens, for the day the app is gone.
+    expect(await env.DB.prepare('SELECT app_name FROM alerts WHERE id = ?').bind(alert.id).first('app_name')).toBe('POS Andes')
     expect(publishedNotifications()).toEqual([
       expect.objectContaining({
         type: 'custom_apps.alert_opened',
@@ -123,8 +125,25 @@ describe('an offline installation', () => {
     await env.DB.prepare("INSERT INTO alerts (id, rule_id, rule_name, rule_kind, app_id, subject, status, opened_at, last_triggered_at) VALUES (?, ?, 'Enrollments', 'enrollment_spike', ?, ?, 'open', ?, ?)")
       .bind(id, scoped.id, created.id, `app:${created.id}`, minutesAgo(10), minutesAgo(5))
       .run()
+    const second = await rule({ name: 'Crashes', kind: 'crash_spike', threshold: 3, app_id: created.id })
+    // Renamed after the alert opened (and that alert, like one stored before the snapshot existed,
+    // holds no name): what it keeps is the name the app had when it was deleted.
+    expect((await panelJson(`/v1/apps/${created.id}`, { method: 'PATCH', body: { name: 'POS Andes 2' } })).status).toBe(200)
     expect((await panel(`/v1/apps/${created.id}`, { method: 'DELETE' })).status).toBe(200)
-    expect((await panelJson(`/v1/alerts/${id}`)).body.data).toMatchObject({ rule_id: null, rule_deleted: true, rule_name: 'Enrollments', kind: 'enrollment_spike', status: 'resolved', app_name: null })
+    expect((await panelJson(`/v1/alerts/${id}`)).body.data).toMatchObject({ rule_id: null, rule_deleted: true, rule_name: 'Enrollments', kind: 'enrollment_spike', status: 'resolved', app_id: created.id, app_name: 'POS Andes 2' })
+    expect((await panelJson(`/v1/alerts?app_id=${created.id}`)).body.data).toEqual([expect.objectContaining({ id, app_name: 'POS Andes 2' })])
+
+    // Each rule that went with the app is in the trail as deleted, by whoever deleted the app, ahead of the app's own row.
+    const trail = (
+      await env.DB.prepare("SELECT event, resource_id, actor_email, metadata FROM audit_logs WHERE resource_id IN (?, ?, ?) AND event IN ('alert_rule.deleted', 'app.deleted') ORDER BY rowid")
+        .bind(scoped.id, second.id, created.id)
+        .all<{ event: string; resource_id: string; actor_email: string; metadata: string }>()
+    ).results
+    expect(trail.map((row) => row.event)).toEqual(['alert_rule.deleted', 'alert_rule.deleted', 'app.deleted'])
+    expect(trail.map((row) => row.resource_id).slice(0, 2).sort()).toEqual([scoped.id, second.id].sort())
+    expect(trail.every((row) => row.actor_email === 'fran@franciscosolis.cl')).toBe(true)
+    const cascaded = JSON.parse(trail.find((row) => row.resource_id === scoped.id)!.metadata)
+    expect(cascaded).toMatchObject({ cascade: 'app.deleted', app_id: created.id, before: { id: scoped.id, name: 'Enrollments', kind: 'enrollment_spike', app_name: 'POS Andes 2', open_alerts: 1 } })
   })
 
   it('can be acknowledged and resolved by hand', async () => {

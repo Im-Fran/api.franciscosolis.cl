@@ -303,11 +303,16 @@ describe('reading telemetry in the panel', () => {
   it('downsample a series into buckets, averaging gauges and summing counters', async () => {
     const created = await createApp()
     const device = await enrollDevice(created.id, created.key.key)
+    // Buckets are aligned on the epoch, so the window is the last whole hour: a window ending "now"
+    // put a bucket boundary between the two samples for 100 seconds of every hour.
+    const hourStart = Math.floor(Date.now() / 3600_000) * 3600_000 - 3600_000
+    const agoAt = (offsetSeconds: number) => (Date.now() - (hourStart + offsetSeconds * 1000)) / 1000
     await seedSamples(device.installation_id, created.id, [
-      { ago: 3500, cpu: 10, memUsed: 2_000, rx: 100 },
-      { ago: 3400, cpu: 30, memUsed: 6_000, rx: 300 },
+      { ago: agoAt(100), cpu: 10, memUsed: 2_000, rx: 100 },
+      { ago: agoAt(200), cpu: 30, memUsed: 6_000, rx: 300 },
     ])
-    const { body } = await panelJson(`/v1/installations/${device.installation_id}/metrics?from=${new Date(Date.now() - 3600_000).toISOString()}&points=1`)
+    const window = `from=${new Date(hourStart).toISOString()}&to=${new Date(hourStart + 3600_000).toISOString()}`
+    const { body } = await panelJson(`/v1/installations/${device.installation_id}/metrics?${window}&points=1`)
     expect(body.data.bucket_seconds).toBeGreaterThanOrEqual(3600)
     expect(body.data.points).toHaveLength(1)
     expect(body.data.points[0]).toMatchObject({ cpu_percent: 20, memory_percent: 50, net_rx_bytes: 400, gpu_percent: null, samples: 2 })

@@ -149,6 +149,13 @@ the clients' apps and to this internal panel, never to the website.
   reads left-join the rule and fall back to the snapshot: such an alert answers `rule_id: null`,
   `rule_deleted: true`, `threshold: null`. Reconciliation only ever reads alerts by `rule_id`, so
   orphans never collide with a new rule's alerts.
+- **An alert outlives its app the same way.** `alerts.app_id` is not a foreign key, and `app_name` is
+  a snapshot (`0006_alert_app_name.sql`, backfilled from `apps`): set when the alert opens, refreshed
+  when it re-triggers and by `retireRuleAlerts`, and taken for every alert filed under an app by
+  `snapshotAppName` just before the app is deleted. Reads answer the live app's name and fall back to
+  the snapshot. Deleting an app writes an `alert_rule.deleted` row per rule that went with it (actor
+  = the deleting account, `{ before: <rule view>, cascade: 'app.deleted', app_id }`), in one batch
+  ahead of the app's own `app.deleted` row.
 - **A grace period ends on its own.** The cron suspends an app whose `grace` reached `state_until`,
   with an audit row that has no actor and `automatic: true`.
 - **The heartbeat writes synchronously, metrics and events through the queue.** Presence must be
@@ -249,6 +256,16 @@ the clients' apps and to this internal panel, never to the website.
   cycle. The next cycle's carried buckets are recomputed from the closed row, which is why the work
   log refuses (409) an entry dated inside a closed cycle — a late entry would change a balance another
   cycle was derived from. Log it on the current cycle instead.
+- **A list of contracts syncs only the contracts that need it** (`syncContracts`). Calling
+  `syncCycles` for every listed contract, one after another, made the list cost a D1 round trip per
+  contract (0.8–2.1 s in dev) on days when nothing changed. The list loads every listed contract's
+  latest cycle in one statement and advances only those `needsSync` picks: an open cycle whose period
+  ended or whose end no longer follows the contract's (`followedEnd`), a contract covering today with
+  no cycle, or a closed latest cycle whose successor is due. `needsSync` is the first step of the sync
+  loop (`advanceCycles`) answered without D1 — change one and the other must follow. A list read is a
+  constant four statements however long the page (`contracts.test.ts` counts them with
+  `test/helpers/queries.ts`). The detail view syncs alongside its other lookups and never reloads the
+  contract: the sync touches cycles only.
 - **A work log entry is filed, not assigned.** The contract covering its app (or, for company-wide
   work, the one contract covering the company) on its day, and the cycle that day falls in. Several
   candidates is a 422 asking for `contract_id`; none is valid — work outside any contract is kept,
@@ -275,7 +292,9 @@ the clients' apps and to this internal panel, never to the website.
   there is something to read from `sync.support_unread` in the heartbeat. `seen_at` on a message is
   the other side having read it; answering marks the requester's messages read. The status follows
   the conversation (a requester message → `open`, a reply → `pending` unless it resolves or closes;
-  `closed` takes no more messages). `number` is assigned inside the insert
+  `closed` takes no more messages). The overview's `tickets.unread` counts *tickets* holding at least
+  one unread requester message, never a `closed` one — not messages, which made one chatty ticket
+  read as dozens. `number` is assigned inside the insert
   (`MAX(number) + 1`), so it is unique without a counter table. The app's `support_assignee` —
   whoever turned the module on, or took the tickets over — hears about a new ticket and every
   requester message through `apps/notifications` (`custom_apps.ticket_opened` /

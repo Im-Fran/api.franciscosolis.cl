@@ -145,4 +145,20 @@ describe('support tickets', () => {
     await panelJson(`/v1/tickets/${second.id}/replies`, { method: 'POST', body: { message: 'ok' } })
     expect((await panelJson('/v1/overview')).body.data.tickets).toEqual({ open: 1, pending: 1, unread: 1 })
   })
+
+  it('count tickets, not messages, as unread in the overview', async () => {
+    const { app, device } = await setup()
+    const first = (await open(app.id, device.access_token)).body.data
+    // Three unread messages on one ticket are one ticket waiting.
+    for (const message of ['¿Alguien?', 'Sigue sin imprimir']) {
+      expect((await ingestJson(app.id, `/tickets/${first.id}/messages`, { token: device.access_token, body: { message } })).status).toBe(201)
+    }
+    // A ticket closed without an answer is not waiting on anybody, whatever it holds.
+    const closed = (await open(app.id, device.access_token)).body.data
+    expect((await panelJson(`/v1/tickets/${closed.id}`, { method: 'PATCH', body: { status: 'closed' } })).status).toBe(200)
+    expect((await panelJson('/v1/overview')).body.data.tickets).toEqual({ open: 1, pending: 0, unread: 1 })
+
+    await open(app.id, device.access_token)
+    expect((await panelJson('/v1/overview')).body.data.tickets).toEqual({ open: 2, pending: 0, unread: 2 })
+  })
 })

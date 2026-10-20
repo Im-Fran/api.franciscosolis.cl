@@ -25,7 +25,7 @@ app.get(
   '/overview',
   describeRoute({
     description:
-      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, contracts ending or in grace, hours cycles over budget or waiting to be billed, support tickets waiting on us or on the client, and the latest enrollments.',
+      'What the home screen opens with: installations connected against the total, how many wait for review, apps by state, unresolved alerts, releases rolling out or paused, contracts ending or in grace, hours cycles over budget or waiting to be billed, support tickets waiting on us or on the client (`tickets.open` / `tickets.pending`) and how many tickets hold a requester message nobody opened yet (`tickets.unread`: tickets, not messages, and never a `closed` one, which takes no more messages), and the latest enrollments.',
     tags: ['Overview'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'The overview' }, ...panelErrors },
@@ -73,7 +73,7 @@ app.get(
       c.env.DB.prepare(
         `SELECT SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open,
                 SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-                (SELECT COUNT(*) FROM ticket_messages WHERE author = 'requester' AND seen_at IS NULL) AS unread
+                SUM(CASE WHEN status != 'closed' AND EXISTS (SELECT 1 FROM ticket_messages m WHERE m.ticket_id = tickets.id AND m.author = 'requester' AND m.seen_at IS NULL) THEN 1 ELSE 0 END) AS unread
          FROM tickets`,
       ).all<Record<string, number | null>>().then((result) => result.results),
     ])
