@@ -27,14 +27,19 @@ database**, and which one a request came through is decided by its hostname:
   never through the gateway. It accepts installation tokens and nothing else; the panel accepts
   access tokens and nothing else.
 
+Two routes on the panel host take no panel token: CI uploading a release (a CI token), and the
+public maintenance approval routes a client's browser calls from the link in their email
+(`/v1/public/maintenances/:token`, the link itself is the credential).
+
 Phases 1 to 3 of the plan are here: the CRM, the inventory of apps and installations, enrollment,
 presence, telemetry and the kill switch; remote operation — socket presence, commands and
 screenshots, feature flags and remote config, in-app messages, remote logs, crash reports and alerts;
 and releases — signed builds uploaded from CI, channels, staged rollout, a minimum version, the
 offer an A/B updater installs from, its reports, the automatic pause and rollback. From phase 4,
 contracts are here — hours per cycle with rollover and overage, the work log, the end of a contract
-driving the kill switch — and support tickets opened from inside the apps. Maintenance windows, site uptime and the
-secrets vault build on the same model and are not here yet.
+driving the kill switch — support tickets opened from inside the apps, and scheduled maintenances
+approved by the client. Site uptime and the secrets vault build on the same model and are not here
+yet.
 
 ---
 
@@ -154,6 +159,20 @@ secrets vault build on the same model and are not here yet.
   goes both ways — the app reads the answers and can write again, and a heartbeat tells it how many
   answers it has not read. Whoever turned support on (or took it over) is told about new tickets and
   messages in the website's bell; nothing is emailed. Work logged against a ticket shows on it.
+- **Scheduled maintenances** — a maintenance says what will be done and what the client will notice,
+  how long it takes, optionally the release it installs and on which installations. The panel offers
+  the client any number of windows, with suggestions: the least-used blocks of the next 14 days on
+  the usage heatmap of the installations it touches, at least 24 hours ahead and inside the app's
+  operating hours. The client's approver gets an email with a single-use link to
+  `franciscosolis.cl/mantencion/<token>` and picks a window or rejects with a reason (the maintenance
+  goes back to draft). No answer: sent once more after 48 hours, and 48 hours later applied in the
+  first offered window still 24 hours away. A reminder email and an in-app notice go out 24 hours
+  before; in the window the installations show the maintenance screen and are offered the release;
+  at the end (plus the health-check timeout) it is completed — the hours go to the work log and the
+  client gets a closing email — or failed: the release is withdrawn, the devices roll back, and both
+  the owner and the client are told. **Security patches** skip the approval: the system picks the
+  first unused block within the contract's `security_patch_days` (or the least used one) and the client
+  gets an advance notice. Grace and suspension pause it all unless the contract keeps maintenances.
 - **Per-app documents** — each app gets its own `openapi.json`, filtered to the modules it has
   enabled, and websites get a generated `sdk.js` with the app's id, key and modules baked in — which,
   with the matching modules, also reports uncaught errors as crashes, sends logs, keeps the flags and
@@ -176,7 +195,7 @@ secrets vault build on the same model and are not here yet.
 | Telemetry writes, alert notifications | [Cloudflare Queues](https://developers.cloudflare.com/queues/) |
 | Socket presence | [Durable Objects](https://developers.cloudflare.com/durable-objects/) with WebSocket Hibernation |
 | Screenshots, release artifacts | [Cloudflare R2](https://developers.cloudflare.com/r2/) |
-| Contract notices | [Cloudflare Email Sending](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/) + [`@franciscosolis/emails`](../../packages/emails/README.md) |
+| Contract notices, maintenance mail | [Cloudflare Email Sending](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/) + [`@franciscosolis/emails`](../../packages/emails/README.md) |
 | Abuse limits | [Workers Rate Limiting](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/) |
 | Tooling | [Wrangler](https://developers.cloudflare.com/workers/wrangler/) + [Vitest](https://vitest.dev) |
 
@@ -228,12 +247,20 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `GET` | `/` | The vocabularies the panel builds its forms from, the ingest base URL and the retention |
 | `GET` | `/openapi.json` | This Worker's panel document |
 
+### Maintenance approval (no login; the link is the credential, 30 requests a minute per IP)
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/v1/public/maintenances/:token` | What the approval page shows: title, description, `estimated_minutes`, `app_name`, `company_name`, the `windows` offered (`id`, `starts_at`, `ends_at`, `position`, `available`), `status`, `state` (`open`, `answered`, `closed`, `superseded`, `expired`), `answerable`, `expires_at` and, once decided, `outcome` (`decision`, `window`, `rejection_reason`, `responded_at`, `answered_here`). `404` for an unknown link |
+| `POST` | `/v1/public/maintenances/:token/approve` | `{ window_id, name? }`: schedule it in that window. `410` (with `state`) once the link cannot answer; `422` for a window not offered or already started |
+| `POST` | `/v1/public/maintenances/:token/reject` | `{ reason, name? }` (`reason` required, ≤ 1000): back to draft, with the reason. `410` once the link cannot answer |
+
 ### Panel (Bearer token for `franciscosolis-custom-apps` with `custom-apps:admin`)
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/v1/me` | The account behind the token |
-| `GET` | `/v1/overview` | Fleet counts, apps by state, unresolved alerts, releases, contracts and cycles, support tickets (`open`, `pending`, and `unread`: tickets — not messages — with a requester message nobody opened, closed ones left out), latest enrollments and what waits for review |
+| `GET` | `/v1/overview` | Fleet counts, apps by state, unresolved alerts, releases, contracts and cycles, support tickets (`open`, `pending`, and `unread`: tickets — not messages — with a requester message nobody opened, closed ones left out), maintenances (`pending_approval`, `upcoming` in the next 7 days, `in_progress`, `needs_attention`: no answer, failed in the last 7 days, or rejected), latest enrollments and what waits for review |
 | `GET` / `POST` | `/v1/companies` | List (`?search`) and create |
 | `GET` / `PATCH` / `DELETE` | `/v1/companies/:companyId` | One company with its contacts and apps; delete refused while it has apps |
 | `GET` | `/v1/companies/:companyId/contacts` | Its contacts with their roles |
@@ -286,11 +313,20 @@ The panel answers on `http://localhost:8796` (and through the gateway on
 | `GET` | `/v1/contracts/:contractId/cycles` | Its cycles, newest first, with their balance |
 | `GET` | `/v1/cycles/:cycleId` | One cycle and the work logged in it |
 | `POST` | `/v1/cycles/:cycleId/close` · `/bill` | Close one whose period ended; mark its overage billed |
-| `GET` / `POST` | `/v1/work-logs` · `/v1/apps/:appId/work-logs` | The work log (`?company_id`, `?app_id`, `?contract_id`, `?cycle_id`, `?kind`, `?from`, `?to`) with the total minutes; log work |
+| `GET` / `POST` | `/v1/work-logs` · `/v1/apps/:appId/work-logs` | The work log (`?company_id`, `?app_id`, `?contract_id`, `?cycle_id`, `?ticket_id`, `?maintenance_id`, `?kind`, `?from`, `?to`) with the total minutes; log work (optionally against a `ticket_id` or a `maintenance_id`) |
 | `PATCH` / `DELETE` | `/v1/work-logs/:workLogId` | Edit or delete an entry while its cycle is open |
 | `GET` | `/v1/tickets` · `/v1/tickets/:ticketId` | The support inbox (`?status`, `active` for what needs somebody; `?app_id`, `?company_id`, `?installation_id`, `?search`, `#42` included); one ticket with its conversation, device context and logged work (in the work log's shape) |
 | `POST` / `PATCH` | `/v1/tickets/:ticketId/replies` · `/v1/tickets/:ticketId` | Answer (it becomes `pending`, or `resolved`/`closed`); change its status or subject |
 | `POST` | `/v1/apps/:appId/support/assignee` | Take over an app's tickets: you are notified of them |
+| `GET` / `POST` | `/v1/maintenances` · `/v1/apps/:appId/maintenances` | Maintenances (`?status` — any status, `upcoming`, `pending` —, `?kind`, `?app_id`, `?company_id`, `?from`/`?to` for a calendar); plan one as a draft (`title`, `description`, `estimated_minutes`, `kind`, `release_id`, `installation_ids`) |
+| `GET` / `PATCH` / `DELETE` | `/v1/maintenances/:maintenanceId` | One with its windows, recipients and result; edit while a draft (or `no_response`); delete a draft or a cancelled one |
+| `GET` / `POST` | `/v1/maintenances/:maintenanceId/windows` | The windows offered, in order; offer one (`starts_at`, `ends_at`, `position`, `source`) |
+| `PATCH` / `DELETE` | `/v1/maintenances/:maintenanceId/windows/:windowId` | Move or reorder one; remove it |
+| `GET` / `POST` | `/v1/maintenances/:maintenanceId/windows/suggest` | Five suggested blocks with their expected use, nothing saved |
+| `GET` | `/v1/maintenances/:maintenanceId/installations` | What it includes now, and whether each is on the release's line |
+| `POST` | `/v1/maintenances/:maintenanceId/send` · `/resend` | Email the approval request (each approver a link of their own); send it again with fresh links |
+| `POST` | `/v1/maintenances/:maintenanceId/schedule` | A security patch: pick its window and notify the client, no approval |
+| `POST` | `/v1/maintenances/:maintenanceId/cancel` · `/complete` · `/fail` | Cancel one that has not started (`reason?`); close one in progress as completed (`note?`) or failed (`note`) |
 | `GET` | `/v1/audit-log` | `?event` (a trailing `.` matches a family), `?resource_type`, `?resource_id`, `?actor`, `?from`, `?to` |
 
 ### CI (Bearer CI token of the app)
@@ -381,13 +417,15 @@ a withdrawn version.
 | `CUSTOM_APPS_ALLOWED_AUDIENCES` | Client ids whose tokens may use the panel — its own only |
 | `CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS` | Domains allowed in, under the permission |
 | `INGEST_PUBLIC_URL` | Base of the ingest surface; its host is what requests are dispatched on |
-| `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Sender of the contract notices; must be allowed by the `EMAIL` binding |
+| `MAIL_FROM_EMAIL` / `MAIL_FROM_NAME` | Sender of the contract notices and the maintenance mail; must be allowed by the `EMAIL` binding |
+| `MAINTENANCE_LINK_BASE_URL` | The website's approval page an approval link points at (`https://franciscosolis.cl/mantencion`; `https://dev.franciscosolis.cl/mantencion` on dev); the token is appended |
 
 Bindings: `DB` (D1), `AUTH` (service binding, read for its JWKS only), `TELEMETRY_QUEUE` (producer
-and consumer of the same queue), `NOTIFICATIONS_QUEUE` (producer, for alerts), `PRESENCE` (the
+and consumer of the same queue), `NOTIFICATIONS_QUEUE` (producer, for alerts, tickets and maintenances), `PRESENCE` (the
 `InstallationSocket` Durable Object), `SCREENSHOTS` and `RELEASES` (R2), `EMAIL` (Cloudflare Email
 Sending, from `hola@mail.franciscosolis.cl`), `ENROLL_IP_LIMITER`,
-`ENROLL_APP_LIMITER` and `INGEST_LIMITER` (rate limits), the ingest zone route and a cron every five
+`ENROLL_APP_LIMITER`, `INGEST_LIMITER` and `PUBLIC_LIMITER` (rate limits; the last one guards the
+public approval routes), the ingest zone route and a cron every five
 minutes. One secret: `UPDATE_DOWNLOAD_SECRET` (`wrangler secret put UPDATE_DOWNLOAD_SECRET`, and again
 with `--env dev`), any long random string; rotating it invalidates the links already handed out,
 which live 15 minutes anyway.

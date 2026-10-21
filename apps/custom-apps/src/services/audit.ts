@@ -78,6 +78,30 @@ type AuditEvent =
   | 'ticket.opened'
   | 'ticket.replied'
   | 'ticket.status_changed'
+  /**
+   * Scheduled maintenances. Every transition is its own event, with `resource_type = 'maintenance'`
+   * and the app in the metadata. The cron's are written with no actor and `automatic: true`; an answer
+   * through an approval link carries the address the link was sent to as the actor, no `actor_id`, and
+   * `via: 'approval_link'`.
+   */
+  | 'maintenance.created'
+  | 'maintenance.updated'
+  | 'maintenance.deleted'
+  | 'maintenance.window_added'
+  | 'maintenance.window_updated'
+  | 'maintenance.window_removed'
+  | 'maintenance.sent'
+  | 'maintenance.resent'
+  | 'maintenance.approved'
+  | 'maintenance.rejected'
+  | 'maintenance.auto_applied'
+  | 'maintenance.no_response'
+  | 'maintenance.scheduled'
+  | 'maintenance.reminded'
+  | 'maintenance.started'
+  | 'maintenance.completed'
+  | 'maintenance.failed'
+  | 'maintenance.cancelled'
 
 type AuditInput = {
   event: AuditEvent

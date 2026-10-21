@@ -25,7 +25,7 @@ type Env = {
   SCREENSHOTS: R2Bucket
   /** Release artifacts, private: devices download them against a signed ticket. */
   RELEASES: R2Bucket
-  /** Cloudflare Email Sending, for one message: the notice to a client that a contract is ending. */
+  /** Cloudflare Email Sending: the contract notice and the mail around a scheduled maintenance. */
   EMAIL: SendEmail
 
   /** Enrollments per client IP. */
@@ -34,6 +34,8 @@ type Env = {
   ENROLL_APP_LIMITER: RateLimiter
   /** Everything else a device sends, per installation. */
   INGEST_LIMITER: RateLimiter
+  /** The public maintenance approval routes, per client IP: they take no credential but the link. */
+  PUBLIC_LIMITER: RateLimiter
 
   AUTH_JWKS_URL: string
   AUTH_ISSUER: string
@@ -49,6 +51,11 @@ type Env = {
   /** The address mail is sent from. Must be listed in the binding's `allowed_sender_addresses`. */
   MAIL_FROM_EMAIL: string
   MAIL_FROM_NAME: string
+  /**
+   * Where a client approves a maintenance: the website's page, to which `/<token>` is appended, e.g.
+   * `https://franciscosolis.cl/mantencion`. Development points at the development website.
+   */
+  MAINTENANCE_LINK_BASE_URL: string
   /**
    * **Secret.** HMAC key the update download tickets are signed with. Unset, no ticket can be minted
    * and `GET /updates/:releaseId/download` answers 503 rather than handing out forgeable links.

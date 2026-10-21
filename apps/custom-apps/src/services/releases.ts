@@ -18,6 +18,11 @@ import type { AppRow, InstallationRow } from '@/services/serialize'
  * the device runs. A device running a version that was *withdrawn* is offered the newest earlier one
  * instead, flagged `rollback` — that is what "forzar un rollback" means from the panel's side. Nothing
  * is offered while the app is in grace or suspended: during grace only the app itself keeps working.
+ *
+ * **`maintenance` is deliberately not refused.** A scheduled maintenance puts its installations in
+ * `maintenance` precisely so they install its release in the window, and it only starts during grace
+ * when the contract allows maintenances — the installation's `maintenance` override then wins over the
+ * app's `grace`, so the offer goes through.
  */
 
 type ReleaseRow = typeof releases.$inferSelect
@@ -87,6 +92,7 @@ const newest = (rows: ReleaseRow[]) => rows.reduce<ReleaseRow | null>((best, row
 const offerFor = async (db: Database, input: OfferInput): Promise<Offer | null> => {
   const { app, installation } = input
   const state = effectiveState(app.state, installation.stateOverride)
+  // `maintenance` falls through on purpose: it is when a maintenance's release is installed.
   if (state === 'suspended') return null
   // In grace only the app keeps working, unless the contract that lapsed says updates do too. An
   // installation put in grace by hand (`state_override`) has no contract behind it to say so.

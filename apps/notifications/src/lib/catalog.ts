@@ -143,6 +143,50 @@ const CATALOG = {
       es: { title: 'Nuevo mensaje en el ticket #{number}', body: '{subject} ({app_name}): {excerpt}' },
     },
   },
+  // Produced by `apps/custom-apps` about a scheduled maintenance, for the account that created it: the
+  // client's answer through the approval link, nobody answering at all, and how it ended. The client's
+  // own mail about it is that Worker's; these are only the owner's heads-up. A completed maintenance
+  // is good news the panel already shows, so it reaches the bell and push but never an inbox.
+  'custom_apps.maintenance_approved': {
+    category: 'custom_apps',
+    emailable: true,
+    copy: {
+      en: { title: 'Maintenance approved: {title}', body: '{app_name} · {company_name}: {approved_by} chose {window} (Santiago).' },
+      es: { title: 'Mantención aprobada: {title}', body: '{app_name} · {company_name}: {approved_by} eligió {window} (hora de Santiago).' },
+    },
+  },
+  'custom_apps.maintenance_rejected': {
+    category: 'custom_apps',
+    emailable: true,
+    copy: {
+      en: { title: 'Maintenance rejected: {title}', body: '{app_name} · {company_name}, by {rejected_by}: {reason}' },
+      es: { title: 'Mantención rechazada: {title}', body: '{app_name} · {company_name}, por {rejected_by}: {reason}' },
+    },
+  },
+  'custom_apps.maintenance_no_response': {
+    category: 'custom_apps',
+    emailable: true,
+    copy: {
+      en: { title: 'No answer to the maintenance: {title}', body: '{app_name} · {company_name}: nobody answered and no offered window is 24 hours away any more. Offer new windows.' },
+      es: { title: 'Sin respuesta a la mantención: {title}', body: '{app_name} · {company_name}: nadie respondió y ya no queda ninguna ventana ofrecida a 24 horas o más. Ofrece ventanas nuevas.' },
+    },
+  },
+  'custom_apps.maintenance_completed': {
+    category: 'custom_apps',
+    emailable: false,
+    copy: {
+      en: { title: 'Maintenance completed: {title}', body: '{app_name} · {company_name}: completed and logged ({minutes} min).' },
+      es: { title: 'Mantención completada: {title}', body: '{app_name} · {company_name}: completada y registrada en la bitácora ({minutes} min).' },
+    },
+  },
+  'custom_apps.maintenance_failed': {
+    category: 'custom_apps',
+    emailable: true,
+    copy: {
+      en: { title: 'Maintenance failed: {title}', body: '{app_name} · {company_name}: {reason}. The release was withdrawn, if it carried one.' },
+      es: { title: 'Falló la mantención: {title}', body: '{app_name} · {company_name}: {reason}. Si llevaba un release, se retiró.' },
+    },
+  },
 } as const satisfies Record<string, CatalogEntry>
 
 type NotificationType = keyof typeof CATALOG

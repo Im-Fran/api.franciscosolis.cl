@@ -78,8 +78,9 @@
       "bucket_name": "franciscosolis-custom-apps-releases"
     }
   ],
-  // One kind of mail: the notice to a client that a contract is ending. Support tickets stay in the
-  // panel and are never mailed.
+  // Mail to clients: the notice that a contract is ending, and the mail around a scheduled maintenance
+  // (approval request, confirmation, reminder, outcome). Support tickets stay in the panel and are
+  // never mailed.
   "send_email": [
     {
       "name": "EMAIL",
@@ -151,6 +152,17 @@
         "limit": 120,
         "period": 60
       }
+    },
+    {
+      // The public maintenance approval routes, per client IP. They take no credential but the link,
+      // so somebody guessing at links is limited long before 256 bits of token could matter, and a
+      // page reloaded by hand never comes near it.
+      "name": "PUBLIC_LIMITER",
+      "namespace_id": "4104",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
     }
   ],
   "services": [
@@ -174,9 +186,11 @@
     // Public base of the ingest surface, up to and including the version. Its host is what
     // `src/index.ts` dispatches on, and the panel quotes it so a client app can be configured.
     "INGEST_PUBLIC_URL": "https://ingest.franciscosolis.cl/custom-apps/v1",
-    // Sender of the contract notices.
+    // Sender of the contract notices and the maintenance mail.
     "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
-    "MAIL_FROM_NAME": "FranciscoSolis"
+    "MAIL_FROM_NAME": "FranciscoSolis",
+    // The website's page a client approves or rejects a maintenance on; the link appends `/<token>`.
+    "MAINTENANCE_LINK_BASE_URL": "https://franciscosolis.cl/mantencion"
   },
   "observability": {
     "enabled": true,
@@ -282,6 +296,14 @@
             "limit": 120,
             "period": 60
           }
+        },
+        {
+          "name": "PUBLIC_LIMITER",
+          "namespace_id": "4204",
+          "simple": {
+            "limit": 30,
+            "period": 60
+          }
         }
       ],
       "services": [
@@ -297,7 +319,8 @@
         "CUSTOM_APPS_ALLOWED_EMAIL_DOMAINS": "franciscosolis.cl",
         "INGEST_PUBLIC_URL": "https://ingest-dev.franciscosolis.cl/custom-apps/v1",
         "MAIL_FROM_EMAIL": "hola@mail.franciscosolis.cl",
-        "MAIL_FROM_NAME": "FranciscoSolis (dev)"
+        "MAIL_FROM_NAME": "FranciscoSolis (dev)",
+        "MAINTENANCE_LINK_BASE_URL": "https://dev.franciscosolis.cl/mantencion"
       }
     }
   }

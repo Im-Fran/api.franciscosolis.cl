@@ -13,6 +13,7 @@ const REQUIRED_VARS = [
   'INGEST_PUBLIC_URL',
   'MAIL_FROM_EMAIL',
   'MAIL_FROM_NAME',
+  'MAINTENANCE_LINK_BASE_URL',
 ] as const
 
 describe('the Worker configuration', () => {
@@ -22,7 +23,7 @@ describe('the Worker configuration', () => {
     expect(String(value).length).toBeGreaterThan(0)
   })
 
-  it('binds the database, the auth service, both queues, the sockets, both buckets, the mail binding and the three rate limiters', () => {
+  it('binds the database, the auth service, both queues, the sockets, both buckets, the mail binding and the four rate limiters', () => {
     expect(env.DB).toBeDefined()
     expect(env.AUTH).toBeDefined()
     expect(env.TELEMETRY_QUEUE).toBeDefined()
@@ -34,6 +35,14 @@ describe('the Worker configuration', () => {
     expect(typeof env.ENROLL_IP_LIMITER.limit).toBe('function')
     expect(typeof env.ENROLL_APP_LIMITER.limit).toBe('function')
     expect(typeof env.INGEST_LIMITER.limit).toBe('function')
+    expect(typeof env.PUBLIC_LIMITER.limit).toBe('function')
+  })
+
+  it('links maintenance approvals to the website, never to this API', () => {
+    const url = new URL(env.MAINTENANCE_LINK_BASE_URL)
+    expect(url.protocol).toBe('https:')
+    expect(url.host).toBe('franciscosolis.cl')
+    expect(url.pathname).toBe('/mantencion')
   })
 
   it('accepts only the panel audience', () => {

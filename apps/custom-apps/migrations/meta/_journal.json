@@ -50,6 +50,13 @@
       "when": 1792378591332,
       "tag": "0006_alert_app_name",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1792528957889,
+      "tag": "0007_maintenances",
+      "breakpoints": true
     }
   ]
 }

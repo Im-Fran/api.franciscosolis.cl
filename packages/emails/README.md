@@ -16,7 +16,7 @@ Five Workers in this monorepo send mail — [`apps/auth`](../../apps/auth/README
 invitations and account access notices), [`apps/cms`](../../apps/cms/README.md) (editorial messages),
 [`apps/notifications`](../../apps/notifications/README.md) (notices and digests) and
 [`apps/marketplace`](../../apps/marketplace/README.md) (the voucher for a sale, and the notice that one was
-refunded) and [`apps/custom-apps`](../../apps/custom-apps/README.md) (the notice that a contract is ending). Before this package they each assembled their own HTML with template literals, which
+refunded) and [`apps/custom-apps`](../../apps/custom-apps/README.md) (the notice that a contract is ending, and the mail around a scheduled maintenance). Before this package they each assembled their own HTML with template literals, which
 meant hand-escaping every interpolated value, hand-writing a plain-text twin of each body, and subtly
 different visual identities arriving from the same domain.
 
@@ -60,9 +60,12 @@ esbuild, so a build step here would only add an artifact to keep in sync.
 | `renderSaleReceiptEmail` | The voucher: the receipt for a sale, whether it was paid by card, in cash, by transfer, or given away. Used by `apps/marketplace`. |
 | `renderSaleRefundEmail` | Notice that a payment was refunded, with the reason. Used by `apps/marketplace`. Deliberately not sent for a chargeback. |
 | `renderContractNoticeEmail` | Notice to a client that a contract which does not renew itself is ending, and what happens to the apps it covers. Used by `apps/custom-apps`. |
+| `renderMaintenanceRequestEmail` | The request to a client's maintenance approver to choose a window for a maintenance (or reject it), with the windows offered and a single-use link; `reminder` for the second send. Spanish by default. Used by `apps/custom-apps`. |
+| `renderMaintenanceNoticeEmail` | Every notice about a scheduled maintenance after the request, by `stage`: `approved`, `auto_applied` (no answer), `security` (a patch's advance notice), `reminder` (24 hours before), `completed`, `failed` (the devices stayed on the previous version). Spanish by default. Used by `apps/custom-apps`. |
 | `renderEmail` | The primitive every one of the above is built on: element in, `{ subject, html, text }` out. |
 | `EmailLayout`, `ActionLink`, `Paragraph`, `DetailRows` | The building blocks a new template is assembled from. |
 | `formatMoney` | An amount as a receipt prints it — no fraction digits on a currency that has no minor unit. |
+| `formatDuration` | A whole number of minutes as a person says it — "1 hora y 30 minutos", "2 hours". |
 | `theme` | The design tokens — palette, gradient, logo, widths. |
 | `palette` | The raw brand colours `theme` is composed from. |
 

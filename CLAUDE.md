@@ -55,11 +55,18 @@ together seven Cloudflare Workers, all living directly in this repo:
   links), its reports, an automatic pause and rollback, and their **contracts**: hours included per
   cycle with rollover and overage, the hand-kept work log, and contract ends that warn the client and
   put the covered apps in grace, and their **support tickets**, opened from inside a client's app and
-  answered from the panel. It is the one module
+  answered from the panel, and their **scheduled maintenances**: windows suggested from the usage
+  heatmap, approved by the client through an emailed single-use link (resent once, then applied on
+  their own), security patches scheduled without approval, the installations put in maintenance and
+  offered the release in the window, and a health-checked close that logs the hours or withdraws the
+  release. It is the one module
   with **two front doors**: the panel API through `apps/api` at `/custom-apps/*` (one account, holding
   `custom-apps:admin` under its own client application, `franciscosolis-custom-apps`), and an
   **ingest** surface the client apps report to at `ingest.franciscosolis.cl/custom-apps/v1/:appId`,
-  routed to it directly. Which one a request reaches is decided by hostname.
+  routed to it directly. Which one a request reaches is decided by hostname. The panel host also
+  answers a client's browser outside the panel's gate, on the public maintenance approval routes
+  (`/custom-apps/v1/public/maintenances/:token`, `…/approve`, `…/reject`), which the approval page at
+  `franciscosolis.cl/mantencion/<token>` (in the front-end repository) reads and answers through.
 
 **Support is plain email, not a Worker.** There used to be an `apps/support` ticket system with a
 help centre; it was retired, and help is now asked for and answered at `soporte@franciscosolis.cl`,
@@ -95,14 +102,15 @@ workspace/catalog, root scripts).
   those deps, add/bump them in the catalog instead. `apps/auth`, `apps/cms`, `apps/marketplace`,
   and `apps/notifications` additionally use drizzle-orm/drizzle-kit, and those same
   four pull react + react-email through `@franciscosolis/emails`, all catalogued too.
-  `apps/custom-apps` uses drizzle as well, and the emails package for one message: the notice that a
-  contract is ending. `apps/cms` and `apps/marketplace`
+  `apps/custom-apps` uses drizzle as well, and the emails package for the mail it sends clients: the
+  notice that a contract is ending, and the mail around a scheduled maintenance (the approval
+  request, the confirmation, the reminder, the outcome). `apps/cms` and `apps/marketplace`
   use **Workers AI** through `@franciscosolis/translate`. `apps/marketplace` talks to MercadoPago over
   plain `fetch` rather than through an SDK — a handful of functions in `src/lib/mercadopago.ts`
   against a dependency that assumes Node.
 - **Cloudflare Queues** for two things: notification events, and `apps/custom-apps`' telemetry
   (`franciscosolis-custom-apps-telemetry`, which it both produces to and consumes). For the first: `auth`, `marketplace`
-  and `custom-apps` (its alerts) declare a `NOTIFICATIONS_QUEUE` producer; `notifications` is the
+  and `custom-apps` (its alerts, tickets and maintenances) declare a `NOTIFICATIONS_QUEUE` producer; `notifications` is the
   consumer. `apps/custom-apps` is also the one Worker with a **Durable Object** (`InstallationSocket`,
   WebSocket Hibernation), declared as a `durable_objects` binding — not inherited by a named
   environment, so restated under `env.dev` — with its `migrations` at the top level, which is. Web Push is implemented
@@ -510,7 +518,11 @@ Run it by hand with `node .claude/hooks/version-bump.mjs bump`.
   environment. Contracts drive the same kill switch: the cron emails the client before one ends and,
   when it lapses unrenewed, puts the apps it covers in grace; renewing brings them back. Support
   tickets opened from a client's app stay in the panel — nothing is mailed — and their assignee hears
-  about them in the website's bell. See
+  about them in the website's bell. Scheduled maintenances are the other thing a client takes part
+  in: the approver gets an email with a single-use `mnt_` link (only its hash stored, one per
+  recipient per send) to the website's approval page, whose public routes are mounted ahead of the
+  panel's gate like the CI upload and limited per IP (`PUBLIC_LIMITER`); `MAINTENANCE_LINK_BASE_URL`
+  points at `franciscosolis.cl` in production and `dev.franciscosolis.cl` on dev. See
   `apps/custom-apps/CLAUDE.md`.
 - **Nothing in this repo renders HTML.** `api.franciscosolis.cl` is a backend end to end: every
   Worker answers JSON, a redirect or a binary asset (`apps/api/src/brand.ts`), and nothing else.

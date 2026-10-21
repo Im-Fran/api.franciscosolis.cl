@@ -10,6 +10,7 @@ import contacts from '@/panel/routes/contacts'
 import contracts from '@/panel/routes/contracts'
 import diagnostics from '@/panel/routes/diagnostics'
 import installations from '@/panel/routes/installations'
+import maintenances from '@/panel/routes/maintenances'
 import overview from '@/panel/routes/overview'
 import releases from '@/panel/routes/releases'
 import remote from '@/panel/routes/remote'
@@ -71,5 +72,6 @@ app.route('/', alerts)
 app.route('/', releases)
 app.route('/', contracts)
 app.route('/', tickets)
+app.route('/', maintenances)
 
 export { app as panel }

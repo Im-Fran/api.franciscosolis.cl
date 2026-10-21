@@ -14,7 +14,8 @@ language) into files, commits, or code in this repo.
 account access notices, `apps/cms` for editorial messages, `apps/notifications` for notices and
 digests, `apps/marketplace` for the two documents that come with a sale: the voucher and the
 notice that one was refunded, and `apps/custom-apps` for the notice that a client's contract is
-ending. It is the first entry under `packages/` and the only non-Worker workspace package.
+ending and the mail around a scheduled maintenance — the approval request (`maintenance-request`)
+and every notice after it (`maintenance-notice`, by `stage`). It is the first entry under `packages/` and the only non-Worker workspace package.
 
 A consumer imports a `render*Email` function, gets `{ subject, html, text }` and hands
 that to its Cloudflare Email Sending binding. No Worker builds markup itself any more.
@@ -40,6 +41,7 @@ package. That is deliberate on all four counts — see below.
 - `src/components/` — `email-layout.tsx` (the shell), `action-link.tsx`, `paragraph.tsx`,
   `detail-rows.tsx` (the label/value block a receipt states its facts in).
 - `src/money.ts` — `formatMoney`, the one place an amount is turned into a string.
+- `src/duration.ts` — `formatDuration`, a whole number of minutes as a person says it.
 - `src/templates/` — one file per email. Also the directory the preview server reads.
 - `src/prettier-stub.ts` — not a template; see the bundle note below.
 - `assets/lockup.png` — the logo the layout points at. `.github/workflows/cdn.yml` uploads
@@ -110,6 +112,17 @@ package. That is deliberate on all four counts — see below.
   right-of-withdrawal line on the receipt is shown only for a purchase: a donation is not a sale under
   the Chilean consumer statute and a gift has nothing to give back. It states the statutory ten days
   rather than a date, because this package does no date arithmetic — `apps/marketplace` owns the deadline.
+- **The maintenance mail is two templates, not six.** `MaintenanceRequestEmail` asks for a window
+  (the second send says it is the second, and both say what happens without an answer — applying it
+  alone is only fair if the client was told); `MaintenanceNoticeEmail` is every message after it —
+  approved, applied for lack of an answer, a security patch's advance notice, the reminder, completed,
+  failed — selected by `stage`, so the same facts sit in the same rows and a client can line them up.
+  Windows and instants arrive formatted (Santiago's clock is the sender's business, as with every
+  date here); the duration is formatted here (`duration.ts`), like money, because it needs no
+  calendar. Both default to Spanish: the clients are Chilean.
+- **`ActionLink` takes a `hint`** — the line above the plain copy of the URL — so a Spanish email no
+  longer says "If the button does not work" in English. It defaults to that English line, so the
+  templates that never passed one read as before.
 - **`ContentEmail` inserts its body with `dangerouslySetInnerHTML`, deliberately.** It exists
   to wrap markup an authenticated CMS editor wrote; that editor already controls the whole
   document, and re-serialising their HTML would silently rewrite it. Do not point any

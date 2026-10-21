@@ -7,10 +7,20 @@ import type { Env } from '@/env'
  * The message shape is a contract between two Workers that deploy independently, so it is written
  * down twice on purpose: here, as what this Worker promises to send, and in `apps/notifications`, as
  * what it accepts. Only the types this Worker produces are listed: alerts, for the account that
- * created the rule, and support tickets — a new one, or a new message on one — for the account the
- * app's tickets are assigned to.
+ * created the rule; support tickets — a new one, or a new message on one — for the account the
+ * app's tickets are assigned to; and scheduled maintenances — the client's answer, no answer at all,
+ * and how it ended — for the account that created the maintenance.
  */
-type NotificationType = 'custom_apps.alert_opened' | 'custom_apps.alert_resolved' | 'custom_apps.ticket_opened' | 'custom_apps.ticket_message'
+type NotificationType =
+  | 'custom_apps.alert_opened'
+  | 'custom_apps.alert_resolved'
+  | 'custom_apps.ticket_opened'
+  | 'custom_apps.ticket_message'
+  | 'custom_apps.maintenance_approved'
+  | 'custom_apps.maintenance_rejected'
+  | 'custom_apps.maintenance_no_response'
+  | 'custom_apps.maintenance_completed'
+  | 'custom_apps.maintenance_failed'
 
 type NotificationData = Record<string, string | number | boolean | null>
 

@@ -9,7 +9,7 @@
  *
  * The prefixes make a credential recognisable in a log or a support message, and tell a secret
  * scanner what it found: `cak_` an app key, `cat_` an access token, `car_` a refresh token, `cic_`
- * a CI token that uploads releases.
+ * a CI token that uploads releases, `mnt_` the link a client approves a maintenance with.
  */
 
 const TOKEN_PREFIXES = {
@@ -17,6 +17,7 @@ const TOKEN_PREFIXES = {
   access: 'cat_',
   refresh: 'car_',
   ci: 'cic_',
+  maintenance: 'mnt_',
 } as const
 
 const base64Url = (bytes: Uint8Array): string => {

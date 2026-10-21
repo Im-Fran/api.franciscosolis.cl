@@ -284,7 +284,8 @@ const GRACE_MAX_DAYS = 31
  * - `CYCLE_PERIODS`: how often the included hours renew. Cycles are anchored on the contract's start
  *   date: a monthly contract starting on the 31st renews on the last day of shorter months.
  * - `GRACE_ALLOWANCES`: what keeps working during the grace period after a contract ends, on top of
- *   the app itself. Nothing by default, as the plan says.
+ *   the app itself. Nothing by default, as the plan says. `maintenance` keeps scheduled maintenances
+ *   running: without it, sending, scheduling and starting one are paused while the app is in grace.
  * - `CYCLE_STATUSES`: `open` while hours are logged against it, `closed` once its period ended and
  *   the balance was computed (final), `billed` once its overage was charged.
  */
@@ -297,7 +298,7 @@ type BillingPeriod = (typeof BILLING_PERIODS)[number]
 const CYCLE_PERIODS = ['daily', 'weekly', 'monthly'] as const
 type CyclePeriod = (typeof CYCLE_PERIODS)[number]
 
-const GRACE_ALLOWANCES = ['updates', 'support'] as const
+const GRACE_ALLOWANCES = ['updates', 'support', 'maintenance'] as const
 type GraceAllowance = (typeof GRACE_ALLOWANCES)[number]
 
 const CYCLE_STATUSES = ['open', 'closed', 'billed'] as const
@@ -322,6 +323,71 @@ const CONTRACTS = {
   maxCyclesPerRun: 400,
   /** Largest single entry of the work log, in minutes. */
   maxWorkLogMinutes: 24 * 60,
+  /** Days within which a security patch is applied without approval, by default and at most. */
+  defaultSecurityPatchDays: 3,
+  maxSecurityPatchDays: 30,
+} as const
+
+/**
+ * A scheduled maintenance's lifecycle. A maintenance is work done on a client's devices — usually a
+ * release installed on some of them — in a window the client chose, or, for a security patch, in one
+ * the system chose.
+ *
+ * - `draft`: being prepared — title, impact, duration, release, installations, the windows offered.
+ *   A rejection brings it back here (with `rejected_at` and `rejection_reason` kept) to reschedule.
+ * - `pending_approval`: the approval request was emailed; waiting for the client to pick a window
+ *   or reject. Resent once after `MAINTENANCES.resendAfterHours`; after as long again with no answer,
+ *   applied automatically in the first offered window still `minLeadHours` away.
+ * - `scheduled`: a window is fixed — approved by the client, applied for lack of an answer
+ *   (`auto_applied`), or chosen by the system for a security patch.
+ * - `in_progress`: the window started. The included installations are in `maintenance` state and the
+ *   attached release, if any, is offered to them.
+ * - `completed` / `failed`: how it ended. Completing logs the hours; failing withdraws the release so
+ *   the devices roll back.
+ * - `no_response`: nobody answered and no offered window was far enough away to apply it. Editable
+ *   again like a draft, so it can be offered anew.
+ * - `cancelled`: by hand, or by the cron when its window passed while the app was paused (grace or
+ *   suspension) or it never started.
+ */
+const MAINTENANCE_STATUSES = ['draft', 'pending_approval', 'scheduled', 'in_progress', 'completed', 'failed', 'no_response', 'cancelled'] as const
+type MaintenanceStatus = (typeof MAINTENANCE_STATUSES)[number]
+
+/** `normal` goes through the client's approval; `security` is applied without it, after a notice. */
+const MAINTENANCE_KINDS = ['normal', 'security'] as const
+type MaintenanceKind = (typeof MAINTENANCE_KINDS)[number]
+
+/** Where an offered window came from: the usage heatmap's suggestion, or typed in by hand. */
+const MAINTENANCE_WINDOW_SOURCES = ['suggested', 'manual'] as const
+type MaintenanceWindowSource = (typeof MAINTENANCE_WINDOW_SOURCES)[number]
+
+const MAINTENANCE_RESULTS = ['succeeded', 'failed'] as const
+type MaintenanceResult = (typeof MAINTENANCE_RESULTS)[number]
+
+const MAINTENANCES = {
+  /**
+   * A window applied without the client's answer must start at least this far ahead, and suggestions
+   * start no sooner either: nobody should find a maintenance tomorrow morning they learnt of tonight.
+   */
+  minLeadHours: 24,
+  /** Hours after a send with no answer before the request is sent again, and then applied. */
+  resendAfterHours: 48,
+  /** The reminder email and the in-app notice go out this long before the window starts. */
+  reminderBeforeHours: 24,
+  /** How far ahead suggestions look, in days, and how many they offer. */
+  suggestDays: 14,
+  suggestCount: 5,
+  /** A security patch's window starts at least this many minutes from now. */
+  securityMinLeadMinutes: 120,
+  /** Bounds of a maintenance's estimated duration, in minutes. */
+  minEstimatedMinutes: 15,
+  maxEstimatedMinutes: 24 * 60,
+  /** Windows one maintenance may offer. */
+  maxWindows: 20,
+  maxTitleLength: 200,
+  maxDescriptionLength: 5000,
+  maxRejectionLength: 1000,
+  /** Installations one maintenance may name; more than that is the whole app. */
+  maxInstallations: 500,
 } as const
 
 /**
@@ -440,6 +506,11 @@ export {
   KEY_STATUSES,
   LOG_LEVELS,
   LOGS,
+  MAINTENANCE_KINDS,
+  MAINTENANCE_RESULTS,
+  MAINTENANCE_STATUSES,
+  MAINTENANCE_WINDOW_SOURCES,
+  MAINTENANCES,
   MESSAGE_DISPLAYS,
   MESSAGE_SEVERITIES,
   PAGINATION,
@@ -481,6 +552,10 @@ export type {
   InstallationStatus,
   KeyStatus,
   LogLevel,
+  MaintenanceKind,
+  MaintenanceResult,
+  MaintenanceStatus,
+  MaintenanceWindowSource,
   MessageDisplay,
   MessageSeverity,
   Platform,
