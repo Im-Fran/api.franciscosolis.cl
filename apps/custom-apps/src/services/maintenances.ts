@@ -38,7 +38,8 @@ import { syncApp } from '@/services/socket'
  * 6. At the window's end — plus the app's health-check timeout when a release is attached — it is
  *    evaluated: every update target reported `health_ok` on the release since the start, and none
  *    rolled back or failed → `completed` (work log, closing email); anything else → `failed` (release
- *    withdrawn, owner told, failure email).
+ *    withdrawn if only this maintenance reached it, else paused with the targets pinned back; owner
+ *    told, failure email). Cancelling before the start emails a client who already knew about it.
  *
  * **A security patch skips 1–3**: `/schedule` picks the first unused block within the contract's
  * `security_patch_days` (or the least used one) and emails the advance notice at once.
@@ -74,6 +75,12 @@ type ResultDetail = {
   note?: string
   /** Recipients the cron could not email. */
   mail_failures?: Array<{ stage: string; recipients: string[] }>
+  /** The version each update target ran when the window started: what a failure sends it back to. */
+  previous_versions?: Record<string, string | null>
+  /** What a failure did to the release: withdrawn when only this maintenance reached it, else paused. */
+  release_action?: 'withdrawn' | 'paused'
+  /** Targets pinned back to a version (a paused, shared release only). */
+  rolled_back_installations?: Array<{ id: string; version: string }>
   withdrawn?: boolean
 }
 
@@ -606,6 +613,7 @@ const start = async (env: Env, db: Database, row: MaintenanceRow, app: AppRow, w
     const current = onLine.filter((installation) => installation.appVersion === release.version)
     const targets = onLine.filter((installation) => installation.appVersion !== release.version)
     detail.targets = targets.map((installation) => installation.id)
+    detail.previous_versions = Object.fromEntries(targets.map((installation) => [installation.id, installation.appVersion]))
     detail.already_on_version = current.map((installation) => installation.id)
     detail.off_line = affected.filter((installation) => !onLine.includes(installation)).map((installation) => installation.id)
     const reach = parseJsonArray<string>(release.rolloutInstallations)
@@ -741,6 +749,63 @@ const logWork = async (db: Database, row: MaintenanceRow, window: Pick<WindowRow
   return id
 }
 
+/**
+ * What a failed maintenance does to its release, which depends on who else has it:
+ *
+ * - **Exclusive** — a draft the maintenance published at 0 % to its targets alone, still reaching
+ *   nobody else: withdrawn, exactly as `/withdraw` does, so the devices on it roll back.
+ * - **Shared** — it was already published, or its reach has grown beyond the targets: withdrawing would
+ *   roll back devices outside the maintenance. Instead the targets leave `rollout_installations`, each
+ *   is pinned to the version it had (`installations.rollback_to_version`, honoured by `offerFor` as a
+ *   mandatory rollback) and the release is paused with the same reason, through the same transition
+ *   the panel's pause makes.
+ *
+ * Answers what was done, or null when the release was not the maintenance's to touch (already paused
+ * or withdrawn by a person, or none attached).
+ */
+const settleFailedRelease = async (db: Database, row: MaintenanceRow, detail: ResultDetail, now: Date) => {
+  if (!row.releaseId || !detail.release) return null
+  const [release] = await db.select().from(releases).where(eq(releases.id, row.releaseId)).limit(1)
+  if (!release || (release.status !== 'published' && release.status !== 'paused')) return null
+  const targets = detail.targets ?? []
+  const reach = parseJsonArray<string>(release.rolloutInstallations)
+  const exclusive = detail.release.published_by_maintenance && release.rolloutPercent === 0 && reach.every((id) => targets.includes(id))
+  if (exclusive) return (await withdrawRelease(db, row, now)) ? { action: 'withdrawn' as const, pinned: [] } : null
+
+  const reason = `maintenance ${row.title} failed health check`
+  const remaining = reach.filter((id) => !targets.includes(id))
+  const [updated] = await db
+    .update(releases)
+    .set({
+      rolloutInstallations: JSON.stringify(remaining),
+      ...(release.status === 'published' ? { status: 'paused', statusChangedAt: now, statusReason: JSON.stringify({ by: null, automatic: true, reason, maintenance_id: row.id }) } : {}),
+      updatedAt: now,
+    })
+    .where(and(eq(releases.id, release.id), eq(releases.status, release.status)))
+    .returning()
+  if (!updated) return null
+  const pinned: Array<{ id: string; version: string }> = []
+  const known = targets.length > 0 ? await db.select({ id: installations.id, previous: installations.previousAppVersion }).from(installations).where(inArray(installations.id, targets)) : []
+  for (const id of targets) {
+    const version = detail.previous_versions?.[id] ?? known.find((installation) => installation.id === id)?.previous ?? null
+    if (version) pinned.push({ id, version })
+  }
+  await db.batch([
+    db.insert(auditLogs).values(
+      auditRow({ event: 'release.rollout_changed', resourceType: 'app', resourceId: row.appId, metadata: { automatic: true, maintenance_id: row.id, release_id: release.id, version: release.version, removed_installations: targets.filter((id) => reach.includes(id)), rolled_back_installations: pinned } }),
+    ),
+    ...pinned.map((pin) => db.update(installations).set({ rollbackToVersion: pin.version, updatedAt: now }).where(eq(installations.id, pin.id))),
+    ...(release.status === 'published'
+      ? [
+          db.insert(auditLogs).values(
+            auditRow({ event: 'release.paused', resourceType: 'app', resourceId: row.appId, metadata: { automatic: true, maintenance_id: row.id, release_id: release.id, version: release.version, before: { status: 'published' }, after: { status: 'paused' }, reason } }),
+          ),
+        ]
+      : []),
+  ])
+  return { action: 'paused' as const, pinned }
+}
+
 /** Withdraws a failed maintenance's release, as `/withdraw` would: the devices on it are offered the earlier version back. */
 const withdrawRelease = async (db: Database, row: MaintenanceRow, now: Date) => {
   if (!row.releaseId) return false
@@ -804,21 +869,24 @@ const finish = async (env: Env, db: Database, row: MaintenanceRow, outcome: Outc
     if (window) await sendNotice(env, db, final, window, 'completed')
     await notifyOwner(env, final, 'custom_apps.maintenance_completed', { minutes: row.estimatedMinutes })
   } else {
-    // Only a release the maintenance extended is withdrawn: one that was already paused or withdrawn
+    // Only a release the maintenance extended is touched: one that was already paused or withdrawn
     // when the window started (`release_unavailable`) was never offered because of it.
-    const withdrawn = detail.release ? await withdrawRelease(db, claimed, now) : false
-    if (withdrawn) {
-      detail.withdrawn = true
+    const settled = await settleFailedRelease(db, claimed, detail, now)
+    const withdrawn = settled?.action === 'withdrawn'
+    if (settled) {
+      detail.release_action = settled.action
+      if (withdrawn) detail.withdrawn = true
+      else detail.rolled_back_installations = settled.pinned
       ;[final] = (await db.update(maintenances).set({ resultDetail: JSON.stringify(detail) }).where(eq(maintenances.id, row.id)).returning()) as [MaintenanceRow]
     }
     await db.insert(auditLogs).values(
-      auditRow({ event: 'maintenance.failed', resourceType: 'maintenance', resourceId: row.id, ...(actor ?? {}), metadata: { automatic: actor === null, app_id: row.appId, reason: outcome.reason ?? null, failing: outcome.failing ?? [], release_withdrawn: withdrawn, note: outcome.note ?? null } }),
+      auditRow({ event: 'maintenance.failed', resourceType: 'maintenance', resourceId: row.id, ...(actor ?? {}), metadata: { automatic: actor === null, app_id: row.appId, reason: outcome.reason ?? null, failing: outcome.failing ?? [], release_withdrawn: withdrawn, release_action: settled?.action ?? null, note: outcome.note ?? null } }),
     )
     if (window) await sendNotice(env, db, final, window, 'failed', detail.release ? {} : { version: null })
     // The note a person wrote, or a compact, language-neutral reason: `health_check: 1/2` is one of two
     // update targets that did not come up healthy.
     const reason = outcome.note || (outcome.reason === 'health_check' ? `health_check: ${(outcome.failing ?? []).length}/${(detail.targets ?? []).length}` : (outcome.reason ?? 'failed'))
-    await notifyOwner(env, final, 'custom_apps.maintenance_failed', { reason, failing: (outcome.failing ?? []).length })
+    await notifyOwner(env, final, 'custom_apps.maintenance_failed', { reason, failing: (outcome.failing ?? []).length, release_action: settled?.action ?? null })
   }
   await syncApp(env, row.appId)
   return final

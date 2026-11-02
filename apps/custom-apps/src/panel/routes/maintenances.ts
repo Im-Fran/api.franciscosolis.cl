@@ -652,7 +652,7 @@ app.post(
 app.post(
   '/maintenances/:maintenanceId/fail',
   describeRoute({
-    description: 'Closes a maintenance in progress as failed, with a `note` saying why: the installations leave maintenance, the release (if it carried one) is withdrawn so the devices go back to the version they ran, and the client is told it stayed on the previous version.',
+    description: 'Closes a maintenance in progress as failed, with a `note` saying why: the installations leave maintenance, the release (if it carried one) is withdrawn when only this maintenance reached it, or paused — with just the devices of the maintenance sent back — when other devices have it (`result_detail.release_action`), and the client is told it stayed on the previous version.',
     tags: ['Maintenances'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Failed', content: jsonContent(dataSchema(looseSchema)) }, 404: { description: 'Not found' }, 409: { description: 'Not in progress' }, ...panelErrors },
