@@ -69,6 +69,13 @@ describe('the notification catalog', () => {
     expect(isEmailable('custom_apps.maintenance_completed')).toBe(false)
   })
 
+  it('says what a failed maintenance did to its release', () => {
+    const data = { title: 'Actualización 1.1', app_name: 'POS', company_name: 'Andes', reason: 'health_check: 1/2' }
+    expect(renderCopy('custom_apps.maintenance_failed', { ...data, release_action: 'withdrawn' }, 'en').body).toBe('POS · Andes: health_check: 1/2. The release was withdrawn.')
+    expect(renderCopy('custom_apps.maintenance_failed', { ...data, release_action: 'paused' }, 'es').body).toBe('POS · Andes: health_check: 1/2. Se pausó el release, no se retiró: solo los dispositivos de la mantención volvieron atrás.')
+    expect(renderCopy('custom_apps.maintenance_failed', data, 'en').body).toBe('POS · Andes: health_check: 1/2. No release was changed.')
+  })
+
   it('explains a rejected avatar even when no reason was given', () => {
     expect(renderCopy('account.avatar_rejected', { reason: 'Too blurry' }, 'en').body).toBe('Too blurry')
     expect(renderCopy('account.avatar_rejected', { reason: null }, 'es').body).toBe('Puedes subir otra cuando quieras.')

@@ -183,8 +183,8 @@ const CATALOG = {
     category: 'custom_apps',
     emailable: true,
     copy: {
-      en: { title: 'Maintenance failed: {title}', body: '{app_name} · {company_name}: {reason}. The release was withdrawn, if it carried one.' },
-      es: { title: 'Falló la mantención: {title}', body: '{app_name} · {company_name}: {reason}. Si llevaba un release, se retiró.' },
+      en: { title: 'Maintenance failed: {title}', body: '{app_name} · {company_name}: {reason}. {release_outcome}' },
+      es: { title: 'Falló la mantención: {title}', body: '{app_name} · {company_name}: {reason}. {release_outcome}' },
     },
   },
 } as const satisfies Record<string, CatalogEntry>
@@ -224,6 +224,26 @@ const CHANNEL_LABELS: Record<Locale, Record<string, string>> = {
 const channelLabel = (channel: string, locale: Locale) => CHANNEL_LABELS[locale][channel] ?? channel
 
 /**
+ * What a failed maintenance did to its release, as a sentence. The producer sends the language-neutral
+ * `release_action`; a release only the maintenance reached is `withdrawn`, one other devices also have
+ * is `paused` while the maintenance's own devices are sent back. No action means no release was touched.
+ */
+const RELEASE_OUTCOMES: Record<Locale, Record<string, string>> = {
+  en: {
+    withdrawn: 'The release was withdrawn.',
+    paused: 'The release was paused, not withdrawn: only the maintenance devices were sent back.',
+    none: 'No release was changed.',
+  },
+  es: {
+    withdrawn: 'Se retiró el release.',
+    paused: 'Se pausó el release, no se retiró: solo los dispositivos de la mantención volvieron atrás.',
+    none: 'No se modificó ningún release.',
+  },
+}
+
+const releaseOutcome = (action: unknown, locale: Locale) => RELEASE_OUTCOMES[locale][typeof action === 'string' && action in RELEASE_OUTCOMES[locale] ? action : 'none']!
+
+/**
  * Title and body for one notification in one language.
  *
  * Plain text, always. `data` is whatever a producer sent — a product name, a review excerpt, an
@@ -232,7 +252,8 @@ const channelLabel = (channel: string, locale: Locale) => CHANNEL_LABELS[locale]
  */
 const renderCopy = (type: NotificationType, rawData: NotificationData, locale: Locale): Copy => {
   const copy = CATALOG[type].copy[locale]
-  const data = typeof rawData.channel === 'string' ? { ...rawData, channel: channelLabel(rawData.channel, locale) } : rawData
+  let data = typeof rawData.channel === 'string' ? { ...rawData, channel: channelLabel(rawData.channel, locale) } : rawData
+  if (type === 'custom_apps.maintenance_failed') data = { ...data, release_outcome: releaseOutcome(rawData.release_action, locale) }
   const title = interpolate(copy.title, data)
   let body = interpolate(copy.body, data)
   // The one type whose body *is* a parameter. A rejection with no reason given would otherwise
