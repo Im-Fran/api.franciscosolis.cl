@@ -61,7 +61,7 @@ esbuild, so a build step here would only add an artifact to keep in sync.
 | `renderSaleRefundEmail` | Notice that a payment was refunded, with the reason. Used by `apps/marketplace`. Deliberately not sent for a chargeback. |
 | `renderContractNoticeEmail` | Notice to a client that a contract which does not renew itself is ending, and what happens to the apps it covers. Used by `apps/custom-apps`. |
 | `renderMaintenanceRequestEmail` | The request to a client's maintenance approver to choose a window for a maintenance (or reject it), with the windows offered and a single-use link; `reminder` for the second send. Spanish by default. Used by `apps/custom-apps`. |
-| `renderMaintenanceNoticeEmail` | Every notice about a scheduled maintenance after the request, by `stage`: `approved`, `auto_applied` (no answer), `security` (a patch's advance notice), `reminder` (24 hours before), `completed`, `failed` (the devices stayed on the previous version). Spanish by default. Used by `apps/custom-apps`. |
+| `renderMaintenanceNoticeEmail` | Every notice about a scheduled maintenance after the request, by `stage`: `approved`, `auto_applied` (no answer), `security` (a patch's advance notice), `reminder` (24 hours before), `completed`, `failed` (the devices stayed on the previous version), `cancelled` (it will not happen; optional `reason`, no window when none was chosen). Spanish by default. Used by `apps/custom-apps`. |
 | `renderEmail` | The primitive every one of the above is built on: element in, `{ subject, html, text }` out. |
 | `EmailLayout`, `ActionLink`, `Paragraph`, `DetailRows` | The building blocks a new template is assembled from. |
 | `formatMoney` | An amount as a receipt prints it — no fraction digits on a currency that has no minor unit. |
