@@ -892,10 +892,14 @@ app.post(
     requireModule(await requireApp(c, appId), 'updates')
     const releaseId = c.req.param('releaseId') ?? ''
     const db = getDb(c.env)
-    const [release] = isUuid(releaseId) ? await db.select({ id: releases.id }).from(releases).where(and(eq(releases.id, releaseId), eq(releases.appId, appId))).limit(1) : []
+    const [release] = isUuid(releaseId) ? await db.select({ id: releases.id, version: releases.version }).from(releases).where(and(eq(releases.id, releaseId), eq(releases.appId, appId))).limit(1) : []
     if (!release) throw new HTTPException(404, { message: 'Release not found' })
     const body = c.req.valid('json')
     await db.insert(releaseReports).values({ releaseId, appId, installationId, status: body.status, fromVersion: body.from_version ?? null, detail: body.detail ?? null })
+    // Healthy on the version a failed maintenance pinned it to: the rollback is done.
+    if (body.status === 'health_ok') {
+      await db.update(installations).set({ rollbackToVersion: null }).where(and(eq(installations.id, installationId), eq(installations.rollbackToVersion, release.version)))
+    }
     return c.json({ code: 202 as const, data: { release_id: releaseId, status: body.status } }, 202)
   },
 )
