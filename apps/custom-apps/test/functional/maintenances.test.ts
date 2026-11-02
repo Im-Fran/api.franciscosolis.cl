@@ -5,7 +5,7 @@ import { zonedParts } from '@/lib/time'
 import { runContracts, todayIn } from '@/services/contracts'
 import { runMaintenances } from '@/services/maintenances'
 import { createApp, createCompany, enrollDevice, ingestJson, panel, panelJson, type Json } from '../helpers/api'
-import { sentEmails } from '../helpers/email'
+import { failEmail, sentEmails } from '../helpers/email'
 import { publishedNotifications } from '../helpers/notifications'
 
 /*
@@ -589,6 +589,94 @@ describe('a scheduled maintenance', () => {
     expect((await publicJson(token!)).body.data.outcome).toMatchObject({ decision: 'cancelled' })
     expect((await panelJson(`/v1/maintenances/${sent.id}`, { method: 'DELETE' })).status).toBe(200)
     expect((await panelJson(`/v1/maintenances/${sent.id}`)).status).toBe(404)
+  })
+})
+
+/* ── Cancelling ───────────────────────────────────────────────────────────── */
+
+const cancel = (id: string, body: Json = {}) => panelJson(`/v1/maintenances/${id}/cancel`, { method: 'POST', body })
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
+
+describe('cancelling tells the client when they already knew', () => {
+  it('says nothing about a draft that was never sent', async () => {
+    const { app } = await setup()
+    const draft = await createMaintenance(app.id)
+    await addWindow(draft.id, at(72))
+    expect((await cancel(draft.id, { reason: 'Ya no hace falta' })).body.data).toMatchObject({ status: 'cancelled' })
+    expect(sentEmails()).toEqual([])
+    expect(JSON.parse((await audit(draft.id, 'maintenance.cancelled'))!.metadata)).toMatchObject({ client_informed: false })
+  })
+
+  it('emails a request waiting on the client, with the reason, and its links stop answering', async () => {
+    const { app } = await setup({ contacts: [{ email: 'ops@cliente.cl', roles: ['maintenance_approver'] }] })
+    const sent = await sentMaintenance(app.id, at(72), at(96))
+    const [token] = tokensIn()
+    sentEmails().length = 0
+    expect((await cancel(sent.id, { reason: 'El cliente lo pidió por teléfono' })).body.data).toMatchObject({ status: 'cancelled' })
+
+    expect(sentEmails()).toHaveLength(1)
+    const [mail] = sentEmails()
+    expect(mail).toMatchObject({ to: ['ops@cliente.cl'], subject: 'Mantención cancelada: “Actualización a la 1.1”' })
+    expect(mail!.text).toContain('fue cancelada y no se realizará')
+    expect(mail!.text).toContain('El cliente lo pidió por teléfono')
+    expect(mail!.text).not.toMatch(UUID)
+    expect(mail!.text).not.toContain('mnt_')
+    expect(JSON.parse((await audit(sent.id, 'maintenance.cancelled'))!.metadata)).toMatchObject({ client_informed: true })
+
+    // The link that asked for an answer answers no more: it reads as closed and refuses both decisions.
+    expect(await publicJson(token!)).toMatchObject({ status: 200, body: { data: { state: 'closed', outcome: { decision: 'cancelled' } } } })
+    expect(await publicJson(token!, '/approve', { window_id: sent.windows[0].id })).toMatchObject({ status: 410, body: { state: 'closed' } })
+    expect((await publicJson(token!, '/reject', { reason: 'No' })).status).toBe(410)
+  })
+
+  it('emails a request that got no answer (no_response)', async () => {
+    const { app } = await setup()
+    const sent = await sentMaintenance(app.id, at(115), at(118))
+    await runMaintenances(env, at(49, sent.sentAt))
+    await runMaintenances(env, at(98, sent.sentAt))
+    expect((await get(sent.id)).status).toBe('no_response')
+    sentEmails().length = 0
+    await cancel(sent.id)
+    expect(sentEmails().map((email) => email.subject)).toEqual(['Mantención cancelada: “Actualización a la 1.1”'])
+    // No reason given, none shown.
+    expect(sentEmails()[0]!.text).not.toContain('Motivo')
+  })
+
+  it('emails an approved, scheduled maintenance with its window', async () => {
+    const ctx = await approvedWithRelease()
+    await cancel(ctx.maintenance.id, { reason: 'Se pospone' })
+    expect(sentEmails()).toHaveLength(1)
+    expect(sentEmails()[0]!).toMatchObject({ to: ['ops@cliente.cl'], subject: 'Mantención cancelada: “Actualización a la 1.1”' })
+    expect(sentEmails()[0]!.text).toContain('Ventana')
+    expect(sentEmails()[0]!.text).toContain('Se pospone')
+  })
+
+  it('emails a security patch the client was already told about', async () => {
+    const { app } = await setup({ modules: ['updates'] })
+    const patch = await createMaintenance(app.id, { kind: 'security', title: 'Parche OpenSSL', estimated_minutes: 30 })
+    expect((await panelJson(`/v1/maintenances/${patch.id}/schedule`, { method: 'POST' })).status).toBe(200)
+    sentEmails().length = 0
+    await cancel(patch.id)
+    expect(sentEmails().map((email) => email.subject)).toEqual(['Mantención cancelada: “Parche OpenSSL”'])
+  })
+
+  it('emails an automatic cancel too, without the internal reason', async () => {
+    const ctx = await approvedWithRelease()
+    // The whole window went by without a run seeing it start.
+    expect(await runMaintenances(env, new Date(ctx.end.getTime() + 60_000))).toMatchObject({ cancelled: 1, started: 0 })
+    expect(await get(ctx.maintenance.id)).toMatchObject({ status: 'cancelled', cancel_reason: 'missed', cancelled_by: null })
+    expect(sentEmails().map((email) => email.subject)).toEqual(['Mantención cancelada: “Actualización a la 1.1”'])
+    expect(sentEmails()[0]!.text).not.toContain('missed')
+  })
+
+  it('never fails the cancel when the email does not go out', async () => {
+    const ctx = await approvedWithRelease()
+    failEmail()
+    const cancelled = await cancel(ctx.maintenance.id)
+    failEmail(false)
+    expect(cancelled.status).toBe(200)
+    expect(cancelled.body.data).toMatchObject({ status: 'cancelled', result_detail: { mail_failures: [{ stage: 'cancelled', recipients: ['ops@cliente.cl'] }] } })
+    expect(sentEmails()).toEqual([])
   })
 })
 

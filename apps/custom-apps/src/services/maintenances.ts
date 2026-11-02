@@ -304,7 +304,7 @@ const releaseVersion = async (db: Database, releaseId: string | null) => {
  * in `result_detail.mail_failures`, never retried and never failing what it reports — the maintenance
  * happened (or will) whether or not the mail went out. Answers who it reached.
  */
-const sendNotice = async (env: Env, db: Database, row: MaintenanceRow, window: Pick<WindowRow, 'startsAt' | 'endsAt'>, stage: MaintenanceNoticeStage, options: { version?: string | null } = {}) => {
+const sendNotice = async (env: Env, db: Database, row: MaintenanceRow, window: Pick<WindowRow, 'startsAt' | 'endsAt'> | null, stage: MaintenanceNoticeStage, options: { version?: string | null; reason?: string | null } = {}) => {
   const recipients = await approvalRecipients(db, row.companyId)
   if (recipients.length === 0) return { delivered: [] as string[], failed: [] as string[] }
   const context = await mailContext(db, row)
@@ -315,7 +315,8 @@ const sendNotice = async (env: Env, db: Database, row: MaintenanceRow, window: P
     title: row.title,
     description: row.description,
     estimatedMinutes: row.estimatedMinutes,
-    window: formatMailWindow(window.startsAt, window.endsAt, MAINTENANCE_LOCALE),
+    window: window ? formatMailWindow(window.startsAt, window.endsAt, MAINTENANCE_LOCALE) : null,
+    reason: options.reason ?? null,
     approvedBy: row.respondedByName ? `${row.respondedByName} (${row.respondedBy})` : row.respondedBy,
     version: options.version !== undefined ? options.version : await releaseVersion(db, row.releaseId),
     locale: MAINTENANCE_LOCALE,
@@ -493,7 +494,20 @@ const endNotices = (db: Database, maintenanceId: string, now: Date) =>
 
 const CANCELLABLE: MaintenanceStatus[] = ['draft', 'pending_approval', 'scheduled', 'no_response']
 
-/** Cancels a maintenance that has not started: its links close and its in-app notices end. */
+/**
+ * Whether the client already knew about a maintenance, so that cancelling it is news to them: a request
+ * was sent (even one nobody answered), or a window was fixed — approved, applied for lack of an answer
+ * or a security patch's advance notice. A draft that never left the building cancels silently.
+ */
+const clientKnew = (row: Pick<MaintenanceRow, 'sends' | 'chosenWindowId' | 'scheduledAt' | 'status'>) =>
+  row.sends > 0 || row.chosenWindowId !== null || row.scheduledAt !== null || row.status === 'scheduled'
+
+/**
+ * Cancels a maintenance that has not started: its links close, its in-app notices end and — when the
+ * client had already heard about it — they are emailed that it will not happen. The email is best
+ * effort (a failure lands in `result_detail.mail_failures`, never in the cancel). The reason reaches
+ * the client only when a person gave one: the cron's `grace` / `suspended` / `missed` are internal.
+ */
 const cancelMaintenance = async (env: Env, db: Database, row: MaintenanceRow, input: { reason: string | null; actor: { actorEmail: string | null; actorId?: string | null; ip?: string | null; userAgent?: string | null } }, now: Date) => {
   if (!CANCELLABLE.includes(row.status as MaintenanceStatus)) {
     throw new HTTPException(409, { message: row.status === 'in_progress' ? 'A maintenance in progress is closed with /complete or /fail, not cancelled' : `A ${row.status} maintenance cannot be cancelled` })
@@ -504,14 +518,23 @@ const cancelMaintenance = async (env: Env, db: Database, row: MaintenanceRow, in
     .where(and(eq(maintenances.id, row.id), eq(maintenances.status, row.status)))
     .returning()
   if (!updated) throw new HTTPException(409, { message: 'The maintenance changed while saving; reload and try again' })
+  const informed = clientKnew(row)
   await db.batch([
     invalidateLinks(db, row.id, now),
     endNotices(db, row.id, now),
     db.insert(auditLogs).values(
-      auditRow({ event: 'maintenance.cancelled', resourceType: 'maintenance', resourceId: row.id, ...input.actor, metadata: { automatic: input.actor.actorEmail === null, app_id: row.appId, before: { status: row.status }, reason: input.reason } }),
+      auditRow({ event: 'maintenance.cancelled', resourceType: 'maintenance', resourceId: row.id, ...input.actor, metadata: { automatic: input.actor.actorEmail === null, app_id: row.appId, before: { status: row.status }, reason: input.reason, client_informed: informed } }),
     ),
   ])
   await syncApp(env, row.appId)
+  if (informed) {
+    try {
+      const [chosen] = row.chosenWindowId ? await db.select().from(maintenanceWindows).where(eq(maintenanceWindows.id, row.chosenWindowId)).limit(1) : []
+      await sendNotice(env, db, updated, chosen ?? null, 'cancelled', { version: null, reason: input.actor.actorEmail !== null ? input.reason : null })
+    } catch (error) {
+      console.error('failed to email a maintenance cancellation', row.id, error)
+    }
+  }
   return updated
 }
 

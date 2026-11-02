@@ -610,7 +610,7 @@ app.post(
 app.post(
   '/maintenances/:maintenanceId/cancel',
   describeRoute({
-    description: 'Cancels a maintenance that has not started (draft, waiting on the client, scheduled, or with no answer): its links stop working and the in-app notice it posted ends. `reason`, when sent, is kept as `cancel_reason`. A maintenance in progress is closed with `/complete` or `/fail`.',
+    description: 'Cancels a maintenance that has not started (draft, waiting on the client, scheduled, or with no answer): its links stop working and the in-app notice it posted ends. `reason`, when sent, is kept as `cancel_reason` and shown to the client. When the client already knew about it (a request was sent or a window fixed) they are emailed that it was cancelled; a draft never sent cancels silently. A maintenance in progress is closed with `/complete` or `/fail`.',
     tags: ['Maintenances'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Cancelled', content: jsonContent(dataSchema(looseSchema)) }, 404: { description: 'Not found' }, 409: { description: 'Already started or finished' }, ...panelErrors },
