@@ -19,6 +19,12 @@ import type { AppRow, InstallationRow } from '@/services/serialize'
  * instead, flagged `rollback` — that is what "forzar un rollback" means from the panel's side. Nothing
  * is offered while the app is in grace or suspended: during grace only the app itself keeps working.
  *
+ * **A rollback pin** (`installations.rollback_to_version`) is the per-device version of that rollback:
+ * a failed maintenance whose release other devices also have sends only its own targets back, so the
+ * pin makes the offer a mandatory `rollback` to that version (or the newest live one below it) for as
+ * long as the device runs something higher. It is checked before the normal offer and is spent — and
+ * cleared by the heartbeat — once the device reports the pinned version or lower.
+ *
  * **`maintenance` is deliberately not refused.** A scheduled maintenance puts its installations in
  * `maintenance` precisely so they install its release in the window, and it only starts during grace
  * when the contract allows maintenances — the installation's `maintenance` override then wins over the
@@ -58,7 +64,7 @@ const reaches = (release: ReleaseRow, installationId: string, bucket: number) =>
 
 type OfferInput = {
   app: AppRow
-  installation: Pick<InstallationRow, 'id' | 'channel' | 'platform' | 'arch' | 'appVersion' | 'stateOverride'>
+  installation: Pick<InstallationRow, 'id' | 'channel' | 'platform' | 'arch' | 'appVersion' | 'stateOverride' | 'rollbackToVersion'>
   /** What the device says about itself, when it knows better than its enrollment did. */
   platform?: string | null
   arch?: string | null
@@ -103,6 +109,16 @@ const offerFor = async (db: Database, input: OfferInput): Promise<Offer | null> 
   const current = input.version ?? installation.appVersion
   const rows = await lineReleases(db, app.id, installation.channel, platform, arch)
   if (rows.length === 0) return null
+
+  // A rollback pin comes first: a failed maintenance sent this device back to a version while the
+  // release it failed on stays live for other devices, so nothing newer may be offered over it.
+  // The pin only bites while the device runs something above it; at or below it, it is spent.
+  const pin = installation.rollbackToVersion
+  if (pin && current && compareSemver(current, pin) > 0) {
+    const live = rows.filter((row) => row.status !== 'withdrawn')
+    const target = live.find((row) => compareSemver(row.version, pin) === 0) ?? newest(live.filter((row) => compareSemver(row.version, pin) < 0))
+    if (target) return { release: target, mandatory: true, rollback: true }
+  }
 
   const bucket = await rolloutBucket(app.id, installation.id)
   const best = newest(rows.filter((row) => row.status === 'published' && reaches(row, installation.id, bucket)))

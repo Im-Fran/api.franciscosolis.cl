@@ -116,8 +116,9 @@ package. That is deliberate on all four counts — see below.
   (the second send says it is the second, and both say what happens without an answer — applying it
   alone is only fair if the client was told); `MaintenanceNoticeEmail` is every message after it —
   approved, applied for lack of an answer, a security patch's advance notice, the reminder, completed,
-  failed — selected by `stage`, so the same facts sit in the same rows and a client can line them up.
-  Windows and instants arrive formatted (Santiago's clock is the sender's business, as with every
+  failed, cancelled — selected by `stage`, so the same facts sit in the same rows and a client can line them up.
+  A `cancelled` notice may have no window (a request never answered had none chosen) and shows a
+  `reason` row only when a person gave one — never an internal code. Windows and instants arrive formatted (Santiago's clock is the sender's business, as with every
   date here); the duration is formatted here (`duration.ts`), like money, because it needs no
   calendar. Both default to Spanish: the clients are Chilean.
 - **`ActionLink` takes a `hint`** — the line above the plain copy of the URL — so a Spanish email no

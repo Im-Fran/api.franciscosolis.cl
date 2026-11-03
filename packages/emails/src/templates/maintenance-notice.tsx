@@ -16,8 +16,9 @@ import { renderEmail, type RenderedEmail } from '../render'
  * - `reminder`: about 24 hours before the window.
  * - `completed`: it ended well.
  * - `failed`: it did not pass its checks and the devices stayed on (or went back to) what they ran.
+ * - `cancelled`: it will not happen after all, sent only to a client who had already heard of it.
  */
-type MaintenanceNoticeStage = 'approved' | 'auto_applied' | 'security' | 'reminder' | 'completed' | 'failed'
+type MaintenanceNoticeStage = 'approved' | 'auto_applied' | 'security' | 'reminder' | 'completed' | 'failed' | 'cancelled'
 
 type MaintenanceNoticeEmailProps = {
   stage: MaintenanceNoticeStage
@@ -27,19 +28,21 @@ type MaintenanceNoticeEmailProps = {
   /** What will be done, shown before the work; left out of the outcome notices. */
   description?: string | null
   estimatedMinutes: number
-  /** The window it runs in, already formatted by the sender (date, times and time zone). */
-  window: string
+  /** The window it runs in, already formatted by the sender (date, times and time zone). Left out of a `cancelled` notice that never had one chosen. */
+  window?: string | null
   /** Who approved it, for `approved`. */
   approvedBy?: string | null
   /** The version installed, when the maintenance carried a release. */
   version?: string | null
+  /** Why it was cancelled, for `cancelled`, when a person gave a reason. Never an internal code. */
+  reason?: string | null
   locale?: EmailLocale
   brandName?: string
 }
 
 type StageCopy = { subject: (title: string) => string; heading: string; intro: (app: string, company: string, extra: { approvedBy?: string | null; version?: string | null }) => string; after?: (extra: { version?: string | null }) => string }
 
-const copy: Record<EmailLocale, { stages: Record<MaintenanceNoticeStage, StageCopy>; what: string; questions: string; labels: { app: string; maintenance: string; window: string; duration: string; approvedBy: string; version: string } }> = {
+const copy: Record<EmailLocale, { stages: Record<MaintenanceNoticeStage, StageCopy>; what: string; questions: string; labels: { app: string; maintenance: string; window: string; duration: string; approvedBy: string; version: string; reason: string } }> = {
   en: {
     stages: {
       approved: {
@@ -82,10 +85,16 @@ const copy: Record<EmailLocale, { stages: Record<MaintenanceNoticeStage, StageCo
             : `The maintenance of ${app} (${company}) could not be completed. The app keeps working as it did before.`,
         after: () => 'Nothing is needed on your side. We will look into it and get in touch to schedule it again.',
       },
+      cancelled: {
+        subject: (title) => `Maintenance cancelled: “${title}”`,
+        heading: 'Maintenance cancelled',
+        intro: (app, company) => `The maintenance of ${app} (${company}) has been cancelled and will not be carried out.`,
+        after: () => 'Nothing is needed on your side, and any earlier link to choose a window no longer works. If it is planned again, we will get in touch.',
+      },
     },
     what: 'What will be done',
     questions: 'If you have any questions, reply to this email.',
-    labels: { app: 'App', maintenance: 'Maintenance', window: 'Window', duration: 'Estimated duration', approvedBy: 'Approved by', version: 'Version' },
+    labels: { app: 'App', maintenance: 'Maintenance', window: 'Window', duration: 'Estimated duration', approvedBy: 'Approved by', version: 'Version', reason: 'Reason' },
   },
   es: {
     stages: {
@@ -129,10 +138,16 @@ const copy: Record<EmailLocale, { stages: Record<MaintenanceNoticeStage, StageCo
             : `La mantención de ${app} (${company}) no se pudo completar. La app sigue funcionando como antes.`,
         after: () => 'No necesitas hacer nada. Lo revisaremos y te contactaremos para agendarla de nuevo.',
       },
+      cancelled: {
+        subject: (title) => `Mantención cancelada: “${title}”`,
+        heading: 'Mantención cancelada',
+        intro: (app, company) => `La mantención de ${app} (${company}) fue cancelada y no se realizará.`,
+        after: () => 'No necesitas hacer nada, y cualquier enlace anterior para elegir una ventana ya no funciona. Si se planifica de nuevo, te contactaremos.',
+      },
     },
     what: 'Qué se hará',
     questions: 'Si tienes dudas, responde este correo.',
-    labels: { app: 'App', maintenance: 'Mantención', window: 'Ventana', duration: 'Duración estimada', approvedBy: 'Aprobada por', version: 'Versión' },
+    labels: { app: 'App', maintenance: 'Mantención', window: 'Ventana', duration: 'Duración estimada', approvedBy: 'Aprobada por', version: 'Versión', reason: 'Motivo' },
   },
 }
 
@@ -145,10 +160,10 @@ const copy: Record<EmailLocale, { stages: Record<MaintenanceNoticeStage, StageCo
  * the devices run now before anything else: that is the question somebody reading it at the counter
  * has.
  */
-const MaintenanceNoticeEmail = ({ stage, companyName, appName, title, description, estimatedMinutes, window, approvedBy, version, locale = 'es', brandName }: MaintenanceNoticeEmailProps) => {
+const MaintenanceNoticeEmail = ({ stage, companyName, appName, title, description, estimatedMinutes, window, approvedBy, version, reason, locale = 'es', brandName }: MaintenanceNoticeEmailProps) => {
   const t = copy[locale]
   const s = t.stages[stage]
-  const beforeWork = stage !== 'completed' && stage !== 'failed'
+  const beforeWork = stage !== 'completed' && stage !== 'failed' && stage !== 'cancelled'
   return (
     <EmailLayout preview={s.subject(title)} heading={s.heading} brandName={brandName}>
       <Paragraph>{s.intro(appName, companyName, { approvedBy, version })}</Paragraph>
@@ -156,10 +171,11 @@ const MaintenanceNoticeEmail = ({ stage, companyName, appName, title, descriptio
         rows={[
           { label: t.labels.app, value: appName },
           { label: t.labels.maintenance, value: title },
-          { label: t.labels.window, value: window },
+          ...(window ? [{ label: t.labels.window, value: window }] : []),
           ...(beforeWork ? [{ label: t.labels.duration, value: formatDuration(estimatedMinutes, locale) }] : []),
           ...(stage === 'approved' && approvedBy ? [{ label: t.labels.approvedBy, value: approvedBy }] : []),
           ...(version ? [{ label: t.labels.version, value: version, mono: true }] : []),
+          ...(stage === 'cancelled' && reason ? [{ label: t.labels.reason, value: reason }] : []),
         ]}
       />
       {beforeWork && description

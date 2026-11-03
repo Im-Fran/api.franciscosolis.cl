@@ -169,8 +169,11 @@ yet.
   first offered window still 24 hours away. A reminder email and an in-app notice go out 24 hours
   before; in the window the installations show the maintenance screen and are offered the release;
   at the end (plus the health-check timeout) it is completed — the hours go to the work log and the
-  client gets a closing email — or failed: the release is withdrawn, the devices roll back, and both
-  the owner and the client are told. **Security patches** skip the approval: the system picks the
+  client gets a closing email — or failed: a release only this maintenance reached is withdrawn; one
+  other devices also have is paused and just the maintenance's devices are sent back to the version they
+  had (a per-installation rollback pin), and both the owner and the client are told. Cancelling a
+  maintenance the client already knew about (a request was sent, a window fixed, a security notice
+  out) emails them that it will not happen; a draft that never left cancels silently. **Security patches** skip the approval: the system picks the
   first unused block within the contract's `security_patch_days` (or the least used one) and the client
   gets an advance notice. Grace and suspension pause it all unless the contract keeps maintenances.
 - **Per-app documents** — each app gets its own `openapi.json`, filtered to the modules it has
@@ -404,7 +407,7 @@ report `installed`. Report `health_ok` once the new version has started, reached
 its own checks; if that has not happened within `health_check_timeout_seconds`, or it crashes
 `max_failures` times in a row, switch back to the fallback and report `rolled_back`. An offer marked
 `mandatory` must be installed before the app carries on; one marked `rollback` is the way back from
-a withdrawn version.
+a withdrawn version, or the version a failed maintenance sent this device back to.
 
 ---
 

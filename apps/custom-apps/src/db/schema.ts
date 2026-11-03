@@ -203,6 +203,12 @@ const installations = sqliteTable('installations', {
   /** Per-installation kill switch, overriding the app's `state` when set. */
   stateOverride: text('state_override'),
   stateMessage: text('state_message'),
+  /**
+   * Set when a failed maintenance sends this one device back to the version it had while the release
+   * stays live for everybody else. The offer treats a running version above it as a mandatory
+   * rollback to it; it stops mattering — and is cleared — once the device runs this version or lower.
+   */
+  rollbackToVersion: text('rollback_to_version'),
   /** `LOG_LEVELS`, overriding the app's for this device alone — turning one kiosk up to `debug`. */
   logLevelOverride: text('log_level_override'),
   /** Screenshots for this device, on top of the app's switch. Both must be on. */

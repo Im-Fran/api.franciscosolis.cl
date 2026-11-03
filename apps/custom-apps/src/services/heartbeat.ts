@@ -4,6 +4,7 @@ import { getDb } from '@/db/client'
 import { apps, installations } from '@/db/schema'
 import type { Env } from '@/env'
 import { iso } from '@/lib/json'
+import { compareSemver } from '@/lib/semver'
 import { modulesOf } from '@/services/apps'
 import { takeOutstanding } from '@/services/commands'
 import { activeMessages } from '@/services/messages'
@@ -121,6 +122,8 @@ const recordHeartbeat = async (env: Env, input: HeartbeatInput): Promise<Directi
   if (versionChanged) {
     assignments.push('app_version = ?', 'previous_app_version = ?')
     bindings.push(body.app_version, installation.appVersion)
+    // Back on (or below) the version a failed maintenance sent it to: the rollback pin is spent.
+    if (installation.rollbackToVersion && compareSemver(body.app_version!, installation.rollbackToVersion) <= 0) assignments.push('rollback_to_version = NULL')
   }
 
   const nowMs = now.getTime()

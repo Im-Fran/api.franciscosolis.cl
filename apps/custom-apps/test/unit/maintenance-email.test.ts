@@ -27,7 +27,7 @@ describe('the maintenance mail', () => {
     expect(second.text).toContain('If the button does not work')
   })
 
-  it.each<MaintenanceNoticeStage>(['approved', 'auto_applied', 'security', 'reminder', 'completed', 'failed'])('renders the %s notice in both languages', async (stage) => {
+  it.each<MaintenanceNoticeStage>(['approved', 'auto_applied', 'security', 'reminder', 'completed', 'failed', 'cancelled'])('renders the %s notice in both languages', async (stage) => {
     for (const locale of ['es', 'en'] as const) {
       const rendered = await renderMaintenanceNoticeEmail({ ...base, stage, window: 'ventana', approvedBy: 'ops@andes.cl', version: '1.1.0', locale })
       expect(rendered.subject).toContain('Actualización 1.1')
@@ -39,6 +39,20 @@ describe('the maintenance mail', () => {
   it('says what the devices run after a failure, with or without a release', async () => {
     expect((await renderMaintenanceNoticeEmail({ ...base, stage: 'failed', window: 'w', version: '1.1.0' })).text).toContain('volvieron a la versión que tenían antes')
     expect((await renderMaintenanceNoticeEmail({ ...base, stage: 'failed', window: 'w', version: null })).text).toContain('La app sigue funcionando como antes')
+  })
+
+  it('says a cancelled maintenance will not happen, with the reason when there is one', async () => {
+    const withReason = await renderMaintenanceNoticeEmail({ ...base, stage: 'cancelled', window: 'ventana', reason: 'Se pospone', locale: 'es' })
+    expect(withReason.subject).toBe('Mantención cancelada: “Actualización 1.1”')
+    expect(withReason.text).toContain('fue cancelada y no se realizará')
+    expect(withReason.text).toContain('Motivo')
+    expect(withReason.text).toContain('Se pospone')
+    // A request that never had a window chosen has no window row, and no reason means no reason row.
+    const bare = await renderMaintenanceNoticeEmail({ ...base, stage: 'cancelled', window: null, locale: 'en' })
+    expect(bare.subject).toBe('Maintenance cancelled: “Actualización 1.1”')
+    expect(bare.text).toContain('has been cancelled and will not be carried out')
+    expect(bare.text).not.toContain('Window')
+    expect(bare.text).not.toContain('Reason')
   })
 
   it('formats durations and windows the way a person says them', () => {

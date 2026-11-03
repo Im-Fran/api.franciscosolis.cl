@@ -610,7 +610,7 @@ app.post(
 app.post(
   '/maintenances/:maintenanceId/cancel',
   describeRoute({
-    description: 'Cancels a maintenance that has not started (draft, waiting on the client, scheduled, or with no answer): its links stop working and the in-app notice it posted ends. `reason`, when sent, is kept as `cancel_reason`. A maintenance in progress is closed with `/complete` or `/fail`.',
+    description: 'Cancels a maintenance that has not started (draft, waiting on the client, scheduled, or with no answer): its links stop working and the in-app notice it posted ends. `reason`, when sent, is kept as `cancel_reason` and shown to the client. When the client already knew about it (a request was sent or a window fixed) they are emailed that it was cancelled; a draft never sent cancels silently. A maintenance in progress is closed with `/complete` or `/fail`.',
     tags: ['Maintenances'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Cancelled', content: jsonContent(dataSchema(looseSchema)) }, 404: { description: 'Not found' }, 409: { description: 'Already started or finished' }, ...panelErrors },
@@ -652,7 +652,7 @@ app.post(
 app.post(
   '/maintenances/:maintenanceId/fail',
   describeRoute({
-    description: 'Closes a maintenance in progress as failed, with a `note` saying why: the installations leave maintenance, the release (if it carried one) is withdrawn so the devices go back to the version they ran, and the client is told it stayed on the previous version.',
+    description: 'Closes a maintenance in progress as failed, with a `note` saying why: the installations leave maintenance, the release (if it carried one) is withdrawn when only this maintenance reached it, or paused — with just the devices of the maintenance sent back — when other devices have it (`result_detail.release_action`), and the client is told it stayed on the previous version.',
     tags: ['Maintenances'],
     security: [{ bearerAuth: [] }],
     responses: { 200: { description: 'Failed', content: jsonContent(dataSchema(looseSchema)) }, 404: { description: 'Not found' }, 409: { description: 'Not in progress' }, ...panelErrors },

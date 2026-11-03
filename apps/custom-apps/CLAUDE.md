@@ -224,7 +224,7 @@ the clients' apps and to this internal panel, never to the website.
 - **The offer is computed, never stored** (`offerFor`): the newest published release of the device's
   line that its rollout reaches and that is newer than what it runs; `mandatory` below `min_version`;
   a device running a *withdrawn* version gets the newest earlier live one as a mandatory `rollback`,
-  whatever that one's rollout says. Nothing during grace or suspension. The heartbeat answer carries
+  whatever that one's rollout says; so does a device with a **rollback pin** (below) running above it. Nothing during grace or suspension. The heartbeat answer carries
   only the summary (`directives.update`); the device asks `/updates/latest` for the rest. The
   architecture is normalised (`arm64` = `aarch64`) and `universal` / `any` builds match every arch.
 - **Rollout buckets are stable**: SHA-256 of `appId:installationId`, mod 100. The devices in the first
@@ -240,6 +240,14 @@ the clients' apps and to this internal panel, never to the website.
   `RELEASES.pauseMinSample` devices behind the rate. Withdrawing would send every device back down;
   that is a person's decision. Resuming a release that is still past a threshold pauses it again on the
   next run, by design.
+- **A rollback pin sends one device back without withdrawing anything** (`installations.rollback_to_version`,
+  `0008_rollback_pin.sql`). `offerFor` checks it before the normal offer: a device running a version
+  *above* the pin is offered the pinned version (or the newest live one below it) as a mandatory
+  `rollback`, whatever the rollout says and even if a newer release is published since. At or below the
+  pin it is spent: ignored by the offer, and cleared by the heartbeat that reports the older version or
+  by a `health_ok` report on the pinned version. A column rather than a derived rule because nothing
+  else records "this device was sent back" once the maintenance row is history, and it is per
+  installation so a release other devices run is never withdrawn to roll back a few.
 - **Contract dates are Santiago calendar days, hours are whole minutes.** `starts_on` / `ends_on`
   (inclusive) are `YYYY-MM-DD`, compared as strings; cycles are `[starts_on, ends_on)`. No float ever
   holds hours. Amounts are in the contract's currency (CLP or UF) and never converted here.
@@ -356,7 +364,8 @@ the clients' apps and to this internal panel, never to the website.
   A **draft** is published at 0 % with only the targets in `rollout_installations` (`published_by =
   maintenance:<id>`); an already **published** one keeps its rollout and gets the targets added. A
   release paused or withdrawn by the time the window starts fails the maintenance before anything is
-  touched (`release_unavailable`), and is not withdrawn by it. Named installations off the release's
+  touched (`release_unavailable`), and is not touched by a failure either. The start records each
+  target's version in `result_detail.previous_versions`. Named installations off the release's
   line are refused when the maintenance is planned (422), since the offer could never reach them.
 - **The offer works during maintenance** (`offerFor` refuses only suspension and grace): the
   installation's `maintenance` override wins over the app's `grace`, so a maintenance a lapsed
@@ -366,10 +375,19 @@ the clients' apps and to this internal panel, never to the website.
   reported `health_ok` for the release since `started_at`, and none reported `rolled_back` or `failed`.
   Completed: the hours (`estimated_minutes`) are logged as a `maintenance` work log entry with
   `maintenance_id`, filed like any other on the window's Santiago day — or today when that day's cycle
-  already closed — and the client gets the closing email. Failed: the release is withdrawn exactly as
-  `/withdraw` does (`automatic: true`, reason `maintenance <title> failed health check`) so the devices
-  roll back, the owner is notified and the client is told the devices stayed on the previous version;
-  no hours are logged. `/complete` and `/fail` close one by hand, with a note.
+  already closed — and the client gets the closing email. Failed: what happens to the release depends on
+  who else has it (`settleFailedRelease`, recorded as `result_detail.release_action`). **Exclusive** — a
+  draft the maintenance published at 0 % to its targets alone, still reaching nobody else — is
+  `withdrawn` exactly as `/withdraw` does (`automatic: true`, reason `maintenance <title> failed health
+  check`), so its devices roll back. **Shared** — already published by a person, or reaching other
+  installations — is `paused` with the same reason through the same transition as the panel's pause:
+  withdrawing it would roll back devices outside the maintenance. The targets leave
+  `rollout_installations` and each is pinned to the version it had (`rolled_back_installations`), so
+  only they are offered the way back; everybody else keeps the release. The owner's
+  `custom_apps.maintenance_failed` carries `release_action` (`withdrawn`, `paused`, or null when no
+  release was touched) and the notifications catalogue words it; the client is told the devices stayed
+  on the previous version either way. No hours are logged. `/complete` and `/fail` close one by hand,
+  with a note, and settle the release the same way.
 - **Security patches choose their own window** (`/schedule`, `kind: 'security'`, no approval): the
   first block of the estimated duration with zero use on the heatmap, starting at least two hours from
   now and ending within the `security_patch_days` of the contract covering the app (3 without one),
@@ -391,6 +409,14 @@ the clients' apps and to this internal panel, never to the website.
   reports. Recipients are the company's `maintenance_approver` contacts, else the primary contact,
   else anyone with an address (`contactRecipients`, which the contract notice shares). Client-facing
   copy is Spanish (`MAINTENANCE_LOCALE`), with English in the templates beside it.
+- **Cancelling tells a client who already knew** (`cancelMaintenance`, the panel's `/cancel` and the
+  cron's automatic cancels alike — `grace`, `suspended`, `missed`): when a request was sent (`sends > 0`,
+  even one nobody answered) or a window was fixed (approved, auto-applied, scheduled — a security
+  patch's advance notice is that) the approvers get the `cancelled` notice, with the chosen window if
+  any and the reason only when a person gave one (the cron's reasons are internal codes and are not
+  shown). A draft that was never sent cancels silently. Best effort like the rest: a failure goes to
+  `result_detail.mail_failures` and never fails the cancel. Cancelling closes every approval link in
+  the same step, so a link answers `410` afterwards.
 - **The owner is the account that created the maintenance** (`created_by_id`): told through
   `apps/notifications` when the client approves or rejects, when nobody answers, and how it ended
   (`custom_apps.maintenance_*`; a completion is not emailed).

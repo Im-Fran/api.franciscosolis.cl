@@ -57,6 +57,13 @@
       "when": 1792528957889,
       "tag": "0007_maintenances",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1793598731010,
+      "tag": "0008_rollback_pin",
+      "breakpoints": true
     }
   ]
 }

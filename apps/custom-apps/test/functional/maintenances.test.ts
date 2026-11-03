@@ -5,7 +5,7 @@ import { zonedParts } from '@/lib/time'
 import { runContracts, todayIn } from '@/services/contracts'
 import { runMaintenances } from '@/services/maintenances'
 import { createApp, createCompany, enrollDevice, ingestJson, panel, panelJson, type Json } from '../helpers/api'
-import { sentEmails } from '../helpers/email'
+import { failEmail, sentEmails } from '../helpers/email'
 import { publishedNotifications } from '../helpers/notifications'
 
 /*
@@ -394,15 +394,22 @@ describe('a request nobody answers', () => {
 /* ── Running it ───────────────────────────────────────────────────────────── */
 
 /** An app with a release, two included devices and one left out, a contract, and a maintenance approved for a window three days out. */
-const approvedWithRelease = async (options: { publish?: boolean; estimated?: number } = {}) => {
+const approvedWithRelease = async (options: { publish?: boolean; shared?: boolean; estimated?: number } = {}) => {
   const { app, company } = await setup({ contacts: [{ email: 'ops@cliente.cl', roles: ['maintenance_approver'] }] })
   const contract = await panelJson('/v1/contracts', { method: 'POST', body: { company_id: company.id, name: 'Mantención', starts_on: addDays(todayIn(), -5), included_minutes: 600, app_ids: [app.id] } })
   expect(contract.status).toBe(201)
   const upload = await withReleases(app.id)
+  // A shared release: 1.0.0 is live for the whole line (what a failure sends devices back to), and
+  // 1.1.0 is published by a person to a device outside the maintenance before it is planned.
+  if (options.shared) {
+    const baseline = await upload('1.0.0')
+    expect((await panelJson(`/v1/releases/${baseline.id}/publish`, { method: 'POST', body: { rollout_percent: 100 } })).status).toBe(200)
+  }
   const release = await upload('1.1.0')
   if (options.publish) expect((await panelJson(`/v1/releases/${release.id}/publish`, { method: 'POST', body: { rollout_percent: 0 } })).status).toBe(200)
   const included = [await enrollDevice(app.id, app.key.key), await enrollDevice(app.id, app.key.key)]
   const outside = await enrollDevice(app.id, app.key.key)
+  if (options.shared) expect((await panelJson(`/v1/releases/${release.id}/publish`, { method: 'POST', body: { rollout_percent: 0, installation_ids: [outside.installation_id] } })).status).toBe(200)
   // The second device already had an override of its own, which the maintenance must give back.
   await panelJson(`/v1/installations/${included[1]!.installation_id}`, { method: 'PATCH', body: { state_override: 'active', state_message: 'Caja 2' } })
   const maintenance = await createMaintenance(app.id, { release_id: release.id, installation_ids: included.map((device) => device.installation_id), estimated_minutes: options.estimated ?? 60 })
@@ -486,8 +493,8 @@ describe('a scheduled maintenance', () => {
     expect((await panelJson(`/v1/releases/${ctx.release.id}`)).body.data.status).toBe('published')
   })
 
-  it('fails when a device rolled back or never reported: the release is withdrawn and everyone told', async () => {
-    const ctx = await approvedWithRelease({ publish: true })
+  it('fails when a device rolled back or never reported: a release only this maintenance reached is withdrawn and everyone told', async () => {
+    const ctx = await approvedWithRelease()
     const started = new Date(ctx.start.getTime() + 60_000)
     await runMaintenances(env, started)
     expect((await panelJson(`/v1/releases/${ctx.release.id}`)).body.data.rollout_installations.sort()).toEqual(ctx.included.map((device) => device.installation_id).sort())
@@ -495,7 +502,8 @@ describe('a scheduled maintenance', () => {
     expect(await runMaintenances(env, new Date(ctx.end.getTime() + 610_000))).toMatchObject({ failed: 1 })
 
     const failed = await get(ctx.maintenance.id)
-    expect(failed).toMatchObject({ status: 'failed', result: 'failed', work_log_id: null })
+    expect(failed).toMatchObject({ status: 'failed', result: 'failed', work_log_id: null, result_detail: { release_action: 'withdrawn', withdrawn: true } })
+    expect(failed.result_detail.rolled_back_installations).toBeUndefined()
     expect(failed.result_detail.failure).toEqual({
       reason: 'health_check',
       installations: expect.arrayContaining([
@@ -505,11 +513,58 @@ describe('a scheduled maintenance', () => {
     })
     const release = (await panelJson(`/v1/releases/${ctx.release.id}`)).body.data
     expect(release).toMatchObject({ status: 'withdrawn', status_reason: { automatic: true, reason: 'maintenance Actualización a la 1.1 failed health check' } })
-    expect(publishedNotifications()).toEqual([expect.objectContaining({ type: 'custom_apps.maintenance_failed', data: expect.objectContaining({ reason: 'health_check: 2/2', failing: 2 }) })])
+    expect(publishedNotifications()).toEqual([expect.objectContaining({ type: 'custom_apps.maintenance_failed', data: expect.objectContaining({ reason: 'health_check: 2/2', failing: 2, release_action: 'withdrawn' }) })])
     expect(sentEmails().map((email) => email.subject)).toEqual(['La mantención no se pudo completar: “Actualización a la 1.1”'])
     expect(sentEmails()[0]!.text).toContain('volvieron a la versión que tenían antes')
     expect((await panelJson(`/v1/installations/${ctx.included[0]!.installation_id}`)).body.data.state_override).toBeNull()
     expect((await panelJson(`/v1/work-logs?maintenance_id=${ctx.maintenance.id}`)).body.data).toEqual([])
+  })
+
+  it('fails on a release other devices have: it is paused and only the maintenance devices go back', async () => {
+    const ctx = await approvedWithRelease({ shared: true })
+    const [one, two] = ctx.included
+    const started = new Date(ctx.start.getTime() + 60_000)
+    await runMaintenances(env, started)
+    const running = await get(ctx.maintenance.id)
+    expect(running.result_detail).toMatchObject({ release: { published_by_maintenance: false, status_before: 'published' }, previous_versions: { [one!.installation_id]: '1.0.0', [two!.installation_id]: '1.0.0' } })
+
+    // Everybody updates: the targets inside the window, a device outside it on its own.
+    for (const device of [one!, two!, ctx.outside]) {
+      expect((await ingestJson(ctx.app.id, '/heartbeat', { token: device.access_token, body: { app_version: '1.1.0' } })).status).toBe(200)
+    }
+    await report(ctx.app.id, one!.access_token, ctx.release.id, 'health_ok', new Date(started.getTime() + 120_000))
+    await report(ctx.app.id, two!.access_token, ctx.release.id, 'rolled_back', new Date(started.getTime() + 120_000))
+    expect(await runMaintenances(env, new Date(ctx.end.getTime() + 610_000))).toMatchObject({ failed: 1 })
+
+    const failed = await get(ctx.maintenance.id)
+    expect(failed.result_detail).toMatchObject({ release_action: 'paused', rolled_back_installations: expect.arrayContaining([{ id: one!.installation_id, version: '1.0.0' }, { id: two!.installation_id, version: '1.0.0' }]) })
+    expect(failed.result_detail.withdrawn).toBeUndefined()
+    const release = (await panelJson(`/v1/releases/${ctx.release.id}`)).body.data
+    expect(release).toMatchObject({ status: 'paused', status_reason: { automatic: true, reason: 'maintenance Actualización a la 1.1 failed health check' } })
+    // The targets left the reach; the device outside it is still named.
+    expect(release.rollout_installations).toEqual([ctx.outside.installation_id])
+
+    // Only the targets are sent back, as a mandatory rollback to what they ran.
+    for (const device of [one!, two!]) {
+      expect((await ingestJson(ctx.app.id, '/updates/latest', { token: device.access_token })).body.data).toMatchObject({ version: '1.0.0', mandatory: true, rollback: true })
+    }
+    expect((await ingestJson(ctx.app.id, '/heartbeat', { token: one!.access_token, body: {} })).body.data.update).toMatchObject({ version: '1.0.0', rollback: true })
+    // The device outside keeps the release it has: nothing is offered, and certainly no rollback.
+    expect((await ingestJson(ctx.app.id, '/updates/latest', { token: ctx.outside.access_token })).body.data).toBeNull()
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM installations WHERE id = ? AND rollback_to_version IS NOT NULL').bind(ctx.outside.installation_id).first('n')).toBe(0)
+
+    // The owner hears it was paused, not withdrawn; the client's email is the same as ever.
+    expect(publishedNotifications()).toEqual([expect.objectContaining({ type: 'custom_apps.maintenance_failed', data: expect.objectContaining({ release_action: 'paused', failing: 1 }) })])
+    expect(sentEmails().map((email) => email.subject)).toEqual(['La mantención no se pudo completar: “Actualización a la 1.1”'])
+    expect(JSON.parse((await audit(ctx.maintenance.id, 'maintenance.failed'))!.metadata)).toMatchObject({ release_withdrawn: false, release_action: 'paused' })
+
+    // The pin is spent once a device is back on the older version.
+    expect((await ingestJson(ctx.app.id, '/heartbeat', { token: one!.access_token, body: { app_version: '1.0.0' } })).body.data.update).toBeNull()
+    expect(await env.DB.prepare('SELECT rollback_to_version AS pin FROM installations WHERE id = ?').bind(one!.installation_id).first('pin')).toBeNull()
+    expect(await env.DB.prepare('SELECT rollback_to_version AS pin FROM installations WHERE id = ?').bind(two!.installation_id).first('pin')).toBe('1.0.0')
+    // Resuming the release does not drag a pinned device forward on its own: it is offered 1.1.0 only once the pin is spent.
+    expect((await panelJson(`/v1/releases/${ctx.release.id}/resume`, { method: 'POST' })).status).toBe(200)
+    expect((await ingestJson(ctx.app.id, '/updates/latest', { token: two!.access_token })).body.data).toMatchObject({ version: '1.0.0', rollback: true })
   })
 
   it('can be closed by hand while it runs, and cancelled only before', async () => {
@@ -534,6 +589,94 @@ describe('a scheduled maintenance', () => {
     expect((await publicJson(token!)).body.data.outcome).toMatchObject({ decision: 'cancelled' })
     expect((await panelJson(`/v1/maintenances/${sent.id}`, { method: 'DELETE' })).status).toBe(200)
     expect((await panelJson(`/v1/maintenances/${sent.id}`)).status).toBe(404)
+  })
+})
+
+/* ── Cancelling ───────────────────────────────────────────────────────────── */
+
+const cancel = (id: string, body: Json = {}) => panelJson(`/v1/maintenances/${id}/cancel`, { method: 'POST', body })
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/
+
+describe('cancelling tells the client when they already knew', () => {
+  it('says nothing about a draft that was never sent', async () => {
+    const { app } = await setup()
+    const draft = await createMaintenance(app.id)
+    await addWindow(draft.id, at(72))
+    expect((await cancel(draft.id, { reason: 'Ya no hace falta' })).body.data).toMatchObject({ status: 'cancelled' })
+    expect(sentEmails()).toEqual([])
+    expect(JSON.parse((await audit(draft.id, 'maintenance.cancelled'))!.metadata)).toMatchObject({ client_informed: false })
+  })
+
+  it('emails a request waiting on the client, with the reason, and its links stop answering', async () => {
+    const { app } = await setup({ contacts: [{ email: 'ops@cliente.cl', roles: ['maintenance_approver'] }] })
+    const sent = await sentMaintenance(app.id, at(72), at(96))
+    const [token] = tokensIn()
+    sentEmails().length = 0
+    expect((await cancel(sent.id, { reason: 'El cliente lo pidió por teléfono' })).body.data).toMatchObject({ status: 'cancelled' })
+
+    expect(sentEmails()).toHaveLength(1)
+    const [mail] = sentEmails()
+    expect(mail).toMatchObject({ to: ['ops@cliente.cl'], subject: 'Mantención cancelada: “Actualización a la 1.1”' })
+    expect(mail!.text).toContain('fue cancelada y no se realizará')
+    expect(mail!.text).toContain('El cliente lo pidió por teléfono')
+    expect(mail!.text).not.toMatch(UUID)
+    expect(mail!.text).not.toContain('mnt_')
+    expect(JSON.parse((await audit(sent.id, 'maintenance.cancelled'))!.metadata)).toMatchObject({ client_informed: true })
+
+    // The link that asked for an answer answers no more: it reads as closed and refuses both decisions.
+    expect(await publicJson(token!)).toMatchObject({ status: 200, body: { data: { state: 'closed', outcome: { decision: 'cancelled' } } } })
+    expect(await publicJson(token!, '/approve', { window_id: sent.windows[0].id })).toMatchObject({ status: 410, body: { state: 'closed' } })
+    expect((await publicJson(token!, '/reject', { reason: 'No' })).status).toBe(410)
+  })
+
+  it('emails a request that got no answer (no_response)', async () => {
+    const { app } = await setup()
+    const sent = await sentMaintenance(app.id, at(115), at(118))
+    await runMaintenances(env, at(49, sent.sentAt))
+    await runMaintenances(env, at(98, sent.sentAt))
+    expect((await get(sent.id)).status).toBe('no_response')
+    sentEmails().length = 0
+    await cancel(sent.id)
+    expect(sentEmails().map((email) => email.subject)).toEqual(['Mantención cancelada: “Actualización a la 1.1”'])
+    // No reason given, none shown.
+    expect(sentEmails()[0]!.text).not.toContain('Motivo')
+  })
+
+  it('emails an approved, scheduled maintenance with its window', async () => {
+    const ctx = await approvedWithRelease()
+    await cancel(ctx.maintenance.id, { reason: 'Se pospone' })
+    expect(sentEmails()).toHaveLength(1)
+    expect(sentEmails()[0]!).toMatchObject({ to: ['ops@cliente.cl'], subject: 'Mantención cancelada: “Actualización a la 1.1”' })
+    expect(sentEmails()[0]!.text).toContain('Ventana')
+    expect(sentEmails()[0]!.text).toContain('Se pospone')
+  })
+
+  it('emails a security patch the client was already told about', async () => {
+    const { app } = await setup({ modules: ['updates'] })
+    const patch = await createMaintenance(app.id, { kind: 'security', title: 'Parche OpenSSL', estimated_minutes: 30 })
+    expect((await panelJson(`/v1/maintenances/${patch.id}/schedule`, { method: 'POST' })).status).toBe(200)
+    sentEmails().length = 0
+    await cancel(patch.id)
+    expect(sentEmails().map((email) => email.subject)).toEqual(['Mantención cancelada: “Parche OpenSSL”'])
+  })
+
+  it('emails an automatic cancel too, without the internal reason', async () => {
+    const ctx = await approvedWithRelease()
+    // The whole window went by without a run seeing it start.
+    expect(await runMaintenances(env, new Date(ctx.end.getTime() + 60_000))).toMatchObject({ cancelled: 1, started: 0 })
+    expect(await get(ctx.maintenance.id)).toMatchObject({ status: 'cancelled', cancel_reason: 'missed', cancelled_by: null })
+    expect(sentEmails().map((email) => email.subject)).toEqual(['Mantención cancelada: “Actualización a la 1.1”'])
+    expect(sentEmails()[0]!.text).not.toContain('missed')
+  })
+
+  it('never fails the cancel when the email does not go out', async () => {
+    const ctx = await approvedWithRelease()
+    failEmail()
+    const cancelled = await cancel(ctx.maintenance.id)
+    failEmail(false)
+    expect(cancelled.status).toBe(200)
+    expect(cancelled.body.data).toMatchObject({ status: 'cancelled', result_detail: { mail_failures: [{ stage: 'cancelled', recipients: ['ops@cliente.cl'] }] } })
+    expect(sentEmails()).toEqual([])
   })
 })
 
